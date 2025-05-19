@@ -14,6 +14,7 @@ type RecordedEvent struct {
 	LogID   LogID
 	GenericEvent
 }
+
 type EventReader interface {
 	ReadEvents(ctx context.Context, id LogID, selector version.Selector) iter.Seq[RecordedEvent]
 }
@@ -22,13 +23,25 @@ type EventAppender interface {
 	AppendEvents(ctx context.Context, id LogID, expected version.Check, events ...GenericEvent) (version.Version, error)
 }
 
-type Store interface {
+type Log interface {
 	EventReader
 	EventAppender
 }
 
 // If you want to decorate only one of the reader/appender.
-type StoreComposition struct {
+type LogComposition struct {
 	EventReader
 	EventAppender
+}
+
+func GenericEventsToRecorded(startingVersion version.Version, id LogID, events ...GenericEvent) []RecordedEvent {
+	recordedEvents := make([]RecordedEvent, len(events))
+	for i, e := range events {
+		recordedEvents[i] = RecordedEvent{
+			Version:      startingVersion + version.Version(i+1),
+			LogID:        id,
+			GenericEvent: e,
+		}
+	}
+	return recordedEvents
 }
