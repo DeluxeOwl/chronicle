@@ -1,43 +1,29 @@
 package event
 
-import "maps"
+import (
+	"github.com/DeluxeOwl/eventuallynow/message"
+)
 
-type Payload interface {
-	Name() string
-}
+type Event message.Message
 
-type Event[T Payload] struct {
-	Payload  T
-	Metadata Metadata
-}
+type Envelope message.GenericEnvelope
 
-type GenericEvent Event[Payload]
-
-func (e Event[T]) ToGenericEvent() GenericEvent {
-	return GenericEvent{
-		Payload:  e.Payload,
-		Metadata: e.Metadata,
+func ToEnvelope(event Event) Envelope {
+	return Envelope{
+		Message:  event,
+		Metadata: nil,
 	}
 }
 
-type Metadata map[string]string
+func ToEnvelopes(events ...Event) []Envelope {
+	envelopes := make([]Envelope, 0, len(events))
 
-func (m Metadata) With(key, value string) Metadata {
-	if m == nil {
-		m = make(Metadata)
+	for _, event := range events {
+		envelopes = append(envelopes, Envelope{
+			Message:  event,
+			Metadata: nil,
+		})
 	}
 
-	m[key] = value
-
-	return m
-}
-
-// Merge merges the other Metadata provided in input with the current map.
-// Returns a pointer to the extended metadata map.
-func (m Metadata) Merge(other Metadata) Metadata {
-	if m == nil {
-		return other
-	}
-	maps.Copy(m, other)
-	return m
+	return envelopes
 }

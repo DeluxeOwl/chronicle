@@ -42,10 +42,10 @@ func NewEventSourcedRepository[TypeID ID, TRoot Root[TypeID]](store event.Log, k
 	}
 }
 
-// TODO: return domain errors, like the event payload that didn't work
+// TODO: return domain errors, like the event message that didn't work
 func LoadFromEvents[TypeID ID](root Root[TypeID], events event.StoredEvents) error {
 	for event := range events {
-		if err := root.Apply(event.Payload); err != nil {
+		if err := root.Apply(event.Message); err != nil {
 			return fmt.Errorf("aggregate.LoadFromEvents: failed to load events, %w", err)
 		}
 		root.setVersion(event.Version)
@@ -73,7 +73,7 @@ func (repo EventSourcedRepository[TypeID, TRoot]) Get(ctx context.Context, id Ty
 	logID := event.LogID(id.String())
 	storedEvents := repo.store.ReadEvents(ctx, logID, version.SelectFromBeginning)
 
-	root := repo.kind.Factory()
+	root := repo.kind.New()
 
 	if err := LoadFromEvents(root, storedEvents); err != nil {
 		return zeroValue, fmt.Errorf("load events: %w", err)
