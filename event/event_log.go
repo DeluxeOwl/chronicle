@@ -15,8 +15,10 @@ type StoredEvent struct {
 	GenericEvent
 }
 
+type StoredEvents = iter.Seq[StoredEvent]
+
 type Reader interface {
-	ReadEvents(ctx context.Context, id LogID, selector version.Selector) iter.Seq[StoredEvent]
+	ReadEvents(ctx context.Context, id LogID, selector version.Selector) StoredEvents
 }
 
 type Appender interface {

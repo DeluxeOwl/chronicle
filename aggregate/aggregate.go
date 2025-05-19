@@ -15,13 +15,13 @@ type Aggregate interface {
 	Apply(event.Payload) error
 }
 
-type Internal interface {
+type RecordedEventsFlusher interface {
 	FlushRecordedEvents() []event.GenericEvent
 }
 
 type Root[TypeID ID] interface {
 	Aggregate
-	Internal
+	RecordedEventsFlusher
 
 	ID() TypeID
 	Version() version.Version
@@ -61,7 +61,7 @@ func (br *EventRecorder) setVersion(v version.Version) {
 func (br *EventRecorder) recordThat(aggregate Aggregate, events ...event.GenericEvent) error {
 	for _, event := range events {
 		if err := aggregate.Apply(event.Payload); err != nil {
-			return fmt.Errorf("aggregate.BaseRoot: failed to record event, %w", err)
+			return fmt.Errorf("aggregate.EventRecorder: failed to record event, %w", err)
 		}
 
 		br.recordedEvents = append(br.recordedEvents, event)
