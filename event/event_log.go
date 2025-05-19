@@ -9,14 +9,14 @@ import (
 
 type LogID string
 
-type RecordedEvent struct {
+type StoredEvent struct {
 	Version version.Version
 	LogID   LogID
 	GenericEvent
 }
 
 type Reader interface {
-	ReadEvents(ctx context.Context, id LogID, selector version.Selector) iter.Seq[RecordedEvent]
+	ReadEvents(ctx context.Context, id LogID, selector version.Selector) iter.Seq[StoredEvent]
 }
 
 type Appender interface {
@@ -34,10 +34,10 @@ type LogComposition struct {
 	Appender
 }
 
-func GenericEventsToRecorded(startingVersion version.Version, id LogID, events ...GenericEvent) []RecordedEvent {
-	recordedEvents := make([]RecordedEvent, len(events))
+func GenericEventsToStored(startingVersion version.Version, id LogID, events ...GenericEvent) []StoredEvent {
+	recordedEvents := make([]StoredEvent, len(events))
 	for i, e := range events {
-		recordedEvents[i] = RecordedEvent{
+		recordedEvents[i] = StoredEvent{
 			//nolint:gosec // Won't be a problem in reality.
 			Version:      startingVersion + version.Version(i+1),
 			LogID:        id,

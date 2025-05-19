@@ -6,7 +6,6 @@ type Payload interface {
 	Name() string
 }
 
-// Event bundles a Message to be exchanged with optional Metadata support.
 type Event[T Payload] struct {
 	Payload  T
 	Metadata Metadata

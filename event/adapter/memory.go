@@ -14,7 +14,7 @@ var _ event.Log = new(MemoryStore)
 
 type MemoryStore struct {
 	mu     sync.RWMutex
-	events map[event.LogID][]event.RecordedEvent
+	events map[event.LogID][]event.StoredEvent
 
 	// Versions need to be handlel per id
 	logVersions map[event.LogID]version.Version
@@ -23,7 +23,7 @@ type MemoryStore struct {
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
 		mu:          sync.RWMutex{},
-		events:      map[event.LogID][]event.RecordedEvent{},
+		events:      map[event.LogID][]event.StoredEvent{},
 		logVersions: make(map[event.LogID]version.Version),
 	}
 }
@@ -58,9 +58,9 @@ func (s *MemoryStore) AppendEvents(ctx context.Context, id event.LogID, expected
 		}
 	}
 
-	// Record events with versions starting from currentStreamVersion + 1
-	recordedEvents := event.GenericEventsToRecorded(currentStreamVersion, id, events...)
-	s.events[id] = append(s.events[id], recordedEvents...)
+	// Store events with versions starting from currentStreamVersion + 1
+	storedEvents := event.GenericEventsToStored(currentStreamVersion, id, events...)
+	s.events[id] = append(s.events[id], storedEvents...)
 
 	// Update and store the new version for this specific stream
 	newStreamVersion := currentStreamVersion + version.Version(len(events))
@@ -70,8 +70,8 @@ func (s *MemoryStore) AppendEvents(ctx context.Context, id event.LogID, expected
 }
 
 // ReadEvents implements event.Store.
-func (s *MemoryStore) ReadEvents(ctx context.Context, id event.LogID, selector version.Selector) iter.Seq[event.RecordedEvent] {
-	return func(yield func(event.RecordedEvent) bool) {
+func (s *MemoryStore) ReadEvents(ctx context.Context, id event.LogID, selector version.Selector) iter.Seq[event.StoredEvent] {
+	return func(yield func(event.StoredEvent) bool) {
 		s.mu.RLock()
 		defer s.mu.RUnlock()
 
