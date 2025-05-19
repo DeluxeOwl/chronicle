@@ -7,10 +7,13 @@ import (
 
 	"github.com/DeluxeOwl/eventuallynow/aggregate"
 	"github.com/DeluxeOwl/eventuallynow/event"
-	"github.com/gofrs/uuid/v5"
 )
 
-var Type = aggregate.Type[uuid.UUID, *Person]{
+type PersonID string
+
+func (p PersonID) String() string { return string(p) }
+
+var Type = aggregate.Type[PersonID, *Person]{
 	Name: "Person",
 	New:  func() *Person { return new(Person) },
 }
@@ -18,13 +21,13 @@ var Type = aggregate.Type[uuid.UUID, *Person]{
 type Person struct {
 	aggregate.Base
 
-	id   uuid.UUID
+	id   PersonID
 	name string
 	age  int
 }
 
-func (p *Person) ID() uuid.UUID {
-	return p.id
+func (p *Person) ID() PersonID {
+	return PersonID(p.id.String())
 }
 
 func (p *Person) Apply(evt event.Event) error {
@@ -38,40 +41,51 @@ func (p *Person) Apply(evt event.Event) error {
 		p.id = personEvent.ID
 		p.age = 0
 		p.name = kind.BornName
+		fmt.Printf("  Applied WasBorn: ID set to '%s', Name to '%s', Age to %d\n", p.id, p.name, p.age)
 	case *AgedOneYear:
 		p.age++
+		fmt.Printf("  Applied AgedOneYear: Age incremented to %d\n", p.age)
+	default:
+		err := fmt.Errorf("person.Apply: unknown personEvent.Kind type %T", kind)
+		fmt.Println(err) // Log this
+		return err
 	}
 
 	return nil
 }
 
-func NewPerson(id uuid.UUID, name string, now time.Time) (*Person, error) {
+func NewPerson(id string, name string, now time.Time) (*Person, error) {
 	if name == "" {
 		return nil, errors.New("name empty")
 	}
 
 	p := new(Person)
 
-	if err := aggregate.RecordThat(p, event.Envelope{
-		Metadata: nil,
-		Message: &PersEvent{
-			ID:         id,
-			RecordTime: now,
-			Kind: &WasBorn{
-				BornName: name,
-			},
+	if err := aggregate.RecordThat(p, event.ToEnvelope(&PersEvent{
+		ID:         PersonID(id),
+		RecordTime: now,
+		Kind: &WasBorn{
+			BornName: name,
 		},
-	}); err != nil {
+	})); err != nil {
 		return nil, fmt.Errorf("create person: %w", err)
 	}
 
 	return p, nil
 }
 
+func (p *Person) Age() error {
+	return aggregate.RecordThat(p, event.ToEnvelope(&PersEvent{
+		ID:         p.id,
+		RecordTime: time.Now(),
+		Kind:       &AgedOneYear{},
+	}))
+}
+
 var _ event.Event = new(PersEvent)
 
 type PersEvent struct {
-	ID         uuid.UUID
+	ID         PersonID
 	RecordTime time.Time
 	Kind       personEvent
 }
