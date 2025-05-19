@@ -4,6 +4,7 @@ import "fmt"
 
 type Version uint64
 
+//nolint:gochecknoglobals // It's a helper.
 var SelectFromBeginning = Selector{From: 0}
 
 type Selector struct {

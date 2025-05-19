@@ -48,8 +48,7 @@ func (s *MemoryStore) AppendEvents(ctx context.Context, id event.LogID, expected
 	// Optimistic concurrency check based on the stream's current version
 	// TODO: this should be an option, depending if we want or not optimistic concurrency check
 	//       A common approach is for CheckAny to bypass the check, and CheckExact to enforce it.
-	switch exp := expected.(type) {
-	case version.CheckExact:
+	if exp, ok := expected.(version.CheckExact); ok {
 		expectedVer := version.Version(exp)
 		if currentStreamVersion != expectedVer {
 			return 0, fmt.Errorf("event.MemoryStore: failed to append events to stream '%s', %w", id, version.ConflictError{
