@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/DeluxeOwl/eventuallynow/event"
+	"github.com/DeluxeOwl/eventuallynow/serde"
 	"github.com/DeluxeOwl/eventuallynow/version"
 )
 
@@ -22,9 +23,23 @@ type Repository[TypeID ID, TRoot Root[TypeID]] interface {
 	Saver[TypeID, TRoot]
 }
 
-type RepositoryComposition[TypeID ID, TRoot Root[TypeID]] interface {
+type RepositoryFuse[TypeID ID, TRoot Root[TypeID]] struct {
 	Getter[TypeID, TRoot]
 	Saver[TypeID, TRoot]
+}
+
+type EventSourcedRepository[TypeID ID, TRoot Root[TypeID]] struct {
+	// Every event sourced repo is backed by a generic log
+	// EventSourcedRepository is like an orchestrator for any kind of store.
+	store event.Log
+	kind  Type[TypeID, TRoot]
+}
+
+func NewEventSourcedRepository[TypeID ID, TRoot Root[TypeID]](store event.Log, kind Type[TypeID, TRoot]) EventSourcedRepository[TypeID, TRoot] {
+	return EventSourcedRepository[TypeID, TRoot]{
+		store: store,
+		kind:  kind,
+	}
 }
 
 // TODO: return domain errors, like the event payload that didn't work
@@ -39,17 +54,17 @@ func LoadFromEvents[TypeID ID](root Root[TypeID], events event.StoredEvents) err
 	return nil
 }
 
-type EventSourcedRepository[TypeID ID, TRoot Root[TypeID]] struct {
-	// Every event sourced repo is backed by a generic log
-	store event.Log
-	kind  Type[TypeID, TRoot]
-}
+func LoadFromState[TypeID ID, S Root[TypeID], D any](v version.Version, dst D, deserializer serde.Deserializer[S, D]) (S, error) {
+	var zeroValue S
 
-func NewEventSourcedRepository[TypeID ID, TRoot Root[TypeID]](store event.Log, kind Type[TypeID, TRoot]) EventSourcedRepository[TypeID, TRoot] {
-	return EventSourcedRepository[TypeID, TRoot]{
-		store: store,
-		kind:  kind,
+	src, err := deserializer.Deserialize(dst)
+	if err != nil {
+		return zeroValue, fmt.Errorf("aggregate.RehydrateFromState: failed to deserialize src into dst root, %w", err)
 	}
+
+	src.setVersion(v)
+
+	return src, nil
 }
 
 func (repo EventSourcedRepository[TypeID, TRoot]) Get(ctx context.Context, id TypeID) (TRoot, error) {

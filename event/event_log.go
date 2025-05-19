@@ -31,7 +31,7 @@ type Log interface {
 }
 
 // If you want to decorate only one of the reader/appender.
-type LogComposition struct {
+type LogFuse struct {
 	Reader
 	Appender
 }
