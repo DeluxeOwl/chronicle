@@ -26,6 +26,7 @@ type Root[TypeID ID] interface {
 	ID() TypeID
 	Version() version.Version
 
+	// EventRecorder implements these, so you *have* to embed EventRecorder.
 	setVersion(version.Version)
 	recordThat(Aggregate, ...event.GenericEvent) error
 }
@@ -39,25 +40,25 @@ func RecordThat[TypeID ID](root Root[TypeID], events ...event.GenericEvent) erro
 	return root.recordThat(root, events...)
 }
 
-type BaseRoot struct {
+type EventRecorder struct {
 	version        version.Version
 	recordedEvents []event.GenericEvent
 }
 
-func (br BaseRoot) Version() version.Version { return br.version }
+func (br EventRecorder) Version() version.Version { return br.version }
 
-func (br *BaseRoot) FlushRecordedEvents() []event.GenericEvent {
+func (br *EventRecorder) FlushRecordedEvents() []event.GenericEvent {
 	flushed := br.recordedEvents
 	br.recordedEvents = nil
 
 	return flushed
 }
 
-func (br *BaseRoot) setVersion(v version.Version) {
+func (br *EventRecorder) setVersion(v version.Version) {
 	br.version = v
 }
 
-func (br *BaseRoot) recordThat(aggregate Aggregate, events ...event.GenericEvent) error {
+func (br *EventRecorder) recordThat(aggregate Aggregate, events ...event.GenericEvent) error {
 	for _, event := range events {
 		if err := aggregate.Apply(event.Payload); err != nil {
 			return fmt.Errorf("aggregate.BaseRoot: failed to record event, %w", err)
