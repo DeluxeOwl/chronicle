@@ -9,16 +9,16 @@ import (
 
 type LogID string
 
-type StoredEvent struct {
+type RecordedEvent struct {
 	Version version.Version
 	LogID   LogID
 	Envelope
 }
 
-type StoredEvents = iter.Seq[StoredEvent]
+type RecordedEvents = iter.Seq[RecordedEvent]
 
 type Reader interface {
-	ReadEvents(ctx context.Context, id LogID, selector version.Selector) StoredEvents
+	ReadEvents(ctx context.Context, id LogID, selector version.Selector) RecordedEvents
 }
 
 type Appender interface {
