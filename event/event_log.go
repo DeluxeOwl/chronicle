@@ -25,6 +25,10 @@ type Appender interface {
 	AppendEvents(ctx context.Context, id LogID, expected version.Check, events ...Envelope) (version.Version, error)
 }
 
+type GlobalReader interface {
+	ReadAllEvents(ctx context.Context, globalSelector version.Selector) StoredEvents
+}
+
 type Log interface {
 	Reader
 	Appender
