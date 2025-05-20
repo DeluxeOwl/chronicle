@@ -44,6 +44,7 @@ func main() {
 	litter.Config.HidePrivateFields = false
 
 	memoryStore := memoryadapter.NewMemoryStore()
+	// Typically you'd pass the serde config to the event sourced repository
 	repo := aggregate.NewEventSourcedRepository(memoryStore, person.Type)
 
 	id := person.PersonID("some-generated-id")
