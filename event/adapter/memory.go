@@ -3,7 +3,6 @@ package memoryadapter
 import (
 	"context"
 	"fmt"
-	"iter"
 	"sync"
 
 	"github.com/DeluxeOwl/eventuallynow/event"
@@ -83,8 +82,8 @@ func (s *MemoryStore) AppendEvents(ctx context.Context, id event.LogID, expected
 }
 
 // ReadEvents implements event.Store.
-func (s *MemoryStore) ReadEvents(ctx context.Context, id event.LogID, selector version.Selector) iter.Seq[event.RecordedEvent] {
-	return func(yield func(event.RecordedEvent) bool) {
+func (s *MemoryStore) ReadEvents(ctx context.Context, id event.LogID, selector version.Selector) event.RecordedEvents {
+	return func(yield func(event.RecordedEvent, error) bool) {
 		s.mu.RLock()
 		defer s.mu.RUnlock()
 
@@ -97,10 +96,14 @@ func (s *MemoryStore) ReadEvents(ctx context.Context, id event.LogID, selector v
 			if e.Version < selector.From {
 				continue
 			}
-			if ctx.Err() != nil {
+
+			ctxErr := ctx.Err()
+
+			//nolint:exhaustruct // Not needed.
+			if ctxErr != nil && !yield(event.RecordedEvent{}, ctx.Err()) {
 				return
 			}
-			if !yield(e) {
+			if !yield(e, nil) {
 				return
 			}
 		}

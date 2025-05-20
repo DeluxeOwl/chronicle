@@ -15,7 +15,7 @@ type RecordedEvent struct {
 	Envelope
 }
 
-type RecordedEvents = iter.Seq[RecordedEvent]
+type RecordedEvents = iter.Seq2[RecordedEvent, error]
 
 type Reader interface {
 	ReadEvents(ctx context.Context, id LogID, selector version.Selector) RecordedEvents
