@@ -28,6 +28,19 @@ func NewMemoryStore() *MemoryStore {
 	}
 }
 
+func genericEventsToStored(startingVersion version.Version, id event.LogID, events ...event.Envelope) []event.StoredEvent {
+	recordedEvents := make([]event.StoredEvent, len(events))
+	for i, e := range events {
+		recordedEvents[i] = event.StoredEvent{
+			//nolint:gosec // Won't be a problem in reality.
+			Version:  startingVersion + version.Version(i+1),
+			LogID:    id,
+			Envelope: e,
+		}
+	}
+	return recordedEvents
+}
+
 func (s *MemoryStore) AppendEvents(ctx context.Context, id event.LogID, expected version.Check, events ...event.Envelope) (version.Version, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
@@ -59,7 +72,7 @@ func (s *MemoryStore) AppendEvents(ctx context.Context, id event.LogID, expected
 	}
 
 	// Store events with versions starting from currentStreamVersion + 1
-	storedEvents := event.GenericEventsToStored(currentStreamVersion, id, events...)
+	storedEvents := genericEventsToStored(currentStreamVersion, id, events...)
 	s.events[id] = append(s.events[id], storedEvents...)
 
 	// Update and store the new version for this specific stream

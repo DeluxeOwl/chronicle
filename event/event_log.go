@@ -35,16 +35,3 @@ type LogFuse struct {
 	Reader
 	Appender
 }
-
-func GenericEventsToStored(startingVersion version.Version, id LogID, events ...Envelope) []StoredEvent {
-	recordedEvents := make([]StoredEvent, len(events))
-	for i, e := range events {
-		recordedEvents[i] = StoredEvent{
-			//nolint:gosec // Won't be a problem in reality.
-			Version:  startingVersion + version.Version(i+1),
-			LogID:    id,
-			Envelope: e,
-		}
-	}
-	return recordedEvents
-}
