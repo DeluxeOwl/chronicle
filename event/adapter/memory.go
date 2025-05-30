@@ -2,11 +2,17 @@ package memoryadapter
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"github.com/DeluxeOwl/eventuallynow/event"
 	"github.com/DeluxeOwl/eventuallynow/version"
+	"github.com/DeluxeOwl/zerrors"
+)
+
+type MemoryStoreError string
+
+const (
+	ErrAppendEvents MemoryStoreError = "append_events"
 )
 
 var _ event.Log = new(MemoryStore)
@@ -15,7 +21,7 @@ type MemoryStore struct {
 	mu     sync.RWMutex
 	events map[event.LogID][]event.RecordedEvent
 
-	// Versions need to be handlel per id
+	// Versions need to be handled per id
 	logVersions map[event.LogID]version.Version
 }
 
@@ -25,19 +31,6 @@ func NewMemoryStore() *MemoryStore {
 		events:      map[event.LogID][]event.RecordedEvent{},
 		logVersions: make(map[event.LogID]version.Version),
 	}
-}
-
-func genericEventsToStored(startingVersion version.Version, id event.LogID, events ...event.Envelope) []event.RecordedEvent {
-	recordedEvents := make([]event.RecordedEvent, len(events))
-	for i, e := range events {
-		recordedEvents[i] = event.RecordedEvent{
-			//nolint:gosec // Won't be a problem in reality.
-			Version:  startingVersion + version.Version(i+1),
-			LogID:    id,
-			Envelope: e,
-		}
-	}
-	return recordedEvents
 }
 
 func (s *MemoryStore) AppendEvents(ctx context.Context, id event.LogID, expected version.Check, events ...event.Envelope) (version.Version, error) {
@@ -57,13 +50,10 @@ func (s *MemoryStore) AppendEvents(ctx context.Context, id event.LogID, expected
 
 	currentStreamVersion := s.logVersions[id] // Defaults to 0 if id is not in map
 
-	// Optimistic concurrency check based on the stream's current version
-	// TODO: this should be an option, depending if we want or not optimistic concurrency check
-	//       A common approach is for CheckAny to bypass the check, and CheckExact to enforce it.
 	if exp, ok := expected.(version.CheckExact); ok {
 		expectedVer := version.Version(exp)
 		if currentStreamVersion != expectedVer {
-			return 0, fmt.Errorf("event.MemoryStore: failed to append events to stream '%s', %w", id, version.ConflictError{
+			return 0, zerrors.New(ErrAppendEvents).With("stream", id).Errorf("append events to stream: %w", version.ConflictError{
 				Expected: expectedVer,
 				Actual:   currentStreamVersion,
 			})
@@ -71,7 +61,7 @@ func (s *MemoryStore) AppendEvents(ctx context.Context, id event.LogID, expected
 	}
 
 	// Store events with versions starting from currentStreamVersion + 1
-	storedEvents := genericEventsToStored(currentStreamVersion, id, events...)
+	storedEvents := event.ToStored(currentStreamVersion, id, events...)
 	s.events[id] = append(s.events[id], storedEvents...)
 
 	// Update and store the new version for this specific stream
@@ -93,7 +83,7 @@ func (s *MemoryStore) ReadEvents(ctx context.Context, id event.LogID, selector v
 		}
 
 		for _, e := range events {
-			if e.Version < selector.From {
+			if e.Version() < selector.From {
 				continue
 			}
 

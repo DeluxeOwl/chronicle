@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/DeluxeOwl/eventuallynow/aggregate"
@@ -27,14 +26,14 @@ func printSerializedAndDeserialized(p *person.Person) {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println("\nSerialized:")
+
 	litter.Dump(serialized)
 
 	deserialized, err := serde.Deserialize(serialized)
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println("\nDeserialized:")
+
 	litter.Dump(deserialized)
 }
 
@@ -62,7 +61,6 @@ func main() {
 
 	printSerializedAndDeserialized(p)
 
-	fmt.Println("Person with in mem events:")
 	litter.Dump(p)
 
 	err = repo.Save(ctx, p)
@@ -74,10 +72,9 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println("\nPerson from repo:")
+
 	litter.Dump(p)
 
-	fmt.Println("\nEvents:")
 	for evt := range memoryStore.ReadEvents(ctx, event.LogID(id.String()), version.SelectFromBeginning) {
 		litter.Dump(evt)
 	}

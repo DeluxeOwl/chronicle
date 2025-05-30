@@ -1,21 +1,4 @@
 {
-    // TODO: create some "linking comments" that depend on one another
-    // like the fact that these depend on the ./client/api 
-    "search.exclude": {
-        "**/node_modules": true,
-        "**/bower_components": true,
-        "**/ent/*[!schema]": true, // Exclude everything that's not schema, uses glob pattern extended features
-        "**/bun.lock": true,
-        "**/oxlintrc.json": true,
-        "**/openapi3.yaml": true,
-        "**/go.sum": true,
-        "**/*.gen.*": true
-    },
-    "files.readonlyInclude": {
-        "**/*.gen.ts": true,
-        "**/locales/**/*.ts": true,
-        "**/*.gen.go": true,
-    },
     "editor.formatOnSave": true,
     "editor.insertSpaces": false,
     // Generic configuration
@@ -34,72 +17,24 @@
     "go.useLanguageServer": true,
     // Backend configuration
     "go.lintTool": "golangci-lint",
-    "go.lintFlags": [
-        "--fast",
+    // Note: --fast disables some linters, like the exhaustive one
+    // "go.lintFlags": [
+    //     "--fast",
+    // ],
+    // Note: doesnt work with vscode with workspace (?) but it typechecks with errors if its file only
+    // Note: I found that this needs to be package (default) to work in the polyrepo
+    "go.lintOnSave": "package",
+    // Note: --stdin is needed
+    "go.formatTool": "custom",
+    "go.formatFlags": [
+        "fmt",
+        "--stdin"
     ],
     "go.alternateTools": {
+        "customFormatter": "${workspaceFolder}/.devbox/nix/profile/default/bin/golangci-lint",
         // Note: really important that the relative-path-mode is wd in .golangci.yaml
         "golangci-lint": "${workspaceFolder}/.devbox/nix/profile/default/bin/golangci-lint",
         "go": "${workspaceFolder}/.devbox/nix/profile/default/bin/go",
         "gopls": "${workspaceFolder}/.devbox/nix/profile/default/bin/gopls",
     },
-    // Frontend configuration
-    "editor.codeActionsOnSave": {
-        "source.organizeImports": "always",
-        "source.fixAll.oxc": "always",
-        "source.fixAll.eslint": "always",
-    },
-    "eslint.workingDirectories": [
-        {
-            "pattern": "./client"
-        }
-    ],
-    "eslint.validate": [
-        "javascript",
-        "javascriptreact",
-        "typescript",
-        "typescriptreact",
-        "mjs"
-    ],
-    "oxc.configPath": "client/oxlintrc.json",
-    "oxc.path.server": "${workspaceFolder}/client/node_modules/oxlint/bin/oxc_language_server",
-    "[javascript]": {
-        "editor.defaultFormatter": "dbaeumer.vscode-eslint",
-        // Note: this prevents the weird discrepancy with the extension
-        "editor.insertSpaces": false
-    },
-    "[javascriptreact]": {
-        "editor.defaultFormatter": "dbaeumer.vscode-eslint",
-        // Note: this prevents the weird discrepancy with the extension
-        "editor.insertSpaces": false
-    },
-    "[typescript]": {
-        "editor.defaultFormatter": "dbaeumer.vscode-eslint",
-        // Note: this prevents the weird discrepancy with the extension
-        "editor.insertSpaces": false
-    },
-    "[typescriptreact]": {
-        // "editor.defaultFormatter": "dbaeumer.vscode-eslint"
-        "editor.defaultFormatter": "dbaeumer.vscode-eslint",
-        "editor.insertSpaces": false
-    },
-    "[mjs]": {
-        "editor.defaultFormatter": "dbaeumer.vscode-eslint",
-        // Note: this prevents the weird discrepancy with the extension
-        "editor.insertSpaces": false
-    },
-    "tailwindCSS.experimental.classRegex": [
-        [
-            "cva\\(((?:[^()]|\\([^()]*\\))*)\\)",
-            "[\"'`]([^\"'`]*).*?[\"'`]"
-        ],
-        [
-            "cx\\(((?:[^()]|\\([^()]*\\))*)\\)",
-            "(?:'|\"|`)([^']*)(?:'|\"|`)"
-        ]
-    ],
-    "typescript.preferences.autoImportSpecifierExcludeRegexes": [
-        "@radix-ui",
-        "^lucide-react/dist/lucide-react.suffixed$",
-    ],
 }

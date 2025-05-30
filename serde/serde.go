@@ -1,6 +1,18 @@
 package serde
 
-import "fmt"
+import (
+	"github.com/DeluxeOwl/zerrors"
+)
+
+type SerdeError string
+
+const (
+	ErrFirstStageSerializer  SerdeError = "first_stage_serializer"
+	ErrSecondStageSerializer SerdeError = "second_stage_serializer"
+
+	ErrFirstStageDeserializer  SerdeError = "first_stage_deserializer"
+	ErrSecondStageDeserializer SerdeError = "second_stage_deserializer"
+)
 
 type Serializer[S, D any] interface {
 	Serialize(src S) (D, error)
@@ -50,12 +62,12 @@ func (s Chained[Src, Mid, Dst]) Serialize(src Src) (Dst, error) {
 
 	mid, err := s.first.Serialize(src)
 	if err != nil {
-		return zeroValue, fmt.Errorf("serde.Chained: first stage serializer failed, %w", err)
+		return zeroValue, zerrors.New(ErrFirstStageSerializer).WithError(err)
 	}
 
 	dst, err := s.second.Serialize(mid)
 	if err != nil {
-		return zeroValue, fmt.Errorf("serde.Chained: second stage serializer failed, %w", err)
+		return zeroValue, zerrors.New(ErrSecondStageDeserializer).WithError(err)
 	}
 
 	return dst, nil
@@ -67,12 +79,12 @@ func (s Chained[Src, Mid, Dst]) Deserialize(dst Dst) (Src, error) {
 
 	mid, err := s.second.Deserialize(dst)
 	if err != nil {
-		return zeroValue, fmt.Errorf("serde.Chained: first stage deserializer failed, %w", err)
+		return zeroValue, zerrors.New(ErrFirstStageDeserializer).WithError(err)
 	}
 
 	src, err := s.first.Deserialize(mid)
 	if err != nil {
-		return zeroValue, fmt.Errorf("serde.Chained: second stage deserializer failed, %w", err)
+		return zeroValue, zerrors.New(ErrSecondStageDeserializer).WithError(err)
 	}
 
 	return src, nil

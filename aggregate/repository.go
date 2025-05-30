@@ -2,12 +2,18 @@ package aggregate
 
 import (
 	"context"
-	"errors"
-	"fmt"
 
 	"github.com/DeluxeOwl/eventuallynow/event"
 	"github.com/DeluxeOwl/eventuallynow/serde"
 	"github.com/DeluxeOwl/eventuallynow/version"
+	"github.com/DeluxeOwl/zerrors"
+)
+
+const (
+	ErrLoadFromEvents     AggregateError = "failed_load_from_events"
+	ErrRehydrateFromState AggregateError = "failed_rehydrate_from_state"
+	ErrRootNotFound       AggregateError = "root_not_found"
+	ErrCommitEvents       AggregateError = "commit_recorded_events"
 )
 
 type Getter[TypeID ID, TRoot Root[TypeID]] interface {
@@ -46,12 +52,12 @@ func NewEventSourcedRepository[TypeID ID, TRoot Root[TypeID]](store event.Log, k
 func LoadFromEvents[TypeID ID](root Root[TypeID], events event.RecordedEvents) error {
 	for event, err := range events {
 		if err != nil {
-			return fmt.Errorf("aggregate.LoadFromEvents: failed to load events, %w", err)
+			return zerrors.New(ErrLoadFromEvents).WithError(err)
 		}
 		if err := root.Apply(event.Message); err != nil {
-			return fmt.Errorf("aggregate.LoadFromEvents: failed to load events, %w", err)
+			return zerrors.New(ErrLoadFromEvents).WithError(err)
 		}
-		root.setVersion(event.Version)
+		root.setVersion(event.Version())
 	}
 
 	return nil
@@ -62,7 +68,7 @@ func LoadFromState[TypeID ID, S Root[TypeID], D any](v version.Version, dst D, d
 
 	src, err := deserializer.Deserialize(dst)
 	if err != nil {
-		return zeroValue, fmt.Errorf("aggregate.RehydrateFromState: failed to deserialize src into dst root, %w", err)
+		return zeroValue, zerrors.New(ErrRehydrateFromState).Errorf("deserialize src into dst root: %w", err)
 	}
 
 	src.setVersion(v)
@@ -79,11 +85,11 @@ func (repo EventSourcedRepository[TypeID, TRoot]) Get(ctx context.Context, id Ty
 	root := repo.kind.New()
 
 	if err := LoadFromEvents(root, recordedEvents); err != nil {
-		return zeroValue, fmt.Errorf("load events: %w", err)
+		return zeroValue, err
 	}
 
 	if root.Version() == 0 {
-		return zeroValue, errors.New("root not found")
+		return zeroValue, zerrors.New(ErrRootNotFound)
 	}
 
 	return root, nil
@@ -103,7 +109,7 @@ func (repo EventSourcedRepository[TypeID, TRoot]) Save(ctx context.Context, root
 	)
 
 	if _, err := repo.store.AppendEvents(ctx, logID, expectedVersion, events...); err != nil {
-		return fmt.Errorf("commit recorded events: %w", err)
+		return zerrors.New(ErrCommitEvents).WithError(err)
 	}
 
 	return nil

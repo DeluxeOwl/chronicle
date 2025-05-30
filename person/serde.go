@@ -2,7 +2,7 @@ package person
 
 import (
 	"github.com/DeluxeOwl/eventuallynow/serde"
-	"github.com/pkg/errors"
+	"github.com/DeluxeOwl/zerrors"
 )
 
 type PersonSnapshot struct {
@@ -19,7 +19,7 @@ func NewPersonSnapshotSerde() serde.Serde[*Person, *PersonSnapshot] {
 
 func (s *personSnapshotSerde) Serialize(p *Person) (*PersonSnapshot, error) {
 	if p == nil {
-		return nil, errors.New("person.Serialize: cannot serialize nil Person to PersonSnapshot")
+		return nil, zerrors.New(ErrNilPersonSerialize)
 	}
 
 	return &PersonSnapshot{

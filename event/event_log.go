@@ -10,15 +10,35 @@ import (
 type LogID string
 
 type RecordedEvent struct {
-	Version version.Version
-	LogID   LogID
+	version version.Version
+	logID   LogID
 	Envelope
+}
+
+func NewRecorded(version version.Version, logID LogID, event Envelope) RecordedEvent {
+	return RecordedEvent{
+		version:  version,
+		logID:    logID,
+		Envelope: event,
+	}
+}
+
+func (re *RecordedEvent) Version() version.Version {
+	return re.version
+}
+
+func (re *RecordedEvent) LogID() LogID {
+	return re.logID
 }
 
 type RecordedEvents = iter.Seq2[RecordedEvent, error]
 
 type Reader interface {
 	ReadEvents(ctx context.Context, id LogID, selector version.Selector) RecordedEvents
+}
+
+type AllReader interface {
+	ReadAllEvents(ctx context.Context, selector version.Selector) RecordedEvents
 }
 
 type Appender interface {
@@ -30,7 +50,6 @@ type Log interface {
 	Appender
 }
 
-// If you want to decorate only one of the reader/appender.
 type LogFuse struct {
 	Reader
 	Appender

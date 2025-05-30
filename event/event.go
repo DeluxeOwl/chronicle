@@ -2,6 +2,7 @@ package event
 
 import (
 	"github.com/DeluxeOwl/eventuallynow/message"
+	"github.com/DeluxeOwl/eventuallynow/version"
 )
 
 type Event message.Message
@@ -26,4 +27,13 @@ func ToEnvelopes(events ...Event) []Envelope {
 	}
 
 	return envelopes
+}
+
+func ToStored(startingVersion version.Version, id LogID, events ...Envelope) []RecordedEvent {
+	recordedEvents := make([]RecordedEvent, len(events))
+	for i, e := range events {
+		//nolint:gosec // It's not a problem in practice.
+		recordedEvents[i] = NewRecorded(startingVersion+version.Version(i+1), id, e)
+	}
+	return recordedEvents
 }

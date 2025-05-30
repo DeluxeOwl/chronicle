@@ -1,12 +1,21 @@
 package person
 
 import (
-	"errors"
-	"fmt"
 	"time"
 
 	"github.com/DeluxeOwl/eventuallynow/aggregate"
 	"github.com/DeluxeOwl/eventuallynow/event"
+	"github.com/DeluxeOwl/zerrors"
+)
+
+type PersonError string
+
+const (
+	ErrUnexpectedEventType PersonError = "unexpected_event_type"
+	ErrUnexpectedEventKIND PersonError = "unexpected_event_kind"
+	ErrEmptyName           PersonError = "empty_name"
+	ErrCreate              PersonError = "create"
+	ErrNilPersonSerialize  PersonError = "serialize_person_nil"
 )
 
 type PersonID string
@@ -33,7 +42,7 @@ func (p *Person) ID() PersonID {
 func (p *Person) Apply(evt event.Event) error {
 	personEvent, ok := evt.(*PersEvent)
 	if !ok {
-		return fmt.Errorf("person.Apply: unexpected event type, %T", personEvent)
+		return zerrors.New(ErrUnexpectedEventType).Errorf("type: %T", personEvent)
 	}
 
 	switch kind := personEvent.Kind.(type) {
@@ -41,14 +50,10 @@ func (p *Person) Apply(evt event.Event) error {
 		p.id = personEvent.ID
 		p.age = 0
 		p.name = kind.BornName
-		fmt.Printf("  Applied WasBorn: ID set to '%s', Name to '%s', Age to %d\n", p.id, p.name, p.age)
 	case *AgedOneYear:
 		p.age++
-		fmt.Printf("  Applied AgedOneYear: Age incremented to %d\n", p.age)
 	default:
-		err := fmt.Errorf("person.Apply: unknown personEvent.Kind type %T", kind)
-		fmt.Println(err) // Log this
-		return err
+		return zerrors.New(ErrUnexpectedEventType).Errorf("kind: %T", personEvent.Kind)
 	}
 
 	return nil
@@ -56,7 +61,7 @@ func (p *Person) Apply(evt event.Event) error {
 
 func NewPerson(id string, name string, now time.Time) (*Person, error) {
 	if name == "" {
-		return nil, errors.New("name empty")
+		return nil, zerrors.New(ErrEmptyName)
 	}
 
 	p := new(Person)
@@ -68,7 +73,7 @@ func NewPerson(id string, name string, now time.Time) (*Person, error) {
 			BornName: name,
 		},
 	})); err != nil {
-		return nil, fmt.Errorf("create person: %w", err)
+		return nil, zerrors.New(ErrCreate).WithError(err)
 	}
 
 	return p, nil

@@ -5,6 +5,13 @@ import (
 
 	"github.com/DeluxeOwl/eventuallynow/event"
 	"github.com/DeluxeOwl/eventuallynow/version"
+	"github.com/DeluxeOwl/zerrors"
+)
+
+type AggregateError string
+
+const (
+	ErrFailedToRecord AggregateError = "failed_to_record_event"
 )
 
 type ID interface {
@@ -63,7 +70,7 @@ func (br *Base) setVersion(v version.Version) {
 func (br *Base) recordThat(aggregate Aggregate, events ...event.Envelope) error {
 	for _, event := range events {
 		if err := aggregate.Apply(event.Message); err != nil {
-			return fmt.Errorf("aggregate.EventRecorder: failed to record event, %w", err)
+			return zerrors.New(ErrFailedToRecord).WithError(err)
 		}
 
 		br.recordedEvents = append(br.recordedEvents, event)
