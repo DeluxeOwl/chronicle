@@ -33,7 +33,7 @@ func NewMemoryStore() *MemoryStore {
 	}
 }
 
-func (s *MemoryStore) AppendEvents(ctx context.Context, id event.LogID, expected version.Check, events ...event.Envelope) (version.Version, error) {
+func (s *MemoryStore) AppendEvents(ctx context.Context, id event.LogID, expected version.Check, events ...event.GenericEnvelope) (version.Version, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}

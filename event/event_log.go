@@ -12,14 +12,14 @@ type LogID string
 type RecordedEvent struct {
 	version version.Version
 	logID   LogID
-	Envelope
+	GenericEnvelope
 }
 
-func NewRecorded(version version.Version, logID LogID, event Envelope) RecordedEvent {
+func NewRecorded(version version.Version, logID LogID, event GenericEnvelope) RecordedEvent {
 	return RecordedEvent{
-		version:  version,
-		logID:    logID,
-		Envelope: event,
+		version:         version,
+		logID:           logID,
+		GenericEnvelope: event,
 	}
 }
 
@@ -42,7 +42,7 @@ type AllReader interface {
 }
 
 type Appender interface {
-	AppendEvents(ctx context.Context, id LogID, expected version.Check, events ...Envelope) (version.Version, error)
+	AppendEvents(ctx context.Context, id LogID, expected version.Check, events ...GenericEnvelope) (version.Version, error)
 }
 
 type Log interface {
