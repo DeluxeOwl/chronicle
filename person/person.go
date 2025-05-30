@@ -22,17 +22,16 @@ type PersonID string
 
 func (p PersonID) String() string { return string(p) }
 
-var Type = aggregate.Type[PersonID, *Person]{
-	Name: "Person",
-	New:  func() *Person { return new(Person) },
-}
-
 type Person struct {
 	aggregate.Base
 
 	id   PersonID
 	name string
 	age  int
+}
+
+func NewEmpty() *Person {
+	return new(Person)
 }
 
 func (p *Person) ID() PersonID {
@@ -59,12 +58,12 @@ func (p *Person) Apply(evt event.GenericEvent) error {
 	return nil
 }
 
-func NewPerson(id string, name string, now time.Time) (*Person, error) {
+func New(id string, name string, now time.Time) (*Person, error) {
 	if name == "" {
 		return nil, zerrors.New(ErrEmptyName)
 	}
 
-	p := new(Person)
+	p := NewEmpty()
 
 	if err := aggregate.RecordThat(p, event.New(&PersEvent{
 		ID:         PersonID(id),

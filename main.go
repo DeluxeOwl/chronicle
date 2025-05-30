@@ -44,10 +44,10 @@ func main() {
 
 	memoryStore := memoryadapter.NewMemoryStore()
 	// Typically you'd pass the serde config to the event sourced repository
-	repo := aggregate.NewEventSourcedRepository(memoryStore, person.Type)
+	repo := aggregate.NewEventSourcedRepository(memoryStore, person.NewEmpty)
 
 	id := person.PersonID("some-generated-id")
-	p, err := person.NewPerson(id.String(), "Johnny", time.Now())
+	p, err := person.New(id.String(), "Johnny", time.Now())
 	if err != nil {
 		panic(err)
 	}

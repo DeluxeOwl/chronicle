@@ -30,7 +30,7 @@ func (s *personSnapshotSerde) Serialize(p *Person) (*PersonSnapshot, error) {
 }
 
 func (s *personSnapshotSerde) Deserialize(snap *PersonSnapshot) (*Person, error) {
-	personInstance := Type.New()
+	personInstance := NewEmpty()
 
 	personInstance.id = snap.ID
 	personInstance.name = snap.Name

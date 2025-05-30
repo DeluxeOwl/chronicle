@@ -38,11 +38,6 @@ type Root[TypeID ID] interface {
 	recordThat(Aggregate, ...event.Event) error
 }
 
-type Type[TypeID ID, T Root[TypeID]] struct {
-	Name string
-	New  func() T
-}
-
 func RecordThat[TypeID ID](root Root[TypeID], events ...event.Event) error {
 	return root.recordThat(root, events...)
 }

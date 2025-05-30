@@ -35,16 +35,17 @@ type RepositoryFuse[TypeID ID, TRoot Root[TypeID]] struct {
 }
 
 type EventSourcedRepository[TypeID ID, TRoot Root[TypeID]] struct {
-	// Every event sourced repo is backed by a generic log
-	// EventSourcedRepository is like an orchestrator for any kind of store.
-	store event.Log
-	kind  Type[TypeID, TRoot]
+	store        event.Log
+	newAggregate func() TRoot
 }
 
-func NewEventSourcedRepository[TypeID ID, TRoot Root[TypeID]](store event.Log, kind Type[TypeID, TRoot]) EventSourcedRepository[TypeID, TRoot] {
-	return EventSourcedRepository[TypeID, TRoot]{
-		store: store,
-		kind:  kind,
+func NewEventSourcedRepository[TypeID ID, TRoot Root[TypeID]](
+	store event.Log,
+	newAggregateFunc func() TRoot,
+) *EventSourcedRepository[TypeID, TRoot] {
+	return &EventSourcedRepository[TypeID, TRoot]{
+		store:        store,
+		newAggregate: newAggregateFunc,
 	}
 }
 
@@ -75,13 +76,13 @@ func LoadFromState[TypeID ID, S Root[TypeID], D any](v version.Version, dst D, d
 	return src, nil
 }
 
-func (repo EventSourcedRepository[TypeID, TRoot]) Get(ctx context.Context, id TypeID) (TRoot, error) {
+func (repo *EventSourcedRepository[TypeID, TRoot]) Get(ctx context.Context, id TypeID) (TRoot, error) {
 	var zeroValue TRoot
 
 	logID := event.LogID(id.String())
 	recordedEvents := repo.store.ReadEvents(ctx, logID, version.SelectFromBeginning)
 
-	root := repo.kind.New()
+	root := repo.newAggregate()
 
 	if err := LoadFromEvents(root, recordedEvents); err != nil {
 		return zeroValue, err
@@ -94,15 +95,13 @@ func (repo EventSourcedRepository[TypeID, TRoot]) Get(ctx context.Context, id Ty
 	return root, nil
 }
 
-func (repo EventSourcedRepository[TypeID, TRoot]) Save(ctx context.Context, root TRoot) error {
+func (repo *EventSourcedRepository[TypeID, TRoot]) Save(ctx context.Context, root TRoot) error {
 	events := root.FlushRecordedEvents()
 	if len(events) == 0 {
 		return nil
 	}
 
 	logID := event.LogID(root.ID().String())
-
-	// This gets the version that the root started with before accumulating events.
 	expectedVersion := version.CheckExact(
 		root.Version() - version.Version(len(events)),
 	)
