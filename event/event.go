@@ -1,6 +1,10 @@
 package event
 
-import "github.com/DeluxeOwl/eventuallynow/version"
+import (
+	"maps"
+
+	"github.com/DeluxeOwl/eventuallynow/version"
+)
 
 type GenericEvent interface {
 	EventName() string
@@ -13,11 +17,30 @@ type wrappedEvent[T GenericEvent] struct {
 
 type Event wrappedEvent[GenericEvent]
 
-func New(event GenericEvent) Event {
-	return Event{
-		event:    event,
-		metadata: nil,
+func (e *Event) GetMeta(key string) (string, bool) {
+	val, ok := e.metadata[key]
+	return val, ok
+}
+
+type Option func(*Event)
+
+func WithMetadata(meta map[string]string) Option {
+	return func(e *Event) {
+		maps.Copy(e.metadata, meta)
 	}
+}
+
+func New(event GenericEvent, opts ...Option) Event {
+	e := Event{
+		event:    event,
+		metadata: map[string]string{},
+	}
+
+	for _, opt := range opts {
+		opt(&e)
+	}
+
+	return e
 }
 
 func (ge *Event) Unwrap() GenericEvent {
