@@ -66,7 +66,7 @@ func NewPerson(id string, name string, now time.Time) (*Person, error) {
 
 	p := new(Person)
 
-	if err := aggregate.RecordThat(p, event.NewEvent(&PersEvent{
+	if err := aggregate.RecordThat(p, event.New(&PersEvent{
 		ID:         PersonID(id),
 		RecordTime: now,
 		Kind: &WasBorn{
@@ -80,7 +80,7 @@ func NewPerson(id string, name string, now time.Time) (*Person, error) {
 }
 
 func (p *Person) Age() error {
-	return aggregate.RecordThat(p, event.NewEvent(&PersEvent{
+	return aggregate.RecordThat(p, event.New(&PersEvent{
 		ID:         p.id,
 		RecordTime: time.Now(),
 		Kind:       &AgedOneYear{},

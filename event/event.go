@@ -13,7 +13,7 @@ type wrappedEvent[T GenericEvent] struct {
 
 type Event wrappedEvent[GenericEvent]
 
-func NewEvent(event GenericEvent) Event {
+func New(event GenericEvent) Event {
 	return Event{
 		event:    event,
 		metadata: nil,
