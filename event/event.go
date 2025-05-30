@@ -24,10 +24,6 @@ func (ge *EventAny) Event() Event {
 	return ge.event
 }
 
-func ToEnvelope(event Event) EventAny {
-	return NewEvent(event)
-}
-
 func ToStored(startingVersion version.Version, id LogID, events ...EventAny) []RecordedEvent {
 	recordedEvents := make([]RecordedEvent, len(events))
 	for i, e := range events {
