@@ -19,11 +19,11 @@ type ID interface {
 }
 
 type Aggregate interface {
-	Apply(event.Event) error
+	Apply(event.GenericEvent) error
 }
 
 type RecordedEventsFlusher interface {
-	FlushRecordedEvents() []event.EventAny
+	FlushRecordedEvents() []event.Event
 }
 
 type Root[TypeID ID] interface {
@@ -35,7 +35,7 @@ type Root[TypeID ID] interface {
 
 	// EventRecorder implements these, so you *have* to embed EventRecorder.
 	setVersion(version.Version)
-	recordThat(Aggregate, ...event.EventAny) error
+	recordThat(Aggregate, ...event.Event) error
 }
 
 type Type[TypeID ID, T Root[TypeID]] struct {
@@ -43,18 +43,18 @@ type Type[TypeID ID, T Root[TypeID]] struct {
 	New  func() T
 }
 
-func RecordThat[TypeID ID](root Root[TypeID], events ...event.EventAny) error {
+func RecordThat[TypeID ID](root Root[TypeID], events ...event.Event) error {
 	return root.recordThat(root, events...)
 }
 
 type Base struct {
 	version        version.Version
-	recordedEvents []event.EventAny
+	recordedEvents []event.Event
 }
 
 func (br *Base) Version() version.Version { return br.version }
 
-func (br *Base) FlushRecordedEvents() []event.EventAny {
+func (br *Base) FlushRecordedEvents() []event.Event {
 	flushed := br.recordedEvents
 	br.recordedEvents = nil
 
@@ -67,9 +67,9 @@ func (br *Base) setVersion(v version.Version) {
 }
 
 //nolint:unused // False positive.
-func (br *Base) recordThat(aggregate Aggregate, events ...event.EventAny) error {
+func (br *Base) recordThat(aggregate Aggregate, events ...event.Event) error {
 	for _, event := range events {
-		if err := aggregate.Apply(event.Event()); err != nil {
+		if err := aggregate.Apply(event.Unwrap()); err != nil {
 			return zerrors.New(ErrFailedToRecord).WithError(err)
 		}
 

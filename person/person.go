@@ -39,7 +39,7 @@ func (p *Person) ID() PersonID {
 	return PersonID(p.id.String())
 }
 
-func (p *Person) Apply(evt event.Event) error {
+func (p *Person) Apply(evt event.GenericEvent) error {
 	personEvent, ok := evt.(*PersEvent)
 	if !ok {
 		return zerrors.New(ErrUnexpectedEventType).Errorf("type: %T", personEvent)
@@ -87,7 +87,7 @@ func (p *Person) Age() error {
 	}))
 }
 
-var _ event.Event = new(PersEvent)
+var _ event.GenericEvent = new(PersEvent)
 
 type PersEvent struct {
 	ID         PersonID
@@ -99,7 +99,7 @@ func (p *PersEvent) EventName() string { return p.Kind.EventName() }
 
 //sumtype:decl
 type personEvent interface {
-	event.Event
+	event.GenericEvent
 	isPersonEvent()
 }
 

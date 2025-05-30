@@ -54,7 +54,7 @@ func LoadFromEvents[TypeID ID](root Root[TypeID], events event.RecordedEvents) e
 		if err != nil {
 			return zerrors.New(ErrLoadFromEvents).WithError(err)
 		}
-		if err := root.Apply(event.Event()); err != nil {
+		if err := root.Apply(event.Unwrap()); err != nil {
 			return zerrors.New(ErrLoadFromEvents).WithError(err)
 		}
 		root.setVersion(event.Version())

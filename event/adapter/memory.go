@@ -33,7 +33,7 @@ func NewMemoryStore() *MemoryStore {
 	}
 }
 
-func (s *MemoryStore) AppendEvents(ctx context.Context, id event.LogID, expected version.Check, events ...event.EventAny) (version.Version, error) {
+func (s *MemoryStore) AppendEvents(ctx context.Context, id event.LogID, expected version.Check, events ...event.Event) (version.Version, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -61,8 +61,8 @@ func (s *MemoryStore) AppendEvents(ctx context.Context, id event.LogID, expected
 	}
 
 	// Store events with versions starting from currentStreamVersion + 1
-	storedEvents := event.ToStored(currentStreamVersion, id, events...)
-	s.events[id] = append(s.events[id], storedEvents...)
+	recordedEvents := event.ToRecorded(currentStreamVersion, id, events...)
+	s.events[id] = append(s.events[id], recordedEvents...)
 
 	// Update and store the new version for this specific stream
 	newStreamVersion := currentStreamVersion + version.Version(len(events))

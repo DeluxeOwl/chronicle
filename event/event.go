@@ -2,29 +2,29 @@ package event
 
 import "github.com/DeluxeOwl/eventuallynow/version"
 
-type Event interface {
+type GenericEvent interface {
 	EventName() string
 }
 
-type Envelope[T Event] struct {
+type wrappedEvent[T GenericEvent] struct {
 	event    T
 	metadata map[string]string
 }
 
-type EventAny Envelope[Event]
+type Event wrappedEvent[GenericEvent]
 
-func NewEvent(event Event) EventAny {
-	return EventAny{
+func NewEvent(event GenericEvent) Event {
+	return Event{
 		event:    event,
 		metadata: nil,
 	}
 }
 
-func (ge *EventAny) Event() Event {
+func (ge *Event) Unwrap() GenericEvent {
 	return ge.event
 }
 
-func ToStored(startingVersion version.Version, id LogID, events ...EventAny) []RecordedEvent {
+func ToRecorded(startingVersion version.Version, id LogID, events ...Event) []RecordedEvent {
 	recordedEvents := make([]RecordedEvent, len(events))
 	for i, e := range events {
 		//nolint:gosec // It's not a problem in practice.
