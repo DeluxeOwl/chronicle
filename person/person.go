@@ -95,7 +95,7 @@ type PersEvent struct {
 	Kind       personEvent
 }
 
-func (p *PersEvent) Name() string { return p.Kind.Name() }
+func (p *PersEvent) EventName() string { return p.Kind.EventName() }
 
 //sumtype:decl
 type personEvent interface {
@@ -107,10 +107,10 @@ type WasBorn struct {
 	BornName string
 }
 
-func (*WasBorn) Name() string   { return "person-was-born" }
+func (*WasBorn) EventName() string   { return "person-was-born" }
 func (*WasBorn) isPersonEvent() {}
 
 type AgedOneYear struct{}
 
-func (*AgedOneYear) Name() string   { return "aged-one-year" }
+func (*AgedOneYear) EventName() string   { return "aged-one-year" }
 func (*AgedOneYear) isPersonEvent() {}

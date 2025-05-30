@@ -3,7 +3,7 @@ package event
 import "github.com/DeluxeOwl/eventuallynow/version"
 
 type Event interface {
-	Name() string
+	EventName() string
 }
 
 type Envelope[T Event] struct {
@@ -11,47 +11,24 @@ type Envelope[T Event] struct {
 	metadata map[string]string
 }
 
-type Option[T Event] func(*Envelope[T])
+type AnyEvent Envelope[Event]
 
-func NewEnvelope[T Event](event T, opts ...Option[T]) Envelope[T] {
-	e := Envelope[T]{
-		event:    event,
-		metadata: map[string]string{},
-	}
-	for _, o := range opts {
-		o(&e)
-	}
-	return e
-}
-
-type GenericEnvelope Envelope[Event]
-
-func NewGenericEnvelope(event Event) GenericEnvelope {
-	return GenericEnvelope{
+func NewEvent(event Event) AnyEvent {
+	return AnyEvent{
 		event:    event,
 		metadata: nil,
 	}
 }
 
-func (ge *GenericEnvelope) Event() Event {
+func (ge *AnyEvent) Event() Event {
 	return ge.event
 }
 
-func ToEnvelope(event Event) GenericEnvelope {
-	return NewGenericEnvelope(event)
+func ToEnvelope(event Event) AnyEvent {
+	return NewEvent(event)
 }
 
-func ToEnvelopes(events ...Event) []GenericEnvelope {
-	envelopes := make([]GenericEnvelope, 0, len(events))
-
-	for _, event := range events {
-		envelopes = append(envelopes, NewGenericEnvelope(event))
-	}
-
-	return envelopes
-}
-
-func ToStored(startingVersion version.Version, id LogID, events ...GenericEnvelope) []RecordedEvent {
+func ToStored(startingVersion version.Version, id LogID, events ...AnyEvent) []RecordedEvent {
 	recordedEvents := make([]RecordedEvent, len(events))
 	for i, e := range events {
 		//nolint:gosec // It's not a problem in practice.

@@ -5,3 +5,6 @@ tasks:
     cmds:
       - golangci-lint run .
       - golangci-lint fmt .
+  deadcode:
+    cmds:
+      - go run golang.org/x/tools/cmd/deadcode@latest .
