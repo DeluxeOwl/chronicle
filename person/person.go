@@ -66,7 +66,7 @@ func NewPerson(id string, name string, now time.Time) (*Person, error) {
 
 	p := new(Person)
 
-	if err := aggregate.RecordThat(p, event.ToEnvelope(&PersEvent{
+	if err := aggregate.RecordThat(p, event.NewEvent(&PersEvent{
 		ID:         PersonID(id),
 		RecordTime: now,
 		Kind: &WasBorn{
@@ -80,7 +80,7 @@ func NewPerson(id string, name string, now time.Time) (*Person, error) {
 }
 
 func (p *Person) Age() error {
-	return aggregate.RecordThat(p, event.ToEnvelope(&PersEvent{
+	return aggregate.RecordThat(p, event.NewEvent(&PersEvent{
 		ID:         p.id,
 		RecordTime: time.Now(),
 		Kind:       &AgedOneYear{},
@@ -107,10 +107,10 @@ type WasBorn struct {
 	BornName string
 }
 
-func (*WasBorn) EventName() string   { return "person-was-born" }
-func (*WasBorn) isPersonEvent() {}
+func (*WasBorn) EventName() string { return "person-was-born" }
+func (*WasBorn) isPersonEvent()    {}
 
 type AgedOneYear struct{}
 
-func (*AgedOneYear) EventName() string   { return "aged-one-year" }
-func (*AgedOneYear) isPersonEvent() {}
+func (*AgedOneYear) EventName() string { return "aged-one-year" }
+func (*AgedOneYear) isPersonEvent()    {}
