@@ -12,14 +12,14 @@ type LogID string
 type RecordedEvent struct {
 	version version.Version
 	logID   LogID
-	AnyEvent
+	EventAny
 }
 
-func NewRecorded(version version.Version, logID LogID, event AnyEvent) RecordedEvent {
+func NewRecorded(version version.Version, logID LogID, event EventAny) RecordedEvent {
 	return RecordedEvent{
 		version:  version,
 		logID:    logID,
-		AnyEvent: event,
+		EventAny: event,
 	}
 }
 
@@ -42,7 +42,7 @@ type AllReader interface {
 }
 
 type Appender interface {
-	AppendEvents(ctx context.Context, id LogID, expected version.Check, events ...AnyEvent) (version.Version, error)
+	AppendEvents(ctx context.Context, id LogID, expected version.Check, events ...EventAny) (version.Version, error)
 }
 
 type Log interface {

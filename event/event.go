@@ -11,24 +11,24 @@ type Envelope[T Event] struct {
 	metadata map[string]string
 }
 
-type AnyEvent Envelope[Event]
+type EventAny Envelope[Event]
 
-func NewEvent(event Event) AnyEvent {
-	return AnyEvent{
+func NewEvent(event Event) EventAny {
+	return EventAny{
 		event:    event,
 		metadata: nil,
 	}
 }
 
-func (ge *AnyEvent) Event() Event {
+func (ge *EventAny) Event() Event {
 	return ge.event
 }
 
-func ToEnvelope(event Event) AnyEvent {
+func ToEnvelope(event Event) EventAny {
 	return NewEvent(event)
 }
 
-func ToStored(startingVersion version.Version, id LogID, events ...AnyEvent) []RecordedEvent {
+func ToStored(startingVersion version.Version, id LogID, events ...EventAny) []RecordedEvent {
 	recordedEvents := make([]RecordedEvent, len(events))
 	for i, e := range events {
 		//nolint:gosec // It's not a problem in practice.
