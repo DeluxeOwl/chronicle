@@ -48,7 +48,6 @@ func NewEventSourcedRepository[TypeID ID, TRoot Root[TypeID]](store event.Log, k
 	}
 }
 
-// TODO: return domain errors, like the event message that didn't work
 func LoadFromEvents[TypeID ID](root Root[TypeID], events event.RecordedEvents) error {
 	for event, err := range events {
 		if err != nil {
