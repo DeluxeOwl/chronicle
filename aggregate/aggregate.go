@@ -38,8 +38,16 @@ type Root[TypeID ID] interface {
 	recordThat(Aggregate, ...event.Event) error
 }
 
-func RecordThat[TypeID ID](root Root[TypeID], events ...event.Event) error {
-	return root.recordThat(root, events...)
+func RecordEventsBatch[TypeID ID](root Root[TypeID], events []event.GenericEvent, opts ...event.Option) error {
+	ee := make([]event.Event, len(events))
+	for i := range events {
+		ee[i] = event.New(events[i], opts...)
+	}
+	return root.recordThat(root, ee...)
+}
+
+func RecordEvent[TypeID ID](root Root[TypeID], e event.GenericEvent, opts ...event.Option) error {
+	return root.recordThat(root, event.New(e, opts...))
 }
 
 type Base struct {

@@ -65,13 +65,13 @@ func New(id string, name string, now time.Time) (*Person, error) {
 
 	p := NewEmpty()
 
-	if err := aggregate.RecordThat(p, event.New(&PersEvent{
+	if err := aggregate.RecordEvent(p, &PersEvent{
 		ID:         PersonID(id),
 		RecordTime: now,
 		Kind: &WasBorn{
 			BornName: name,
 		},
-	})); err != nil {
+	}); err != nil {
 		return nil, zerrors.New(ErrCreate).WithError(err)
 	}
 
@@ -79,11 +79,11 @@ func New(id string, name string, now time.Time) (*Person, error) {
 }
 
 func (p *Person) Age() error {
-	return aggregate.RecordThat(p, event.New(&PersEvent{
+	return aggregate.RecordEvent(p, &PersEvent{
 		ID:         p.id,
 		RecordTime: time.Now(),
 		Kind:       &AgedOneYear{},
-	}))
+	})
 }
 
 var _ event.GenericEvent = new(PersEvent)
