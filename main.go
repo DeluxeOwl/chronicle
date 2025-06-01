@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"time"
 
 	"github.com/DeluxeOwl/eventuallynow/aggregate"
 	"github.com/DeluxeOwl/eventuallynow/event"
@@ -47,7 +46,7 @@ func main() {
 	repo := aggregate.NewEventSourcedRepository(memoryStore, person.NewEmpty)
 
 	id := person.PersonID("some-generated-id")
-	p, err := person.New(id.String(), "Johnny", time.Now())
+	p, err := person.New(id.String(), "Johnny")
 	if err != nil {
 		panic(err)
 	}

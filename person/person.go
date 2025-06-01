@@ -58,16 +58,16 @@ func (p *Person) Apply(evt event.GenericEvent) error {
 	return nil
 }
 
-func New(id string, name string, now time.Time) (*Person, error) {
+func New(id string, name string) (*Person, error) {
 	if name == "" {
 		return nil, zerrors.New(ErrEmptyName)
 	}
 
 	p := NewEmpty()
 
-	if err := aggregate.RecordEvent(p, &PersEvent{
+	if err := p.record(&PersEvent{
 		ID:         PersonID(id),
-		RecordTime: now,
+		RecordTime: time.Now(),
 		Kind: &WasBorn{
 			BornName: name,
 		},
@@ -79,11 +79,15 @@ func New(id string, name string, now time.Time) (*Person, error) {
 }
 
 func (p *Person) Age() error {
-	return aggregate.RecordEvent(p, &PersEvent{
+	return p.record(&PersEvent{
 		ID:         p.id,
 		RecordTime: time.Now(),
 		Kind:       &AgedOneYear{},
 	})
+}
+
+func (p *Person) record(event *PersEvent, opts ...event.Option) error {
+	return aggregate.RecordEvent(p, event, opts...)
 }
 
 var _ event.GenericEvent = new(PersEvent)
