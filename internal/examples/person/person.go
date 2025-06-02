@@ -30,16 +30,36 @@ type Person struct {
 	age  int
 }
 
-func NewEmpty() *Person {
-	return new(Person)
-}
-
 func (p *Person) ID() PersonID {
 	return PersonID(p.id.String())
 }
 
+func NewEmpty() *Person {
+	return new(Person)
+}
+
+func New(id string, name string) (*Person, error) {
+	if name == "" {
+		return nil, zerrors.New(ErrEmptyName)
+	}
+
+	p := NewEmpty()
+
+	if err := p.record(&PersonEvent{
+		ID:         PersonID(id),
+		RecordTime: time.Now(),
+		Kind: &WasBorn{
+			BornName: name,
+		},
+	}); err != nil {
+		return nil, zerrors.New(ErrCreate).WithError(err)
+	}
+
+	return p, nil
+}
+
 func (p *Person) Apply(evt event.GenericEvent) error {
-	personEvent, ok := evt.(*PersEvent)
+	personEvent, ok := evt.(*PersonEvent)
 	if !ok {
 		return zerrors.New(ErrUnexpectedEventType).Errorf("type: %T", personEvent)
 	}
@@ -58,62 +78,14 @@ func (p *Person) Apply(evt event.GenericEvent) error {
 	return nil
 }
 
-func New(id string, name string) (*Person, error) {
-	if name == "" {
-		return nil, zerrors.New(ErrEmptyName)
-	}
-
-	p := NewEmpty()
-
-	if err := p.record(&PersEvent{
-		ID:         PersonID(id),
-		RecordTime: time.Now(),
-		Kind: &WasBorn{
-			BornName: name,
-		},
-	}); err != nil {
-		return nil, zerrors.New(ErrCreate).WithError(err)
-	}
-
-	return p, nil
-}
-
 func (p *Person) Age() error {
-	return p.record(&PersEvent{
+	return p.record(&PersonEvent{
 		ID:         p.id,
 		RecordTime: time.Now(),
 		Kind:       &AgedOneYear{},
 	})
 }
 
-func (p *Person) record(event *PersEvent, opts ...event.Option) error {
+func (p *Person) record(event *PersonEvent, opts ...event.Option) error {
 	return aggregate.RecordEvent(p, event, opts...)
 }
-
-var _ event.GenericEvent = new(PersEvent)
-
-type PersEvent struct {
-	ID         PersonID
-	RecordTime time.Time
-	Kind       personEvent
-}
-
-func (p *PersEvent) EventName() string { return p.Kind.EventName() }
-
-//sumtype:decl
-type personEvent interface {
-	event.GenericEvent
-	isPersonEvent()
-}
-
-type WasBorn struct {
-	BornName string
-}
-
-func (*WasBorn) EventName() string { return "person-was-born" }
-func (*WasBorn) isPersonEvent()    {}
-
-type AgedOneYear struct{}
-
-func (*AgedOneYear) EventName() string { return "aged-one-year" }
-func (*AgedOneYear) isPersonEvent()    {}
