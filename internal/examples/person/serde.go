@@ -11,6 +11,8 @@ type PersonSnapshot struct {
 	Age  int      `json:"age"`
 }
 
+var Serde = NewPersonSnapshotSerde()
+
 type personSnapshotSerde struct{}
 
 func NewPersonSnapshotSerde() serde.Serde[*Person, *PersonSnapshot] {

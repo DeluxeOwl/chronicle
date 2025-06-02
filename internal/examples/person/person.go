@@ -38,7 +38,7 @@ func NewEmpty() *Person {
 	return new(Person)
 }
 
-func New(id string, name string) (*Person, error) {
+func New(id PersonID, name string) (*Person, error) {
 	if name == "" {
 		return nil, zerrors.New(ErrEmptyName)
 	}
@@ -46,7 +46,7 @@ func New(id string, name string) (*Person, error) {
 	p := NewEmpty()
 
 	if err := p.record(&PersonEvent{
-		ID:         PersonID(id),
+		ID:         id,
 		RecordTime: time.Now(),
 		Kind: &WasBorn{
 			BornName: name,

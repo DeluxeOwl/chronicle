@@ -31,7 +31,18 @@ func (re *RecordedEvent) LogID() LogID {
 	return re.logID
 }
 
-type RecordedEvents = iter.Seq2[RecordedEvent, error]
+type RecordedEvents iter.Seq2[RecordedEvent, error]
+
+func (re RecordedEvents) AsSlice() ([]RecordedEvent, error) {
+	ee := []RecordedEvent{}
+	for ev, err := range re {
+		if err != nil {
+			return nil, err
+		}
+		ee = append(ee, ev)
+	}
+	return ee, nil
+}
 
 type AllReader interface {
 	ReadAllEvents(ctx context.Context, selector version.Selector) RecordedEvents
