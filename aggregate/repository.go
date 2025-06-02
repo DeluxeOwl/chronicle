@@ -63,8 +63,8 @@ func LoadFromEvents[TypeID ID](root Root[TypeID], events event.RecordedEvents) e
 	return nil
 }
 
-func LoadFromState[TypeID ID, S Root[TypeID], D any](v version.Version, dst D, deserializer serde.Deserializer[S, D]) (S, error) {
-	var zeroValue S
+func LoadFromState[TypeID ID, TRoot Root[TypeID], D any](v version.Version, dst D, deserializer serde.Deserializer[TRoot, D]) (TRoot, error) {
+	var zeroValue TRoot
 
 	src, err := deserializer.Deserialize(dst)
 	if err != nil {
