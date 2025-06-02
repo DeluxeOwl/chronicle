@@ -29,24 +29,32 @@ type WasBorn struct {
 	BornName string `json:"bornName"`
 }
 
-func (*WasBorn) EventName() string { return "person-was-born" }
+// For exhaustive checking.
+type PersonEventName string
+
+const (
+	PersonEventWasBorn     PersonEventName = "person-was-born"
+	PersonEventAgedOneYear PersonEventName = "aged-one-year"
+)
+
+func (*WasBorn) EventName() string { return string(PersonEventWasBorn) }
 func (*WasBorn) isPersonEvent()    {}
 
 type AgedOneYear struct{}
 
-func (*AgedOneYear) EventName() string { return "aged-one-year" }
+func (*AgedOneYear) EventName() string { return string(PersonEventAgedOneYear) }
 func (*AgedOneYear) isPersonEvent()    {}
 
 type PersonEventSnapshot struct {
 	PersonEvent
-	EventName string `json:"eventName"`
+	EventName PersonEventName `json:"eventName"`
 }
 
 type personEventRawSnapshot struct {
 	ID         PersonID        `json:"id"`
 	RecordTime time.Time       `json:"recordTime"`
 	Kind       json.RawMessage `json:"kind"`
-	EventName  string          `json:"eventName"` // EventName of the Kind
+	EventName  PersonEventName `json:"eventName"`
 }
 
 func NewPersonPayloadSerde() serde.Serde[event.GenericEvent, []byte] {
@@ -64,7 +72,7 @@ func serializePersonEventPayload(ge event.GenericEvent) ([]byte, error) {
 
 	snap := &PersonEventSnapshot{
 		PersonEvent: *personEvent,
-		EventName:   personEvent.Kind.EventName(),
+		EventName:   PersonEventName(personEvent.Kind.EventName()),
 	}
 	return json.Marshal(snap)
 }
@@ -81,13 +89,13 @@ func deserializePersonEventPayload(data []byte) (event.GenericEvent, error) {
 	}
 
 	switch rawSnap.EventName {
-	case (*WasBorn)(nil).EventName():
+	case PersonEventWasBorn:
 		var kind WasBorn
 		if err := json.Unmarshal(rawSnap.Kind, &kind); err != nil {
 			return nil, fmt.Errorf("person payload deserializer: unmarshal WasBorn kind: %w (json: %s)", err, string(rawSnap.Kind))
 		}
 		deserializedCoreEvent.Kind = &kind
-	case (*AgedOneYear)(nil).EventName():
+	case PersonEventAgedOneYear:
 		var kind AgedOneYear
 		if err := json.Unmarshal(rawSnap.Kind, &kind); err != nil {
 			return nil, fmt.Errorf("person payload deserializer: unmarshal AgedOneYear kind: %w (json: %s)", err, string(rawSnap.Kind))
