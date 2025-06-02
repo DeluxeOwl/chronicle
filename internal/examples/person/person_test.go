@@ -6,7 +6,9 @@ import (
 	"github.com/DeluxeOwl/eventuallynow/aggregate"
 	"github.com/DeluxeOwl/eventuallynow/event"
 	memoryadapter "github.com/DeluxeOwl/eventuallynow/event/adapter"
+	"github.com/DeluxeOwl/eventuallynow/internal/examples"
 	"github.com/DeluxeOwl/eventuallynow/internal/examples/person"
+	"github.com/DeluxeOwl/eventuallynow/serde"
 	"github.com/DeluxeOwl/eventuallynow/version"
 	"github.com/stretchr/testify/require"
 )
@@ -14,7 +16,9 @@ import (
 func TestSomething(t *testing.T) {
 	ctx := t.Context()
 
-	memoryStore := memoryadapter.NewMemoryStore(person.PersonEventSerde{})
+	payloadProvider := examples.NewAppPayloadSerdeProvider()
+	genericEventSerde := serde.NewDefaultEventSerde(payloadProvider)
+	memoryStore := memoryadapter.NewMemoryStore(genericEventSerde)
 
 	// Typically you'd pass the serde config to the event sourced repository
 	repo := aggregate.NewEventSourcedRepository(memoryStore, person.NewEmpty)

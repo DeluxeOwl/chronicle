@@ -7,7 +7,6 @@ import (
 
 	"github.com/DeluxeOwl/eventuallynow/event"
 	"github.com/DeluxeOwl/eventuallynow/serde"
-	"github.com/DeluxeOwl/zerrors"
 )
 
 var _ event.GenericEvent = new(PersonEvent)
@@ -15,7 +14,7 @@ var _ event.GenericEvent = new(PersonEvent)
 type PersonEvent struct {
 	ID         PersonID    `json:"id"`
 	RecordTime time.Time   `json:"recordTime"`
-	Kind       personEvent `json:"kind" exhaustruct:"optional"`
+	Kind       personEvent `json:"kind"       exhaustruct:"optional"`
 }
 
 func (p *PersonEvent) EventName() string { return p.Kind.EventName() }
@@ -40,26 +39,40 @@ func (*AgedOneYear) isPersonEvent()    {}
 
 type PersonEventSnapshot struct {
 	PersonEvent
-	EventName string            `json:"eventName"`
-	Metadata  map[string]string `json:"metadata,omitempty"`
+	EventName string `json:"eventName"`
 }
 
 type personEventRawSnapshot struct {
-	ID         PersonID          `json:"id"`
-	RecordTime time.Time         `json:"recordTime"`
-	Kind       json.RawMessage   `json:"kind"`
-	EventName  string            `json:"eventName"`
-	Metadata   map[string]string `json:"metadata,omitempty"`
+	ID         PersonID        `json:"id"`
+	RecordTime time.Time       `json:"recordTime"`
+	Kind       json.RawMessage `json:"kind"`
+	EventName  string          `json:"eventName"` // EventName of the Kind
 }
 
-type PersonEventSerde struct{}
+func NewPersonPayloadSerde() serde.Serde[event.GenericEvent, []byte] {
+	return serde.Fuse(
+		serde.SerializerFunc[event.GenericEvent, []byte](serializePersonEventPayload),
+		serde.DeserializerFunc[event.GenericEvent, []byte](deserializePersonEventPayload),
+	)
+}
 
-var _ serde.Bytes[event.Event] = PersonEventSerde{}
+func serializePersonEventPayload(ge event.GenericEvent) ([]byte, error) {
+	personEvent, ok := ge.(*PersonEvent)
+	if !ok {
+		return nil, fmt.Errorf("person payload serializer: expected *PersonEvent, got %T", ge)
+	}
 
-func (p PersonEventSerde) Deserialize(dst []byte) (event.Event, error) {
+	snap := &PersonEventSnapshot{
+		PersonEvent: *personEvent,
+		EventName:   personEvent.Kind.EventName(),
+	}
+	return json.Marshal(snap)
+}
+
+func deserializePersonEventPayload(data []byte) (event.GenericEvent, error) {
 	var rawSnap personEventRawSnapshot
-	if err := json.Unmarshal(dst, &rawSnap); err != nil {
-		return event.Event{}, fmt.Errorf("unmarshal event data into raw snapshot: %w", err)
+	if err := json.Unmarshal(data, &rawSnap); err != nil {
+		return nil, fmt.Errorf("person payload deserializer: unmarshal raw snapshot: %w (data: %s)", err, string(data))
 	}
 
 	deserializedCoreEvent := &PersonEvent{
@@ -71,39 +84,17 @@ func (p PersonEventSerde) Deserialize(dst []byte) (event.Event, error) {
 	case (*WasBorn)(nil).EventName():
 		var kind WasBorn
 		if err := json.Unmarshal(rawSnap.Kind, &kind); err != nil {
-			return event.Event{}, fmt.Errorf("unmarshal WasBorn kind: %w (json: %s)", err, string(rawSnap.Kind))
+			return nil, fmt.Errorf("person payload deserializer: unmarshal WasBorn kind: %w (json: %s)", err, string(rawSnap.Kind))
 		}
 		deserializedCoreEvent.Kind = &kind
 	case (*AgedOneYear)(nil).EventName():
 		var kind AgedOneYear
 		if err := json.Unmarshal(rawSnap.Kind, &kind); err != nil {
-			return event.Event{}, fmt.Errorf("unmarshal AgedOneYear kind: %w (json: %s)", err, string(rawSnap.Kind))
+			return nil, fmt.Errorf("person payload deserializer: unmarshal AgedOneYear kind: %w (json: %s)", err, string(rawSnap.Kind))
 		}
 		deserializedCoreEvent.Kind = &kind
 	default:
-		return event.Event{}, fmt.Errorf("unknown event name '%s' found in event data", rawSnap.EventName)
+		return nil, fmt.Errorf("person payload deserializer: unknown event name '%s' in person event payload snapshot", rawSnap.EventName)
 	}
-
-	return event.New(deserializedCoreEvent, event.WithMetadata(rawSnap.Metadata)), nil
-}
-
-func (p PersonEventSerde) Serialize(src event.Event) ([]byte, error) {
-	genericEvt := src.Unwrap()
-	personEvent, ok := genericEvt.(*PersonEvent)
-	if !ok {
-		return nil, zerrors.New(ErrUnexpectedEventType).Errorf("expected *PersonEvent, got type: %T", genericEvt)
-	}
-
-	snap := &PersonEventSnapshot{
-		PersonEvent: *personEvent,
-		EventName:   personEvent.EventName(),
-		Metadata:    src.GetMeta(),
-	}
-
-	b, err := json.Marshal(snap)
-	if err != nil {
-		return nil, fmt.Errorf("marshal PersonEventSnapshot: %w", err)
-	}
-
-	return b, nil
+	return deserializedCoreEvent, nil
 }

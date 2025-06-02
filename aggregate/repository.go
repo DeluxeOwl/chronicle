@@ -5,6 +5,7 @@ import (
 
 	"github.com/DeluxeOwl/eventuallynow/event"
 	"github.com/DeluxeOwl/eventuallynow/serde"
+
 	"github.com/DeluxeOwl/eventuallynow/version"
 	"github.com/DeluxeOwl/zerrors"
 )
