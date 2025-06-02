@@ -33,12 +33,12 @@ func (re *RecordedEvent) LogID() LogID {
 
 type RecordedEvents = iter.Seq2[RecordedEvent, error]
 
-type Reader interface {
-	ReadEvents(ctx context.Context, id LogID, selector version.Selector) RecordedEvents
-}
-
 type AllReader interface {
 	ReadAllEvents(ctx context.Context, selector version.Selector) RecordedEvents
+}
+
+type Reader interface {
+	ReadEvents(ctx context.Context, id LogID, selector version.Selector) RecordedEvents
 }
 
 type Appender interface {
