@@ -1,44 +1,18 @@
-package main
+package person_test
 
 import (
-	"context"
+	"testing"
 
 	"github.com/DeluxeOwl/eventuallynow/aggregate"
 	"github.com/DeluxeOwl/eventuallynow/event"
 	memoryadapter "github.com/DeluxeOwl/eventuallynow/event/adapter"
-	"github.com/DeluxeOwl/eventuallynow/person"
-	"github.com/DeluxeOwl/eventuallynow/serde"
+	"github.com/DeluxeOwl/eventuallynow/internal/examples/person"
 	"github.com/DeluxeOwl/eventuallynow/version"
 	"github.com/sanity-io/litter"
 )
 
-func printSerializedAndDeserialized(p *person.Person) {
-	personToSnapshot := person.NewPersonSnapshotSerde()
-	snapshotToJSON := serde.NewJSON(func() *person.PersonSnapshot { return new(person.PersonSnapshot) })
-
-	serde := serde.Chain(
-		personToSnapshot,
-		snapshotToJSON,
-	)
-
-	serialized, err := serde.Serialize(p)
-	if err != nil {
-		panic(err)
-	}
-
-	litter.Dump(serialized)
-
-	deserialized, err := serde.Deserialize(serialized)
-	if err != nil {
-		panic(err)
-	}
-
-	litter.Dump(deserialized)
-}
-
-func main() {
-	ctx := context.Background()
-
+func TestSomething(t *testing.T) {
+	ctx := t.Context()
 	litter.Config.HidePrivateFields = false
 
 	memoryStore := memoryadapter.NewMemoryStore()
@@ -57,8 +31,6 @@ func main() {
 			panic(err)
 		}
 	}
-
-	printSerializedAndDeserialized(p)
 
 	litter.Dump(p)
 
