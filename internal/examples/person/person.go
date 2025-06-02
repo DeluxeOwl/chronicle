@@ -51,7 +51,9 @@ func New(id PersonID, name string) (*Person, error) {
 		Kind: &WasBorn{
 			BornName: name,
 		},
-	}); err != nil {
+	}, event.WithMetadata(map[string]string{
+		"tag": "born-human",
+	})); err != nil {
 		return nil, zerrors.New(ErrCreate).WithError(err)
 	}
 

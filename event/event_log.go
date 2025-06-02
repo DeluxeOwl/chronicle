@@ -15,8 +15,8 @@ type RecordedEvent struct {
 	Event
 }
 
-func NewRecorded(version version.Version, logID LogID, event Event) RecordedEvent {
-	return RecordedEvent{
+func NewRecorded(version version.Version, logID LogID, event Event) *RecordedEvent {
+	return &RecordedEvent{
 		version: version,
 		logID:   logID,
 		Event:   event,
@@ -31,7 +31,7 @@ func (re *RecordedEvent) LogID() LogID {
 	return re.logID
 }
 
-type RecordedEvents iter.Seq2[RecordedEvent, error]
+type RecordedEvents iter.Seq2[*RecordedEvent, error]
 
 func (re RecordedEvents) AsSlice() ([]RecordedEvent, error) {
 	ee := []RecordedEvent{}
@@ -39,7 +39,7 @@ func (re RecordedEvents) AsSlice() ([]RecordedEvent, error) {
 		if err != nil {
 			return nil, err
 		}
-		ee = append(ee, ev)
+		ee = append(ee, *ev)
 	}
 	return ee, nil
 }

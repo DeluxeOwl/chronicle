@@ -17,9 +17,8 @@ type wrappedEvent[T GenericEvent] struct {
 
 type Event wrappedEvent[GenericEvent]
 
-func (e *Event) GetMeta(key string) (string, bool) {
-	val, ok := e.metadata[key]
-	return val, ok
+func (e *Event) GetMeta() map[string]string {
+	return e.metadata
 }
 
 type Option func(*Event)
@@ -47,8 +46,8 @@ func (ge *Event) Unwrap() GenericEvent {
 	return ge.event
 }
 
-func ToRecorded(startingVersion version.Version, id LogID, events ...Event) []RecordedEvent {
-	recordedEvents := make([]RecordedEvent, len(events))
+func ToRecorded(startingVersion version.Version, id LogID, events ...Event) []*RecordedEvent {
+	recordedEvents := make([]*RecordedEvent, len(events))
 	for i, e := range events {
 		//nolint:gosec // It's not a problem in practice.
 		recordedEvents[i] = NewRecorded(startingVersion+version.Version(i+1), id, e)

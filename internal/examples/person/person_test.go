@@ -14,7 +14,7 @@ import (
 func TestSomething(t *testing.T) {
 	ctx := t.Context()
 
-	memoryStore := memoryadapter.NewMemoryStore()
+	memoryStore := memoryadapter.NewMemoryStore(person.PersonEventSerde{})
 
 	// Typically you'd pass the serde config to the event sourced repository
 	repo := aggregate.NewEventSourcedRepository(memoryStore, person.NewEmpty)
@@ -52,4 +52,8 @@ func TestSomething(t *testing.T) {
 	events, err := recordedEvents.AsSlice()
 	require.NoError(t, err)
 	require.Len(t, events, 3)
+
+	val, ok := events[0].GetMeta()["tag"]
+	require.True(t, ok)
+	require.Equal(t, "born-human", val)
 }
