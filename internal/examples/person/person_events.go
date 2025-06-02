@@ -9,9 +9,9 @@ import (
 var _ event.GenericEvent = new(PersonEvent)
 
 type PersonEvent struct {
-	ID         PersonID
-	RecordTime time.Time
-	Kind       personEvent
+	ID         PersonID    `json:"id"`
+	RecordTime time.Time   `json:"recordTime"`
+	Kind       personEvent `json:"kind"`
 }
 
 func (p *PersonEvent) EventName() string { return p.Kind.EventName() }
@@ -24,7 +24,7 @@ type personEvent interface {
 
 // Technically, you could add constructors for the events as well.
 type WasBorn struct {
-	BornName string
+	BornName string `json:"bornName"`
 }
 
 func (*WasBorn) EventName() string { return "person-was-born" }
