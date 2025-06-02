@@ -8,7 +8,6 @@ import (
 	memoryadapter "github.com/DeluxeOwl/eventuallynow/event/adapter"
 	"github.com/DeluxeOwl/eventuallynow/internal/examples/person"
 	"github.com/DeluxeOwl/eventuallynow/version"
-	"github.com/sanity-io/litter"
 	"github.com/stretchr/testify/require"
 )
 
@@ -47,8 +46,6 @@ func TestSomething(t *testing.T) {
 	require.Equal(t, ageIncrease, snap.Age)
 	require.Equal(t, "Johnny", snap.Name)
 	require.EqualValues(t, "some-generated-id", snap.ID)
-
-	litter.Config.HidePrivateFields = false
 
 	recordedEvents := memoryStore.ReadEvents(ctx, event.LogID(id.String()), version.SelectFromBeginning)
 

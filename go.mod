@@ -4,7 +4,6 @@ go 1.24.2
 
 require (
 	github.com/DeluxeOwl/zerrors v0.0.0-20250401070003-826e9d013519
-	github.com/sanity-io/litter v1.5.8
 	github.com/stretchr/testify v1.10.0
 )
 
