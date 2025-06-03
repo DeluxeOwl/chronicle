@@ -2,6 +2,8 @@ package registry
 
 import "sync"
 
+// TODO: what if not global, but injected
+
 var (
 	eventFactories = make(map[string]func() any)
 	registryMu     sync.RWMutex // Mutex to protect eventFactories
