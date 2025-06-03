@@ -40,6 +40,14 @@ func (re *RecordedEvent) EventAny() EventAny {
 	return re.ev.Unwrap()
 }
 
+func (re *RecordedEvent) SerializableFields() RecordedEventSerializableFields {
+	return RecordedEventSerializableFields{
+		Version:   re.version,
+		LogID:     re.logID,
+		EventName: re.EventName(),
+	}
+}
+
 type RecordedEventSerializableFields struct {
 	Version   version.Version `json:"version"`
 	LogID     LogID           `json:"logID"`

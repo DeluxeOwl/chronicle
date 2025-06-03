@@ -107,15 +107,13 @@ func (s *Memory) marshalRecordedToInternal(recEvents []*event.RecordedEvent) ([]
 	internalBytes := make([][]byte, len(recEvents))
 
 	for i, r := range recEvents {
-		snap := r.Snapshot()
-
-		rbytes, err := json.Marshal(snap.Event)
+		rbytes, err := event.Marshal(r.EventAny())
 		if err != nil {
 			return nil, fmt.Errorf("marshal snap record: %w", err)
 		}
 
 		ir := internalRecord{
-			RecordedEventSerializableFields: snap.RecordedEventSerializableFields,
+			RecordedEventSerializableFields: r.SerializableFields(),
 			Data:                            rbytes,
 		}
 
@@ -144,7 +142,7 @@ func (s *Memory) unmarshalInternalToRecorded(internalMarshaled []byte) (*event.R
 	}
 
 	ev := fact()
-	err = json.Unmarshal(ir.Data, ev)
+	err = event.Unmarshal(ir.Data, ev)
 	if err != nil {
 		return nil, fmt.Errorf("internal unmarshal record data: %w", err)
 	}

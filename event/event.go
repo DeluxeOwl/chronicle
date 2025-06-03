@@ -1,5 +1,7 @@
 package event
 
+import "encoding/json"
+
 type EventAny interface {
 	EventName() string
 }
@@ -24,4 +26,29 @@ func (ge *Event) Unwrap() EventAny {
 
 func (ge *Event) EventName() string {
 	return ge.event.EventName()
+}
+
+type Unmarshaler interface {
+	UnmarshalEvent(data []byte) error
+}
+
+type Marshaler interface {
+	MarshalEvent() ([]byte, error)
+}
+
+// TODO: allow global encoder/decoder, or constructor
+func Unmarshal(data []byte, v EventAny) error {
+	if customUnmarshal, ok := v.(Unmarshaler); ok {
+		return customUnmarshal.UnmarshalEvent(data)
+	}
+
+	return json.Unmarshal(data, v)
+}
+
+func Marshal(v EventAny) ([]byte, error) {
+	if customMarshal, ok := v.(Marshaler); ok {
+		return customMarshal.MarshalEvent()
+	}
+
+	return json.Marshal(v)
 }
