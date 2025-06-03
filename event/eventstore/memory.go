@@ -73,7 +73,7 @@ func (s *Memory) AppendEvents(ctx context.Context, id event.LogID, expected vers
 
 	// Store events with versions starting from currentStreamVersion + 1
 	recordedEvents := event.ToRecorded(currentStreamVersion, id, events...)
-	internal, err := s.recordedToInternal(recordedEvents)
+	internal, err := s.marshalRecordedToInternal(recordedEvents)
 	if err != nil {
 		return 0, zerrors.New(ErrAppendEvents).WithError(err)
 	}
@@ -87,7 +87,7 @@ func (s *Memory) AppendEvents(ctx context.Context, id event.LogID, expected vers
 	return newStreamVersion, nil
 }
 
-func (s *Memory) recordedToInternal(recEvents []*event.RecordedEvent) ([][]byte, error) {
+func (s *Memory) marshalRecordedToInternal(recEvents []*event.RecordedEvent) ([][]byte, error) {
 	internalBytes := make([][]byte, len(recEvents))
 
 	for i, r := range recEvents {
@@ -95,7 +95,7 @@ func (s *Memory) recordedToInternal(recEvents []*event.RecordedEvent) ([][]byte,
 			Version: r.Version(),
 			LogID:   r.LogID(),
 		}
-		// TODO
+
 		b := []byte{}
 		ir.EventData = b
 
@@ -109,7 +109,7 @@ func (s *Memory) recordedToInternal(recEvents []*event.RecordedEvent) ([][]byte,
 	return internalBytes, nil
 }
 
-func (s *Memory) internalToRecorded(internalMarshaled []byte) (*event.RecordedEvent, error) {
+func (s *Memory) unmarshalInternalToRecorded(internalMarshaled []byte) (*event.RecordedEvent, error) {
 	var ir internalRecorded
 	err := json.Unmarshal(internalMarshaled, &ir)
 	if err != nil {
@@ -132,7 +132,7 @@ func (s *Memory) ReadEvents(ctx context.Context, id event.LogID, selector versio
 		}
 
 		for _, internalSerialized := range events {
-			e, err := s.internalToRecorded(internalSerialized)
+			e, err := s.unmarshalInternalToRecorded(internalSerialized)
 
 			if err != nil && !yield(nil, err) {
 				return
