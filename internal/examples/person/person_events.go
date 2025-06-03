@@ -14,12 +14,13 @@ type PersonEvent struct {
 	Kind       personEvent `json:"kind"       exhaustruct:"optional"`
 }
 
-func (p *PersonEvent) EventName() string { return p.Kind.EventName() }
+func (p *PersonEvent) EventName() string {
+	return p.Kind.personEventName()
+}
 
 //sumtype:decl
 type personEvent interface {
-	event.EventAny
-	isPersonEvent()
+	personEventName() string
 }
 
 type WasBorn struct {
@@ -34,10 +35,8 @@ const (
 	PersonEventAgedOneYear PersonEventName = "aged-one-year"
 )
 
-func (*WasBorn) EventName() string { return string(PersonEventWasBorn) }
-func (*WasBorn) isPersonEvent()    {}
+func (*WasBorn) personEventName() string { return string(PersonEventWasBorn) }
 
 type AgedOneYear struct{}
 
-func (*AgedOneYear) EventName() string { return string(PersonEventAgedOneYear) }
-func (*AgedOneYear) isPersonEvent()    {}
+func (*AgedOneYear) personEventName() string { return string(PersonEventAgedOneYear) }

@@ -1,4 +1,4 @@
-package memoryadapter
+package eventstore
 
 import (
 	"context"
@@ -7,18 +7,18 @@ import (
 	"sync"
 
 	"github.com/DeluxeOwl/eventuallynow/event"
-	"github.com/DeluxeOwl/eventuallynow/serde"
+
 	"github.com/DeluxeOwl/eventuallynow/version"
 	"github.com/DeluxeOwl/zerrors"
 )
 
-type MemoryStoreError string
+type MemoryError string
 
 const (
-	ErrAppendEvents MemoryStoreError = "append_events"
+	ErrAppendEvents MemoryError = "append_events"
 )
 
-var _ event.Log = new(MemoryStore)
+var _ event.Log = new(Memory)
 
 type internalRecorded struct {
 	Version version.Version `json:"version"`
@@ -27,25 +27,24 @@ type internalRecorded struct {
 	EventData []byte `json:"eventData" exhaustruct:"optional"`
 }
 
-type MemoryStore struct {
-	mu         sync.RWMutex
-	eventSerde serde.Bytes[event.Event]
-	events     map[event.LogID][][]byte
+type Memory struct {
+	mu sync.RWMutex
+
+	events map[event.LogID][][]byte
 
 	// Versions need to be handled per id
 	logVersions map[event.LogID]version.Version
 }
 
-func NewMemoryStore(eventSerde serde.Bytes[event.Event]) *MemoryStore {
-	return &MemoryStore{
+func NewMemory() *Memory {
+	return &Memory{
 		mu:          sync.RWMutex{},
-		eventSerde:  eventSerde,
 		events:      map[event.LogID][][]byte{},
 		logVersions: map[event.LogID]version.Version{},
 	}
 }
 
-func (s *MemoryStore) AppendEvents(ctx context.Context, id event.LogID, expected version.Check, events ...event.Event) (version.Version, error) {
+func (s *Memory) AppendEvents(ctx context.Context, id event.LogID, expected version.Check, events ...event.Event) (version.Version, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -88,7 +87,7 @@ func (s *MemoryStore) AppendEvents(ctx context.Context, id event.LogID, expected
 	return newStreamVersion, nil
 }
 
-func (s *MemoryStore) recordedToInternal(recEvents []*event.RecordedEvent) ([][]byte, error) {
+func (s *Memory) recordedToInternal(recEvents []*event.RecordedEvent) ([][]byte, error) {
 	internalBytes := make([][]byte, len(recEvents))
 
 	for i, r := range recEvents {
@@ -96,7 +95,7 @@ func (s *MemoryStore) recordedToInternal(recEvents []*event.RecordedEvent) ([][]
 			Version: r.Version(),
 			LogID:   r.LogID(),
 		}
-		b, err := s.eventSerde.Serialize(r.Event())
+		b, err := r.EventAny().MarshalEvent()
 		if err != nil {
 			return nil, fmt.Errorf("serialize event: %w", err)
 		}
@@ -112,23 +111,25 @@ func (s *MemoryStore) recordedToInternal(recEvents []*event.RecordedEvent) ([][]
 	return internalBytes, nil
 }
 
-func (s *MemoryStore) internalToRecorded(internalMarshaled []byte) (*event.RecordedEvent, error) {
+func (s *Memory) internalToRecorded(internalMarshaled []byte) (*event.RecordedEvent, error) {
 	var ir internalRecorded
 	err := json.Unmarshal(internalMarshaled, &ir)
 	if err != nil {
 		return nil, fmt.Errorf("internal unmarshal: %w", err)
 	}
 
-	e, err := s.eventSerde.Deserialize(ir.EventData)
+	var e event.EventAny
+
+	ev, err := e.UnmarshalEvent(ir.EventData)
 	if err != nil {
 		return nil, fmt.Errorf("internal deserialize: %w", err)
 	}
 
-	return event.NewRecorded(ir.Version, ir.LogID, e), nil
+	return event.NewRecorded(ir.Version, ir.LogID, ev), nil
 }
 
 // ReadEvents implements event.Store.
-func (s *MemoryStore) ReadEvents(ctx context.Context, id event.LogID, selector version.Selector) event.RecordedEvents {
+func (s *Memory) ReadEvents(ctx context.Context, id event.LogID, selector version.Selector) event.RecordedEvents {
 	return func(yield func(*event.RecordedEvent, error) bool) {
 		s.mu.RLock()
 		defer s.mu.RUnlock()

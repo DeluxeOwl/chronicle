@@ -10,6 +10,8 @@ type wrapper[T EventAny] struct {
 
 type Event wrapper[EventAny]
 
+var Empty = Event{event: nil}
+
 func New(event EventAny) Event {
 	return Event{
 		event: event,

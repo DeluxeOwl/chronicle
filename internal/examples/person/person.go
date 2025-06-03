@@ -30,6 +30,10 @@ type Person struct {
 	age  int
 }
 
+func (p *Person) GetAge() int {
+	return p.age
+}
+
 func (p *Person) ID() PersonID {
 	return PersonID(p.id.String())
 }
@@ -61,7 +65,7 @@ func New(id PersonID, name string) (*Person, error) {
 func (p *Person) Apply(evt event.EventAny) error {
 	personEvent, ok := evt.(*PersonEvent)
 	if !ok {
-		return zerrors.New(ErrUnexpectedEventType).Errorf("type: %T", personEvent)
+		return zerrors.New(ErrUnexpectedEventType).Errorf("type: %T", evt)
 	}
 
 	switch kind := personEvent.Kind.(type) {
