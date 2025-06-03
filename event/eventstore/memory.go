@@ -95,10 +95,8 @@ func (s *Memory) recordedToInternal(recEvents []*event.RecordedEvent) ([][]byte,
 			Version: r.Version(),
 			LogID:   r.LogID(),
 		}
-		b, err := r.EventAny().MarshalEvent()
-		if err != nil {
-			return nil, fmt.Errorf("serialize event: %w", err)
-		}
+		// TODO
+		b := []byte{}
 		ir.EventData = b
 
 		bb, err := json.Marshal(ir)
@@ -118,14 +116,8 @@ func (s *Memory) internalToRecorded(internalMarshaled []byte) (*event.RecordedEv
 		return nil, fmt.Errorf("internal unmarshal: %w", err)
 	}
 
-	var e event.EventAny
-
-	ev, err := e.UnmarshalEvent(ir.EventData)
-	if err != nil {
-		return nil, fmt.Errorf("internal deserialize: %w", err)
-	}
-
-	return event.NewRecorded(ir.Version, ir.LogID, ev), nil
+	// TODO
+	return event.NewRecorded(ir.Version, ir.LogID, event.Empty), nil
 }
 
 // ReadEvents implements event.Store.
