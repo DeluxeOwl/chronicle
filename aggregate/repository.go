@@ -78,7 +78,7 @@ func (repo *EventSourcedRepository[TypeID, TRoot]) Get(ctx context.Context, id T
 }
 
 func (repo *EventSourcedRepository[TypeID, TRoot]) Save(ctx context.Context, root TRoot) error {
-	events := root.FlushRecordedEvents()
+	events := root.FlushUncommitedEvents()
 	if len(events) == 0 {
 		return nil
 	}

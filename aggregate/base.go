@@ -7,8 +7,8 @@ import (
 )
 
 type Base struct {
-	version        version.Version
-	recordedEvents []event.Event
+	version          version.Version
+	uncommitedEvents []event.Event
 
 	//nolint:unused // False positive.
 	registeredEvents bool
@@ -16,9 +16,9 @@ type Base struct {
 
 func (br *Base) Version() version.Version { return br.version }
 
-func (br *Base) FlushRecordedEvents() []event.Event {
-	flushed := br.recordedEvents
-	br.recordedEvents = nil
+func (br *Base) FlushUncommitedEvents() []event.Event {
+	flushed := br.uncommitedEvents
+	br.uncommitedEvents = nil
 
 	return flushed
 }
@@ -47,7 +47,7 @@ func (br *Base) recordThat(aggregate Aggregate, events ...event.Event) error {
 			return zerrors.New(ErrFailedToRecord).WithError(err)
 		}
 
-		br.recordedEvents = append(br.recordedEvents, event)
+		br.uncommitedEvents = append(br.uncommitedEvents, event)
 		br.version++
 	}
 

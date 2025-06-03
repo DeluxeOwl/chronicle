@@ -25,7 +25,7 @@ type Aggregate interface {
 }
 
 type RecordedEventsFlusher interface {
-	FlushRecordedEvents() []event.Event
+	FlushUncommitedEvents() []event.Event
 }
 
 type Root[TypeID ID] interface {
@@ -43,7 +43,7 @@ type Root[TypeID ID] interface {
 	recordThat(Aggregate, ...event.Event) error
 }
 
-type RegisterFunc func(eventName string, kind any)
+type RegisterFunc func(eventName string, kind event.EventAny)
 
 // Global map to track registration status per aggregate type.
 // The key is the reflect.Type of the aggregate (e.g., person.Person),

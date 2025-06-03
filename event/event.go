@@ -21,3 +21,7 @@ func New(event EventAny) Event {
 func (ge *Event) Unwrap() EventAny {
 	return ge.event
 }
+
+func (ge *Event) EventName() string {
+	return ge.event.EventName()
+}

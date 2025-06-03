@@ -3,10 +3,12 @@ package eventstore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 
 	"github.com/DeluxeOwl/eventuallynow/event"
+	"github.com/DeluxeOwl/eventuallynow/internal/registry"
 
 	"github.com/DeluxeOwl/eventuallynow/version"
 	"github.com/DeluxeOwl/zerrors"
@@ -20,13 +22,6 @@ const (
 
 var _ event.Log = new(Memory)
 
-type internalRecorded struct {
-	Version version.Version `json:"version"`
-	LogID   event.LogID     `json:"logID"`
-
-	EventData []byte `json:"eventData" exhaustruct:"optional"`
-}
-
 type Memory struct {
 	mu sync.RWMutex
 
@@ -34,6 +29,11 @@ type Memory struct {
 
 	// Versions need to be handled per id
 	logVersions map[event.LogID]version.Version
+}
+
+type internalRecord struct {
+	event.RecordedEventSerializableFields
+	Data []byte `json:"data"`
 }
 
 func NewMemory() *Memory {
@@ -73,6 +73,7 @@ func (s *Memory) AppendEvents(ctx context.Context, id event.LogID, expected vers
 
 	// Store events with versions starting from currentStreamVersion + 1
 	recordedEvents := event.ToRecorded(currentStreamVersion, id, events...)
+
 	internal, err := s.marshalRecordedToInternal(recordedEvents)
 	if err != nil {
 		return 0, zerrors.New(ErrAppendEvents).WithError(err)
@@ -91,33 +92,42 @@ func (s *Memory) marshalRecordedToInternal(recEvents []*event.RecordedEvent) ([]
 	internalBytes := make([][]byte, len(recEvents))
 
 	for i, r := range recEvents {
-		ir := &internalRecorded{
-			Version: r.Version(),
-			LogID:   r.LogID(),
+		snap := r.Snapshot()
+
+		rbytes, err := json.Marshal(snap.Event)
+		if err != nil {
+			return nil, fmt.Errorf("marshal snap record: %w", err)
 		}
 
-		b := []byte{}
-		ir.EventData = b
+		ir := internalRecord{
+			RecordedEventSerializableFields: snap.RecordedEventSerializableFields,
+			Data:                            rbytes,
+		}
 
-		bb, err := json.Marshal(ir)
+		rbytes, err = json.Marshal(ir)
 		if err != nil {
 			return nil, fmt.Errorf("marshal internal record: %w", err)
 		}
-		internalBytes[i] = bb
+
+		internalBytes[i] = rbytes
 	}
 
 	return internalBytes, nil
 }
 
 func (s *Memory) unmarshalInternalToRecorded(internalMarshaled []byte) (*event.RecordedEvent, error) {
-	var ir internalRecorded
+	var ir internalRecord
 	err := json.Unmarshal(internalMarshaled, &ir)
 	if err != nil {
-		return nil, fmt.Errorf("internal unmarshal: %w", err)
+		return nil, fmt.Errorf("internal unmarshal record: %w", err)
 	}
 
-	// TODO
-	return event.NewRecorded(ir.Version, ir.LogID, event.Empty), nil
+	fact, ok := registry.GetFactory(ir.EventName)
+	if !ok {
+		return nil, errors.New("factory not registered for " + ir.EventName)
+	}
+
+	return event.NewRecorded(ir.Version, ir.LogID, fact()), nil
 }
 
 // ReadEvents implements event.Store.

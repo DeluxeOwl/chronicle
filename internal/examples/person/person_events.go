@@ -8,10 +8,11 @@ import (
 
 var _ event.EventAny = new(PersonEvent)
 
+// exhaustruct:"ignore"
 type PersonEvent struct {
 	ID         PersonID    `json:"id"`
 	RecordTime time.Time   `json:"recordTime"`
-	Kind       personEvent `json:"kind"       exhaustruct:"optional"`
+	Kind       personEvent `json:"kind"`
 }
 
 // EventName implements event.EventAny.

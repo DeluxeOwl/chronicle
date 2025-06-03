@@ -94,9 +94,9 @@ func (p *Person) RegisterEvents(r aggregate.RegisterFunc) {
 	for _, name := range PersonEventNames {
 		switch name {
 		case PersonEventWasBorn:
-			r(name.String(), new(WasBorn))
+			r(name.String(), &PersonEvent{Kind: &WasBorn{}})
 		case PersonEventAgedOneYear:
-			r(name.String(), new(AgedOneYear))
+			r(name.String(), &PersonEvent{Kind: &AgedOneYear{}})
 		default:
 			panic("unhandled event name: " + name.String())
 		}
