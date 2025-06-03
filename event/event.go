@@ -10,6 +10,7 @@ type GenericEvent interface {
 	EventName() string
 }
 
+// TODO: should metadata be removed?
 type wrappedEvent[T GenericEvent] struct {
 	event    T
 	metadata map[string]string

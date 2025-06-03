@@ -52,6 +52,7 @@ type Reader interface {
 	ReadEvents(ctx context.Context, id LogID, selector version.Selector) RecordedEvents
 }
 
+// TODO: Should the log store and get bytes only? Like what's the most primitive implementation
 type Appender interface {
 	AppendEvents(ctx context.Context, id LogID, expected version.Check, events ...Event) (version.Version, error)
 }

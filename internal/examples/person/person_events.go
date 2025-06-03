@@ -57,6 +57,7 @@ type personEventRawSnapshot struct {
 	EventName  PersonEventName `json:"eventName"`
 }
 
+// TODO: should this use json serde and implement marshal and unmarshal
 func NewPersonPayloadSerde() serde.Serde[event.GenericEvent, []byte] {
 	return serde.Fuse(
 		serde.SerializerFunc[event.GenericEvent, []byte](serializePersonEventPayload),
