@@ -24,7 +24,8 @@ var _ event.Log = new(Memory)
 type Memory struct {
 	mu sync.RWMutex
 
-	events map[event.LogID][][]byte
+	registry event.Registry
+	events   map[event.LogID][][]byte
 
 	// Versions need to be handled per id
 	logVersions map[event.LogID]version.Version
@@ -35,12 +36,27 @@ type internalRecord struct {
 	Data []byte `json:"data"`
 }
 
-func NewMemory() *Memory {
-	return &Memory{
+type OptionMemory func(*Memory)
+
+func WithRegistryMemory(registry event.Registry) OptionMemory {
+	return func(m *Memory) {
+		m.registry = registry
+	}
+}
+
+func NewMemory(opts ...OptionMemory) *Memory {
+	m := &Memory{
+		registry:    event.GlobalRegistry,
 		mu:          sync.RWMutex{},
 		events:      map[event.LogID][][]byte{},
 		logVersions: map[event.LogID]version.Version{},
 	}
+
+	for _, o := range opts {
+		o(m)
+	}
+
+	return m
 }
 
 func (s *Memory) AppendEvents(ctx context.Context, id event.LogID, expected version.Check, events ...event.Event) (version.Version, error) {
@@ -121,8 +137,7 @@ func (s *Memory) unmarshalInternalToRecorded(internalMarshaled []byte) (*event.R
 		return nil, fmt.Errorf("internal unmarshal record: %w", err)
 	}
 
-	// TODO: inject this
-	fact, ok := event.GlobalRegistry.NewEvent(ir.EventName)
+	fact, ok := s.registry.NewEvent(ir.EventName)
 	if !ok {
 		return nil, errors.New("factory not registered for " + ir.EventName)
 	}

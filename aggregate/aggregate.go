@@ -44,6 +44,7 @@ type (
 	}
 )
 
+// Uses the GlobalRegistry.
 func RecordEvent[TypeID ID](root Root[TypeID], e event.EventAny) error {
 	// Optimization for not registering the events for the same object
 	if !root.hasRegisteredEvents() {
@@ -52,4 +53,18 @@ func RecordEvent[TypeID ID](root Root[TypeID], e event.EventAny) error {
 	}
 
 	return root.recordThat(root, event.New(e))
+}
+
+// If you want a custom registry.
+type RecordFunc[TypeID ID] func(root Root[TypeID], e event.EventAny) error
+
+func NewRecordWithRegistry[TypeID ID](registry event.Registry) RecordFunc[ID] {
+	return func(root Root[ID], e event.EventAny) error {
+		if !root.hasRegisteredEvents() {
+			registry.RegisterRoot(root)
+			root.setRegisteredEvents()
+		}
+
+		return root.recordThat(root, event.New(e))
+	}
 }
