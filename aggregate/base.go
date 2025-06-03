@@ -9,6 +9,9 @@ import (
 type Base struct {
 	version        version.Version
 	recordedEvents []event.Event
+
+	//nolint:unused // False positive.
+	registeredEvents bool
 }
 
 func (br *Base) Version() version.Version { return br.version }
@@ -26,9 +29,21 @@ func (br *Base) setVersion(v version.Version) {
 }
 
 //nolint:unused // False positive.
+func (br *Base) setRegisteredEvents() {
+	br.registeredEvents = true
+}
+
+//nolint:unused // False positive.
+func (br *Base) hasRegisteredEvents() bool {
+	return br.registeredEvents
+}
+
+//nolint:unused // False positive.
 func (br *Base) recordThat(aggregate Aggregate, events ...event.Event) error {
 	for _, event := range events {
-		if err := aggregate.Apply(event.Unwrap()); err != nil {
+		anyEvent := event.Unwrap()
+
+		if err := aggregate.Apply(anyEvent); err != nil {
 			return zerrors.New(ErrFailedToRecord).WithError(err)
 		}
 

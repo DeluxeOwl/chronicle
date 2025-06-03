@@ -14,6 +14,7 @@ type PersonEvent struct {
 	Kind       personEvent `json:"kind"       exhaustruct:"optional"`
 }
 
+// EventName implements event.EventAny.
 func (p *PersonEvent) EventName() string {
 	return p.Kind.personEventName()
 }
@@ -30,10 +31,19 @@ type WasBorn struct {
 // For exhaustive checking.
 type PersonEventName string
 
+func (pen PersonEventName) String() string {
+	return string(pen)
+}
+
 const (
 	PersonEventWasBorn     PersonEventName = "person-was-born"
 	PersonEventAgedOneYear PersonEventName = "aged-one-year"
 )
+
+var PersonEventNames = []PersonEventName{
+	PersonEventWasBorn,
+	PersonEventAgedOneYear,
+}
 
 func (*WasBorn) personEventName() string { return string(PersonEventWasBorn) }
 
