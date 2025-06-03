@@ -46,6 +46,7 @@ type RegisterFunc func(eventName string, kind any)
 func RecordEvent[TypeID ID](root Root[TypeID], e event.EventAny) error {
 	if !root.hasRegisteredEvents() {
 		root.RegisterEvents(registry.Register)
+		root.setRegisteredEvents()
 	}
 	return root.recordThat(root, event.New(e))
 }
