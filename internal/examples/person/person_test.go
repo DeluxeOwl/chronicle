@@ -14,6 +14,7 @@ func TestSTh(t *testing.T) {
 
 	johnID := person.PersonID("some-id")
 	p, err := person.New(johnID, "john")
+
 	require.NoError(t, err)
 
 	mem := eventstore.NewMemory()
