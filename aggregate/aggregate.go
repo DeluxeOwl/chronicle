@@ -32,7 +32,7 @@ type Root[TypeID ID] interface {
 
 	ID() TypeID
 	Version() version.Version
-	RegisterEvents(r Registerer)
+	RegisterEvents(r RegisterFunc)
 
 	// EventRecorder implements these, so you *have* to embed EventRecorder.
 	setVersion(version.Version)
@@ -41,13 +41,11 @@ type Root[TypeID ID] interface {
 	recordThat(Aggregate, ...event.Event) error
 }
 
-type Registerer interface {
-	Register(eventName string, kind any)
-}
+type RegisterFunc func(eventName string, kind any)
 
 func RecordEvent[TypeID ID](root Root[TypeID], e event.EventAny) error {
 	if !root.hasRegisteredEvents() {
-		root.RegisterEvents(registry.Registrar)
+		root.RegisterEvents(registry.Register)
 	}
 	return root.recordThat(root, event.New(e))
 }
