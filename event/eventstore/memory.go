@@ -137,15 +137,19 @@ func (s *Memory) unmarshalInternalToRecorded(internalMarshaled []byte) (*event.R
 		return nil, fmt.Errorf("internal unmarshal record: %w", err)
 	}
 
-	// TODO: data not loaded
-
 	fact, ok := s.registry.NewEvent(ir.EventName)
 	if !ok {
 		// TODO: errors
 		return nil, errors.New("factory not registered for " + ir.EventName)
 	}
 
-	return event.NewRecorded(ir.Version, ir.LogID, fact()), nil
+	ev := fact()
+	err = json.Unmarshal(ir.Data, ev)
+	if err != nil {
+		return nil, fmt.Errorf("internal unmarshal record data: %w", err)
+	}
+
+	return event.NewRecorded(ir.Version, ir.LogID, ev), nil
 }
 
 // ReadEvents implements event.Store.
