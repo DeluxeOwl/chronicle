@@ -9,14 +9,14 @@ type LogID string
 type RecordedEvent struct {
 	version version.Version
 	logID   LogID
-	Event
+	ev      Event
 }
 
 func NewRecorded(version version.Version, logID LogID, event Event) *RecordedEvent {
 	return &RecordedEvent{
 		version: version,
 		logID:   logID,
-		Event:   event,
+		ev:      event,
 	}
 }
 
@@ -28,8 +28,12 @@ func (re *RecordedEvent) LogID() LogID {
 	return re.logID
 }
 
+func (re *RecordedEvent) Event() Event {
+	return re.ev
+}
+
 func (re *RecordedEvent) EventAny() EventAny {
-	return re.event
+	return re.ev.Unwrap()
 }
 
 type RecordedEventSnapshot struct {
@@ -42,7 +46,7 @@ func (re *RecordedEvent) Snapshot() *RecordedEventSnapshot {
 	return &RecordedEventSnapshot{
 		Version: re.version,
 		LogID:   re.logID,
-		Event:   re.event,
+		Event:   re.ev.event,
 	}
 }
 

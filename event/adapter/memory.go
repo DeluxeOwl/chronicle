@@ -96,7 +96,7 @@ func (s *MemoryStore) recordedToInternal(recEvents []*event.RecordedEvent) ([][]
 			Version: r.Version(),
 			LogID:   r.LogID(),
 		}
-		b, err := s.eventSerde.Serialize(r.Event)
+		b, err := s.eventSerde.Serialize(r.Event())
 		if err != nil {
 			return nil, fmt.Errorf("serialize event: %w", err)
 		}
