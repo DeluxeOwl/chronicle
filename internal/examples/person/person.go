@@ -51,9 +51,7 @@ func New(id PersonID, name string) (*Person, error) {
 		Kind: &WasBorn{
 			BornName: name,
 		},
-	}, event.WithMetadata(map[string]string{
-		"tag": "born-human",
-	})); err != nil {
+	}); err != nil {
 		return nil, zerrors.New(ErrCreate).WithError(err)
 	}
 
@@ -88,6 +86,6 @@ func (p *Person) Age() error {
 	})
 }
 
-func (p *Person) record(event *PersonEvent, opts ...event.Option) error {
-	return aggregate.RecordEvent(p, event, opts...)
+func (p *Person) record(event *PersonEvent) error {
+	return aggregate.RecordEvent(p, event)
 }
