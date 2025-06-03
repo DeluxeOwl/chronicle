@@ -29,5 +29,8 @@ func TestSTh(t *testing.T) {
 
 	newp, err := repo.Get(ctx, johnID)
 	require.NoError(t, err)
-	require.Equal(t, 2, newp.GetAge())
+
+	ps := newp.Snapshot()
+	require.Equal(t, "john", ps.Name)
+	require.Equal(t, 2, ps.Age)
 }

@@ -30,8 +30,18 @@ type Person struct {
 	age  int
 }
 
-func (p *Person) GetAge() int {
-	return p.age
+type PersonSnapshot struct {
+	ID   PersonID `json:"id"`
+	Name string   `json:"name"`
+	Age  int      `json:"age"`
+}
+
+func (p *Person) Snapshot() *PersonSnapshot {
+	return &PersonSnapshot{
+		ID:   p.id,
+		Name: p.name,
+		Age:  p.age,
+	}
 }
 
 func (p *Person) ID() PersonID {
