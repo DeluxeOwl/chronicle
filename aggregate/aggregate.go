@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/DeluxeOwl/eventuallynow/event"
-	"github.com/DeluxeOwl/eventuallynow/registry"
+
 	"github.com/DeluxeOwl/eventuallynow/version"
 )
 
@@ -27,14 +27,14 @@ type RecordedEventsFlusher interface {
 }
 
 type (
-	RegisterFunc    = registry.RegisterFunc
+	RegisterFunc    = event.RegisterFunc
 	Root[TypeID ID] interface {
 		Aggregate
 		RecordedEventsFlusher
+		event.Registerer
 
 		ID() TypeID
 		Version() version.Version
-		RegisterEvents(r RegisterFunc)
 
 		// EventRecorder implements these, so you *have* to embed EventRecorder.
 		setVersion(version.Version)
@@ -47,7 +47,7 @@ type (
 func RecordEvent[TypeID ID](root Root[TypeID], e event.EventAny) error {
 	// Optimization for not registering the events for the same object
 	if !root.hasRegisteredEvents() {
-		registry.GlobalEventRegistry.RegisterRoot(root)
+		event.GlobalRegistry.RegisterRoot(root)
 		root.setRegisteredEvents()
 	}
 

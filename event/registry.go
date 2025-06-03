@@ -1,38 +1,36 @@
-package registry
+package event
 
 import (
 	"reflect"
 	"sync"
-
-	"github.com/DeluxeOwl/eventuallynow/event"
 )
 
 // TODO: what if not global, but injected
 
-type RegisterFunc func(ev event.EventAny)
+type RegisterFunc func(ev EventAny)
 
-type aggRoot interface {
+type Registerer interface {
 	RegisterEvents(r RegisterFunc)
 }
 
 type RootRegister interface {
-	RegisterRoot(root aggRoot)
+	RegisterRoot(root Registerer)
 }
 
 type NewEventer interface {
-	NewEvent(eventName string) (func() event.EventAny, bool)
+	NewEvent(eventName string) (func() EventAny, bool)
 }
 
-type EventRegistry interface {
+type Registry interface {
 	RootRegister
 	NewEventer
 }
 
-var GlobalEventRegistry = NewEventRegistry()
+var GlobalRegistry = NewRegistry()
 
-func NewEventRegistry() *eventRegistry {
+func NewRegistry() *eventRegistry {
 	return &eventRegistry{
-		eventFactories:      make(map[string]func() event.EventAny),
+		eventFactories:      make(map[string]func() EventAny),
 		registryMu:          sync.RWMutex{},
 		typeRegistrations:   make(map[reflect.Type]*sync.Once),
 		typeRegistrationsMu: sync.Mutex{},
@@ -40,24 +38,24 @@ func NewEventRegistry() *eventRegistry {
 }
 
 type eventRegistry struct {
-	eventFactories      map[string]func() event.EventAny
+	eventFactories      map[string]func() EventAny
 	registryMu          sync.RWMutex
 	typeRegistrations   map[reflect.Type]*sync.Once
 	typeRegistrationsMu sync.Mutex
 }
 
-var _ EventRegistry = (*eventRegistry)(nil)
+var _ Registry = (*eventRegistry)(nil)
 
-func (r *eventRegistry) registerEvent(ev event.EventAny) {
+func (r *eventRegistry) registerEvent(ev EventAny) {
 	r.registryMu.Lock()
 	defer r.registryMu.Unlock()
 
-	r.eventFactories[ev.EventName()] = func() event.EventAny {
+	r.eventFactories[ev.EventName()] = func() EventAny {
 		return ev
 	}
 }
 
-func (r *eventRegistry) NewEvent(eventName string) (func() event.EventAny, bool) {
+func (r *eventRegistry) NewEvent(eventName string) (func() EventAny, bool) {
 	r.registryMu.RLock()
 	defer r.registryMu.RUnlock()
 
@@ -66,13 +64,13 @@ func (r *eventRegistry) NewEvent(eventName string) (func() event.EventAny, bool)
 }
 
 // Registers the aggregate root with its events.
-func (r *eventRegistry) RegisterRoot(root aggRoot) {
+func (r *eventRegistry) RegisterRoot(root Registerer) {
 	var aggType reflect.Type
 	val := reflect.ValueOf(root)
 	if val.Kind() == reflect.Ptr {
 		aggType = val.Elem().Type()
 	} else {
-		aggType = val.Type() // Should not happen with current design if Root implies methods with ptr receivers
+		aggType = val.Type()
 	}
 
 	r.typeRegistrationsMu.Lock()
@@ -84,7 +82,7 @@ func (r *eventRegistry) RegisterRoot(root aggRoot) {
 	r.typeRegistrationsMu.Unlock()
 
 	// This will execute root.RegisterEvents(registry.Register) only once
-	// for the given aggType, across all instances and goroutines.
+	// for the given aggregate root, across all instances and goroutines.
 	once.Do(func() {
 		root.RegisterEvents(r.registerEvent)
 	})

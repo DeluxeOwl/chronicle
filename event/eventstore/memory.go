@@ -8,7 +8,6 @@ import (
 	"sync"
 
 	"github.com/DeluxeOwl/eventuallynow/event"
-	"github.com/DeluxeOwl/eventuallynow/registry"
 
 	"github.com/DeluxeOwl/eventuallynow/version"
 	"github.com/DeluxeOwl/zerrors"
@@ -123,7 +122,7 @@ func (s *Memory) unmarshalInternalToRecorded(internalMarshaled []byte) (*event.R
 	}
 
 	// TODO: inject this
-	fact, ok := registry.GlobalEventRegistry.NewEvent(ir.EventName)
+	fact, ok := event.GlobalRegistry.NewEvent(ir.EventName)
 	if !ok {
 		return nil, errors.New("factory not registered for " + ir.EventName)
 	}
