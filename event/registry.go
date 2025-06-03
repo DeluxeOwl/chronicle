@@ -50,6 +50,8 @@ func (r *eventRegistry) registerEvent(ev EventAny) {
 	r.registryMu.Lock()
 	defer r.registryMu.Unlock()
 
+	// TODO: bug - this returns the same instance, which means that json is marshaled/unmarshaled overwriting previous
+	// Maybe the register needs to register functions
 	r.eventFactories[ev.EventName()] = func() EventAny {
 		return ev
 	}
