@@ -8,6 +8,10 @@ import (
 	"github.com/DeluxeOwl/zerrors"
 )
 
+type PersonID string
+
+func (p PersonID) String() string { return string(p) }
+
 type PersonError string
 
 const (
@@ -17,10 +21,6 @@ const (
 	ErrCreate              PersonError = "create"
 	ErrNilPersonSerialize  PersonError = "serialize_person_nil"
 )
-
-type PersonID string
-
-func (p PersonID) String() string { return string(p) }
 
 type Person struct {
 	aggregate.Base

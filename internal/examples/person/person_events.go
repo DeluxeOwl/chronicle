@@ -1,12 +1,9 @@
 package person
 
 import (
-	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/DeluxeOwl/eventuallynow/event"
-	"github.com/DeluxeOwl/eventuallynow/serde"
 )
 
 var _ event.EventAny = new(PersonEvent)
@@ -44,66 +41,3 @@ type AgedOneYear struct{}
 
 func (*AgedOneYear) EventName() string { return string(PersonEventAgedOneYear) }
 func (*AgedOneYear) isPersonEvent()    {}
-
-type PersonEventSnapshot struct {
-	PersonEvent
-	EventName PersonEventName `json:"eventName"`
-}
-
-type personEventRawSnapshot struct {
-	ID         PersonID        `json:"id"`
-	RecordTime time.Time       `json:"recordTime"`
-	Kind       json.RawMessage `json:"kind"`
-	EventName  PersonEventName `json:"eventName"`
-}
-
-// TODO: should this use json serde and implement marshal and unmarshal
-func NewPersonPayloadSerde() serde.Serde[event.EventAny, []byte] {
-	return serde.Fuse(
-		serde.SerializerFunc[event.EventAny, []byte](serializePersonEventPayload),
-		serde.DeserializerFunc[event.EventAny, []byte](deserializePersonEventPayload),
-	)
-}
-
-func serializePersonEventPayload(ge event.EventAny) ([]byte, error) {
-	personEvent, ok := ge.(*PersonEvent)
-	if !ok {
-		return nil, fmt.Errorf("person payload serializer: expected *PersonEvent, got %T", ge)
-	}
-
-	snap := &PersonEventSnapshot{
-		PersonEvent: *personEvent,
-		EventName:   PersonEventName(personEvent.Kind.EventName()),
-	}
-	return json.Marshal(snap)
-}
-
-func deserializePersonEventPayload(data []byte) (event.EventAny, error) {
-	var rawSnap personEventRawSnapshot
-	if err := json.Unmarshal(data, &rawSnap); err != nil {
-		return nil, fmt.Errorf("person payload deserializer: unmarshal raw snapshot: %w (data: %s)", err, string(data))
-	}
-
-	deserializedCoreEvent := &PersonEvent{
-		ID:         rawSnap.ID,
-		RecordTime: rawSnap.RecordTime,
-	}
-
-	switch rawSnap.EventName {
-	case PersonEventWasBorn:
-		var kind WasBorn
-		if err := json.Unmarshal(rawSnap.Kind, &kind); err != nil {
-			return nil, fmt.Errorf("person payload deserializer: unmarshal WasBorn kind: %w (json: %s)", err, string(rawSnap.Kind))
-		}
-		deserializedCoreEvent.Kind = &kind
-	case PersonEventAgedOneYear:
-		var kind AgedOneYear
-		if err := json.Unmarshal(rawSnap.Kind, &kind); err != nil {
-			return nil, fmt.Errorf("person payload deserializer: unmarshal AgedOneYear kind: %w (json: %s)", err, string(rawSnap.Kind))
-		}
-		deserializedCoreEvent.Kind = &kind
-	default:
-		return nil, fmt.Errorf("person payload deserializer: unknown event name '%s' in person event payload snapshot", rawSnap.EventName)
-	}
-	return deserializedCoreEvent, nil
-}
