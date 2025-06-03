@@ -1,7 +1,6 @@
 {
     "editor.formatOnSave": true,
     "editor.insertSpaces": false,
-    // Generic configuration
     "explorer.fileNesting.patterns": {
         // "*.go": "$(capture)_*.go", // I can't decide
         "*.go": "",

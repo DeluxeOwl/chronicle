@@ -7,28 +7,21 @@ import (
 	"github.com/DeluxeOwl/eventuallynow/version"
 )
 
-type LogID string
-
-type RecordedEvent struct {
-	version version.Version
-	logID   LogID
-	Event
+type AllReader interface {
+	ReadAllEvents(ctx context.Context, selector version.Selector) RecordedEvents
 }
 
-func NewRecorded(version version.Version, logID LogID, event Event) *RecordedEvent {
-	return &RecordedEvent{
-		version: version,
-		logID:   logID,
-		Event:   event,
-	}
+type Reader interface {
+	ReadEvents(ctx context.Context, id LogID, selector version.Selector) RecordedEvents
 }
 
-func (re *RecordedEvent) Version() version.Version {
-	return re.version
+type Appender interface {
+	AppendEvents(ctx context.Context, id LogID, expected version.Check, events ...Event) (version.Version, error)
 }
 
-func (re *RecordedEvent) LogID() LogID {
-	return re.logID
+type Log interface {
+	Reader
+	Appender
 }
 
 type RecordedEvents iter.Seq2[*RecordedEvent, error]
@@ -42,27 +35,4 @@ func (re RecordedEvents) AsSlice() ([]RecordedEvent, error) {
 		ee = append(ee, *ev)
 	}
 	return ee, nil
-}
-
-type AllReader interface {
-	ReadAllEvents(ctx context.Context, selector version.Selector) RecordedEvents
-}
-
-type Reader interface {
-	ReadEvents(ctx context.Context, id LogID, selector version.Selector) RecordedEvents
-}
-
-// TODO: Should the log store and get bytes only? Like what's the most primitive implementation
-type Appender interface {
-	AppendEvents(ctx context.Context, id LogID, expected version.Check, events ...Event) (version.Version, error)
-}
-
-type Log interface {
-	Reader
-	Appender
-}
-
-type LogFuse struct {
-	Reader
-	Appender
 }

@@ -58,7 +58,7 @@ func New(id PersonID, name string) (*Person, error) {
 	return p, nil
 }
 
-func (p *Person) Apply(evt event.GenericEvent) error {
+func (p *Person) Apply(evt event.EventAny) error {
 	personEvent, ok := evt.(*PersonEvent)
 	if !ok {
 		return zerrors.New(ErrUnexpectedEventType).Errorf("type: %T", personEvent)

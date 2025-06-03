@@ -9,7 +9,7 @@ import (
 	"github.com/DeluxeOwl/eventuallynow/serde"
 )
 
-var _ event.GenericEvent = new(PersonEvent)
+var _ event.EventAny = new(PersonEvent)
 
 type PersonEvent struct {
 	ID         PersonID    `json:"id"`
@@ -21,7 +21,7 @@ func (p *PersonEvent) EventName() string { return p.Kind.EventName() }
 
 //sumtype:decl
 type personEvent interface {
-	event.GenericEvent
+	event.EventAny
 	isPersonEvent()
 }
 
@@ -58,14 +58,14 @@ type personEventRawSnapshot struct {
 }
 
 // TODO: should this use json serde and implement marshal and unmarshal
-func NewPersonPayloadSerde() serde.Serde[event.GenericEvent, []byte] {
+func NewPersonPayloadSerde() serde.Serde[event.EventAny, []byte] {
 	return serde.Fuse(
-		serde.SerializerFunc[event.GenericEvent, []byte](serializePersonEventPayload),
-		serde.DeserializerFunc[event.GenericEvent, []byte](deserializePersonEventPayload),
+		serde.SerializerFunc[event.EventAny, []byte](serializePersonEventPayload),
+		serde.DeserializerFunc[event.EventAny, []byte](deserializePersonEventPayload),
 	)
 }
 
-func serializePersonEventPayload(ge event.GenericEvent) ([]byte, error) {
+func serializePersonEventPayload(ge event.EventAny) ([]byte, error) {
 	personEvent, ok := ge.(*PersonEvent)
 	if !ok {
 		return nil, fmt.Errorf("person payload serializer: expected *PersonEvent, got %T", ge)
@@ -78,7 +78,7 @@ func serializePersonEventPayload(ge event.GenericEvent) ([]byte, error) {
 	return json.Marshal(snap)
 }
 
-func deserializePersonEventPayload(data []byte) (event.GenericEvent, error) {
+func deserializePersonEventPayload(data []byte) (event.EventAny, error) {
 	var rawSnap personEventRawSnapshot
 	if err := json.Unmarshal(data, &rawSnap); err != nil {
 		return nil, fmt.Errorf("person payload deserializer: unmarshal raw snapshot: %w (data: %s)", err, string(data))

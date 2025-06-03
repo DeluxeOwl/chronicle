@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/DeluxeOwl/eventuallynow/event"
-	"github.com/DeluxeOwl/eventuallynow/serde"
 
 	"github.com/DeluxeOwl/eventuallynow/version"
 	"github.com/DeluxeOwl/zerrors"
@@ -26,11 +25,6 @@ type Saver[TypeID ID, TRoot Root[TypeID]] interface {
 }
 
 type Repository[TypeID ID, TRoot Root[TypeID]] interface {
-	Getter[TypeID, TRoot]
-	Saver[TypeID, TRoot]
-}
-
-type RepositoryFuse[TypeID ID, TRoot Root[TypeID]] struct {
 	Getter[TypeID, TRoot]
 	Saver[TypeID, TRoot]
 }
@@ -62,19 +56,6 @@ func LoadFromEvents[TypeID ID](root Root[TypeID], events event.RecordedEvents) e
 	}
 
 	return nil
-}
-
-func LoadFromState[TypeID ID, TRoot Root[TypeID], D any](v version.Version, dst D, deserializer serde.Deserializer[TRoot, D]) (TRoot, error) {
-	var zeroValue TRoot
-
-	src, err := deserializer.Deserialize(dst)
-	if err != nil {
-		return zeroValue, zerrors.New(ErrRehydrateFromState).Errorf("deserialize src into dst root: %w", err)
-	}
-
-	src.setVersion(v)
-
-	return src, nil
 }
 
 func (repo *EventSourcedRepository[TypeID, TRoot]) Get(ctx context.Context, id TypeID) (TRoot, error) {
