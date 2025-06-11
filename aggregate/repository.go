@@ -47,6 +47,7 @@ func LoadFromEvents[TypeID ID, TEvent event.EventAny](root Root[TypeID, TEvent],
 	return nil
 }
 
+// todo: internal .get and GetVersioned
 func (repo *EventSourcedRepository[TypeID, TEvent, TRoot]) Get(ctx context.Context, id TypeID) (TRoot, error) {
 	var zeroValue TRoot
 
