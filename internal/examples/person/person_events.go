@@ -9,19 +9,19 @@ type PersonEvent interface {
 }
 
 func (p *Person) RegisterEvents(r aggregate.RegisterFunc) {
-	r(&WasBorn{})
-	r(&AgedOneYear{})
+	r(&PersonWasBorn{})
+	r(&PersonAgedOneYear{})
 }
 
-type WasBorn struct {
+type PersonWasBorn struct {
 	ID       PersonID `json:"id" exhaustruct:"optional"`
 	BornName string   `json:"bornName" exhaustruct:"optional"`
 }
 
-func (*WasBorn) EventName() string { return "person/was-born" }
-func (*WasBorn) isPersonEvent()    {}
+func (*PersonWasBorn) EventName() string { return "person/was-born" }
+func (*PersonWasBorn) isPersonEvent()    {}
 
-type AgedOneYear struct{}
+type PersonAgedOneYear struct{}
 
-func (*AgedOneYear) EventName() string { return "person/aged-one-year" }
-func (*AgedOneYear) isPersonEvent()    {}
+func (*PersonAgedOneYear) EventName() string { return "person/aged-one-year" }
+func (*PersonAgedOneYear) isPersonEvent()    {}

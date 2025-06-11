@@ -50,7 +50,7 @@ func New(id PersonID, name string) (*Person, error) {
 
 	p := NewEmpty()
 
-	if err := p.record(&WasBorn{
+	if err := p.recordThat(&PersonWasBorn{
 		ID:       id,
 		BornName: name,
 	}); err != nil {
@@ -67,11 +67,11 @@ func (p *Person) Apply(evt event.EventAny) error {
 	}
 
 	switch event := personEvent.(type) {
-	case *WasBorn:
+	case *PersonWasBorn:
 		p.id = event.ID
 		p.age = 0
 		p.name = event.BornName
-	case *AgedOneYear:
+	case *PersonAgedOneYear:
 		p.age++
 	default:
 		return fmt.Errorf("unexpected event kind: %T", event)
@@ -81,9 +81,9 @@ func (p *Person) Apply(evt event.EventAny) error {
 }
 
 func (p *Person) Age() error {
-	return p.record(&AgedOneYear{})
+	return p.recordThat(&PersonAgedOneYear{})
 }
 
-func (p *Person) record(event PersonEvent) error {
+func (p *Person) recordThat(event PersonEvent) error {
 	return aggregate.RecordEvent(p, event)
 }
