@@ -13,16 +13,6 @@ type PersonID string
 
 func (p PersonID) String() string { return string(p) }
 
-type PersonError string
-
-const (
-	ErrUnexpectedEventType PersonError = "unexpected_event_type"
-	ErrUnexpectedEventKIND PersonError = "unexpected_event_kind"
-	ErrEmptyName           PersonError = "empty_name"
-	ErrCreate              PersonError = "create"
-	ErrNilPersonSerialize  PersonError = "serialize_person_nil"
-)
-
 type Person struct {
 	aggregate.Base
 

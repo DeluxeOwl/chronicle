@@ -10,10 +10,6 @@ import (
 
 type AggregateError string
 
-const (
-	ErrFailedToRecord AggregateError = "failed_to_record_event"
-)
-
 type ID interface {
 	fmt.Stringer
 }

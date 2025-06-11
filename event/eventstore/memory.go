@@ -14,10 +14,6 @@ import (
 
 type MemoryError string
 
-const (
-	ErrAppendEvents MemoryError = "append_events"
-)
-
 var _ event.Log = new(Memory)
 
 type Memory struct {
