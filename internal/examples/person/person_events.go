@@ -1,53 +1,27 @@
 package person
 
-import (
-	"time"
-
-	"github.com/DeluxeOwl/eventuallynow/event"
-)
-
-var _ event.EventAny = new(PersonEvent)
-
-// exhaustruct:"ignore"
-type PersonEvent struct {
-	ID         PersonID    `json:"id"`
-	RecordTime time.Time   `json:"recordTime"`
-	Kind       personEvent `json:"kind"`
-}
-
-// EventName implements event.EventAny.
-func (p *PersonEvent) EventName() string {
-	return p.Kind.personEventName()
-}
+import "github.com/DeluxeOwl/eventuallynow/aggregate"
 
 //sumtype:decl
-type personEvent interface {
-	personEventName() string
+type PersonEvent interface {
+	EventName() string
+	isPersonEvent()
+}
+
+func (p *Person) RegisterEvents(r aggregate.RegisterFunc) {
+	r(&WasBorn{})
+	r(&AgedOneYear{})
 }
 
 type WasBorn struct {
-	BornName string `json:"bornName"`
+	ID       PersonID `json:"id" exhaustruct:"optional"`
+	BornName string   `json:"bornName" exhaustruct:"optional"`
 }
 
-// For exhaustive checking.
-type PersonEventName string
-
-func (pen PersonEventName) String() string {
-	return string(pen)
-}
-
-const (
-	PersonEventWasBorn     PersonEventName = "person-was-born"
-	PersonEventAgedOneYear PersonEventName = "aged-one-year"
-)
-
-var PersonEventNames = []PersonEventName{
-	PersonEventWasBorn,
-	PersonEventAgedOneYear,
-}
-
-func (*WasBorn) personEventName() string { return string(PersonEventWasBorn) }
+func (*WasBorn) EventName() string { return "person/was-born" }
+func (*WasBorn) isPersonEvent()    {}
 
 type AgedOneYear struct{}
 
-func (*AgedOneYear) personEventName() string { return string(PersonEventAgedOneYear) }
+func (*AgedOneYear) EventName() string { return "person/aged-one-year" }
+func (*AgedOneYear) isPersonEvent()    {}

@@ -212,7 +212,7 @@ linters:
       no-global: all
       context: scope
     tagalign:
-      align: true
+      align: false
       sort: true
       order:
         - json

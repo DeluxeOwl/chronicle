@@ -3,7 +3,6 @@ package person
 import (
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/DeluxeOwl/eventuallynow/aggregate"
 	"github.com/DeluxeOwl/eventuallynow/event"
@@ -51,12 +50,9 @@ func New(id PersonID, name string) (*Person, error) {
 
 	p := NewEmpty()
 
-	if err := p.record(&PersonEvent{
-		ID:         id,
-		RecordTime: time.Now(),
-		Kind: &WasBorn{
-			BornName: name,
-		},
+	if err := p.record(&WasBorn{
+		ID:       id,
+		BornName: name,
 	}); err != nil {
 		return nil, fmt.Errorf("create person: %w", err)
 	}
@@ -65,46 +61,29 @@ func New(id PersonID, name string) (*Person, error) {
 }
 
 func (p *Person) Apply(evt event.EventAny) error {
-	personEvent, ok := evt.(*PersonEvent)
+	personEvent, ok := evt.(PersonEvent)
 	if !ok {
 		return fmt.Errorf("unexpected event type: %T", evt)
 	}
 
-	switch kind := personEvent.Kind.(type) {
+	switch event := personEvent.(type) {
 	case *WasBorn:
-		p.id = personEvent.ID
+		p.id = event.ID
 		p.age = 0
-		p.name = kind.BornName
+		p.name = event.BornName
 	case *AgedOneYear:
 		p.age++
 	default:
-		return fmt.Errorf("unexpected event kind: %T", kind)
+		return fmt.Errorf("unexpected event kind: %T", event)
 	}
 
 	return nil
 }
 
 func (p *Person) Age() error {
-	return p.record(&PersonEvent{
-		ID:         p.id,
-		RecordTime: time.Now(),
-		Kind:       &AgedOneYear{},
-	})
+	return p.record(&AgedOneYear{})
 }
 
-func (p *Person) RegisterEvents(r aggregate.RegisterFunc) {
-	for _, name := range PersonEventNames {
-		switch name {
-		case PersonEventWasBorn:
-			r(&PersonEvent{Kind: &WasBorn{}})
-		case PersonEventAgedOneYear:
-			r(&PersonEvent{Kind: &AgedOneYear{}})
-		default:
-			panic("unhandled event name: " + name.String())
-		}
-	}
-}
-
-func (p *Person) record(event *PersonEvent) error {
+func (p *Person) record(event PersonEvent) error {
 	return aggregate.RecordEvent(p, event)
 }
