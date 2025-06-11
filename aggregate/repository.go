@@ -10,40 +10,35 @@ import (
 	"github.com/DeluxeOwl/eventuallynow/version"
 )
 
-type Getter[TypeID ID, TRoot Root[TypeID]] interface {
-	Get(ctx context.Context, id TypeID) (TRoot, error)
-}
+// TODO: interface
 
-type Saver[TypeID ID, TRoot Root[TypeID]] interface {
-	Save(ctx context.Context, root TRoot) error
-}
-
-type Repository[TypeID ID, TRoot Root[TypeID]] interface {
-	Getter[TypeID, TRoot]
-	Saver[TypeID, TRoot]
-}
-
-type EventSourcedRepository[TypeID ID, TRoot Root[TypeID]] struct {
+type EventSourcedRepository[TypeID ID, TEvent event.EventAny, TRoot Root[TypeID, TEvent]] struct {
 	store        event.Log
 	newAggregate func() TRoot
 }
 
-func NewEventSourcedRepository[TypeID ID, TRoot Root[TypeID]](
+func NewEventSourcedRepository[TypeID ID, TEvent event.EventAny, TRoot Root[TypeID, TEvent]](
 	store event.Log,
 	newAggregateFunc func() TRoot,
-) *EventSourcedRepository[TypeID, TRoot] {
-	return &EventSourcedRepository[TypeID, TRoot]{
+) *EventSourcedRepository[TypeID, TEvent, TRoot] {
+	return &EventSourcedRepository[TypeID, TEvent, TRoot]{
 		store:        store,
 		newAggregate: newAggregateFunc,
 	}
 }
 
-func LoadFromEvents[TypeID ID](root Root[TypeID], events event.RecordedEvents) error {
+func LoadFromEvents[TypeID ID, TEvent event.EventAny](root Root[TypeID, TEvent], events event.RecordedEvents) error {
 	for event, err := range events {
 		if err != nil {
 			return fmt.Errorf("load from events: %w", err)
 		}
-		if err := root.Apply(event.EventAny()); err != nil {
+
+		anyEvt, ok := event.EventAny().(TEvent)
+		if !ok {
+			return errors.New("internal: this isn't supposed to happen (todo)")
+		}
+
+		if err := root.Apply(anyEvt); err != nil {
 			return fmt.Errorf("load from events: root apply: %w", err)
 		}
 		root.setVersion(event.Version())
@@ -52,7 +47,7 @@ func LoadFromEvents[TypeID ID](root Root[TypeID], events event.RecordedEvents) e
 	return nil
 }
 
-func (repo *EventSourcedRepository[TypeID, TRoot]) Get(ctx context.Context, id TypeID) (TRoot, error) {
+func (repo *EventSourcedRepository[TypeID, TEvent, TRoot]) Get(ctx context.Context, id TypeID) (TRoot, error) {
 	var zeroValue TRoot
 
 	logID := event.LogID(id.String())
@@ -71,7 +66,7 @@ func (repo *EventSourcedRepository[TypeID, TRoot]) Get(ctx context.Context, id T
 	return root, nil
 }
 
-func (repo *EventSourcedRepository[TypeID, TRoot]) Save(ctx context.Context, root TRoot) error {
+func (repo *EventSourcedRepository[TypeID, TEvent, TRoot]) Save(ctx context.Context, root TRoot) error {
 	events := root.FlushUncommitedEvents()
 	if len(events) == 0 {
 		return nil

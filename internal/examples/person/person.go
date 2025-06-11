@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/DeluxeOwl/eventuallynow/aggregate"
-	"github.com/DeluxeOwl/eventuallynow/event"
 )
 
 type PersonID string
@@ -60,13 +59,8 @@ func New(id PersonID, name string) (*Person, error) {
 	return p, nil
 }
 
-func (p *Person) Apply(evt event.EventAny) error {
-	personEvent, ok := evt.(PersonEvent)
-	if !ok {
-		return fmt.Errorf("unexpected event type: %T", evt)
-	}
-
-	switch event := personEvent.(type) {
+func (p *Person) Apply(evt PersonEvent) error {
+	switch event := evt.(type) {
 	case *PersonWasBorn:
 		p.id = event.ID
 		p.age = 0

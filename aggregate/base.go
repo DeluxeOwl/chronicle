@@ -40,7 +40,7 @@ func (br *Base) hasRegisteredEvents() bool {
 }
 
 //nolint:unused // False positive.
-func (br *Base) recordThat(aggregate Aggregate, events ...event.Event) error {
+func (br *Base) recordThat(aggregate Aggregate[event.EventAny], events ...event.Event) error {
 	for _, event := range events {
 		anyEvent := event.Unwrap()
 

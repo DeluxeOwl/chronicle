@@ -1,6 +1,7 @@
 package aggregate
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/DeluxeOwl/eventuallynow/event"
@@ -14,8 +15,8 @@ type ID interface {
 	fmt.Stringer
 }
 
-type Aggregate interface {
-	Apply(event.EventAny) error
+type Aggregate[TEvent event.EventAny] interface {
+	Apply(TEvent) error
 }
 
 type RecordedEventsFlusher interface {
@@ -23,9 +24,9 @@ type RecordedEventsFlusher interface {
 }
 
 type (
-	RegisterFunc    = event.RegisterFunc
-	Root[TypeID ID] interface {
-		Aggregate
+	RegisterFunc                           = event.RegisterFunc
+	Root[TypeID ID, TEvent event.EventAny] interface {
+		Aggregate[TEvent]
 		RecordedEventsFlusher
 		event.Registerer
 
@@ -36,31 +37,52 @@ type (
 		setVersion(version.Version)
 		setRegisteredEvents()
 		hasRegisteredEvents() bool
-		recordThat(Aggregate, ...event.Event) error
+		recordThat(Aggregate[event.EventAny], ...event.Event) error
 	}
 )
 
+type anyRoot[TypeID ID, TEvent event.EventAny] struct {
+	internalRoot Root[TypeID, TEvent]
+}
+
+func (a *anyRoot[TypeID, TEvent]) Apply(evt event.EventAny) error {
+	anyEvt, ok := evt.(TEvent)
+	if !ok {
+		return errors.New("internal: this isn't supposed to happen (todo)")
+	}
+
+	return a.internalRoot.Apply(anyEvt)
+}
+
 // Uses the GlobalRegistry.
-func RecordEvent[TypeID ID](root Root[TypeID], e event.EventAny) error {
+func RecordEvent[TypeID ID, TEvent event.EventAny](root Root[TypeID, TEvent], e event.EventAny) error {
 	// Optimization for not registering the events for the same object
 	if !root.hasRegisteredEvents() {
 		event.GlobalRegistry.RegisterRoot(root)
 		root.setRegisteredEvents()
 	}
 
-	return root.recordThat(root, event.New(e))
+	r := &anyRoot[TypeID, TEvent]{
+		internalRoot: root,
+	}
+
+	return root.recordThat(r, event.New(e))
 }
 
 // If you want a custom registry.
-type RecordFunc[TypeID ID] func(root Root[TypeID], e event.EventAny) error
+type RecordFunc[TypeID ID, TEvent event.EventAny] func(root Root[TypeID, TEvent], e event.EventAny) error
 
-func NewRecordWithRegistry[TypeID ID](registry event.Registry) RecordFunc[ID] {
-	return func(root Root[ID], e event.EventAny) error {
+func NewRecordWithRegistry[TypeID ID, TEvent event.EventAny](registry event.Registry) RecordFunc[TypeID, TEvent] {
+	return func(root Root[TypeID, TEvent], e event.EventAny) error {
 		if !root.hasRegisteredEvents() {
 			registry.RegisterRoot(root)
 			root.setRegisteredEvents()
 		}
 
-		return root.recordThat(root, event.New(e))
+		r := &anyRoot[TypeID, TEvent]{
+			internalRoot: root,
+		}
+
+		return root.recordThat(r, event.New(e))
 	}
 }
