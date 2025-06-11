@@ -1,11 +1,12 @@
 package person
 
 import (
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/DeluxeOwl/eventuallynow/aggregate"
 	"github.com/DeluxeOwl/eventuallynow/event"
-	"github.com/DeluxeOwl/zerrors"
 )
 
 type PersonID string
@@ -55,7 +56,7 @@ func NewEmpty() *Person {
 
 func New(id PersonID, name string) (*Person, error) {
 	if name == "" {
-		return nil, zerrors.New(ErrEmptyName)
+		return nil, errors.New("empty name")
 	}
 
 	p := NewEmpty()
@@ -67,7 +68,7 @@ func New(id PersonID, name string) (*Person, error) {
 			BornName: name,
 		},
 	}); err != nil {
-		return nil, zerrors.New(ErrCreate).WithError(err)
+		return nil, fmt.Errorf("create person: %w", err)
 	}
 
 	return p, nil
@@ -76,7 +77,7 @@ func New(id PersonID, name string) (*Person, error) {
 func (p *Person) Apply(evt event.EventAny) error {
 	personEvent, ok := evt.(*PersonEvent)
 	if !ok {
-		return zerrors.New(ErrUnexpectedEventType).Errorf("type: %T", evt)
+		return fmt.Errorf("unexpected event type: %T", evt)
 	}
 
 	switch kind := personEvent.Kind.(type) {
@@ -87,7 +88,7 @@ func (p *Person) Apply(evt event.EventAny) error {
 	case *AgedOneYear:
 		p.age++
 	default:
-		return zerrors.New(ErrUnexpectedEventType).Errorf("kind: %T", personEvent.Kind)
+		return fmt.Errorf("unexpected event kind: %T", kind)
 	}
 
 	return nil

@@ -1,9 +1,10 @@
 package aggregate
 
 import (
+	"fmt"
+
 	"github.com/DeluxeOwl/eventuallynow/event"
 	"github.com/DeluxeOwl/eventuallynow/version"
-	"github.com/DeluxeOwl/zerrors"
 )
 
 type Base struct {
@@ -44,7 +45,7 @@ func (br *Base) recordThat(aggregate Aggregate, events ...event.Event) error {
 		anyEvent := event.Unwrap()
 
 		if err := aggregate.Apply(anyEvent); err != nil {
-			return zerrors.New(ErrFailedToRecord).WithError(err)
+			return fmt.Errorf("record that: aggregate apply: %w", err)
 		}
 
 		br.uncommitedEvents = append(br.uncommitedEvents, event)

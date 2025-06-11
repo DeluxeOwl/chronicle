@@ -10,7 +10,6 @@ import (
 	"github.com/DeluxeOwl/eventuallynow/event"
 
 	"github.com/DeluxeOwl/eventuallynow/version"
-	"github.com/DeluxeOwl/zerrors"
 )
 
 type MemoryError string
@@ -79,7 +78,7 @@ func (s *Memory) AppendEvents(ctx context.Context, id event.LogID, expected vers
 	if exp, ok := expected.(version.CheckExact); ok {
 		expectedVer := version.Version(exp)
 		if currentStreamVersion != expectedVer {
-			return 0, zerrors.New(ErrAppendEvents).With("stream", id).Errorf("append events to stream: %w", version.ConflictError{
+			return 0, fmt.Errorf("append events to stream: %w", version.ConflictError{
 				Expected: expectedVer,
 				Actual:   currentStreamVersion,
 			})
@@ -91,7 +90,7 @@ func (s *Memory) AppendEvents(ctx context.Context, id event.LogID, expected vers
 
 	internal, err := s.marshalRecordedToInternal(recordedEvents)
 	if err != nil {
-		return 0, zerrors.New(ErrAppendEvents).WithError(err)
+		return 0, fmt.Errorf("marshal recorded to internal: %w", err)
 	}
 
 	s.events[id] = append(s.events[id], internal...)

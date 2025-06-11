@@ -2,18 +2,12 @@ package aggregate
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"github.com/DeluxeOwl/eventuallynow/event"
 
 	"github.com/DeluxeOwl/eventuallynow/version"
-	"github.com/DeluxeOwl/zerrors"
-)
-
-const (
-	ErrLoadFromEvents     AggregateError = "failed_load_from_events"
-	ErrRehydrateFromState AggregateError = "failed_rehydrate_from_state"
-	ErrRootNotFound       AggregateError = "root_not_found"
-	ErrCommitEvents       AggregateError = "commit_recorded_events"
 )
 
 type Getter[TypeID ID, TRoot Root[TypeID]] interface {
@@ -47,10 +41,10 @@ func NewEventSourcedRepository[TypeID ID, TRoot Root[TypeID]](
 func LoadFromEvents[TypeID ID](root Root[TypeID], events event.RecordedEvents) error {
 	for event, err := range events {
 		if err != nil {
-			return zerrors.New(ErrLoadFromEvents).WithError(err)
+			return fmt.Errorf("load from events: %w", err)
 		}
 		if err := root.Apply(event.EventAny()); err != nil {
-			return zerrors.New(ErrLoadFromEvents).WithError(err)
+			return fmt.Errorf("load from events: root apply: %w", err)
 		}
 		root.setVersion(event.Version())
 	}
@@ -71,7 +65,7 @@ func (repo *EventSourcedRepository[TypeID, TRoot]) Get(ctx context.Context, id T
 	}
 
 	if root.Version() == 0 {
-		return zeroValue, zerrors.New(ErrRootNotFound)
+		return zeroValue, errors.New("root not found")
 	}
 
 	return root, nil
@@ -89,7 +83,7 @@ func (repo *EventSourcedRepository[TypeID, TRoot]) Save(ctx context.Context, roo
 	)
 
 	if _, err := repo.store.AppendEvents(ctx, logID, expectedVersion, events...); err != nil {
-		return zerrors.New(ErrCommitEvents).WithError(err)
+		return fmt.Errorf("aggregate save: append events: %w", err)
 	}
 
 	return nil
