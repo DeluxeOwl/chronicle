@@ -7,6 +7,20 @@ import (
 	"github.com/DeluxeOwl/eventuallynow/version"
 )
 
+type RawEvent struct {
+	// TODO: custom type here?
+	data []byte
+	name string
+}
+
+func (re *RawEvent) EventName() string {
+	return re.name
+}
+
+func (re *RawEvent) Bytes() []byte {
+	return re.data
+}
+
 type AllReader interface {
 	ReadAllEvents(ctx context.Context, selector version.Selector) RecordedEvents
 }
@@ -16,7 +30,7 @@ type Reader interface {
 }
 
 type Appender interface {
-	AppendEvents(ctx context.Context, id LogID, expected version.Check, events ...Event) (version.Version, error)
+	AppendEvents(ctx context.Context, id LogID, expected version.Check, events ...RawEvent) (version.Version, error)
 }
 
 type Log interface {

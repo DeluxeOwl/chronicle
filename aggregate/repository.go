@@ -13,27 +13,54 @@ import (
 // TODO: interface
 
 type EventSourcedRepository[TypeID ID, TEvent event.EventAny, TRoot Root[TypeID, TEvent]] struct {
+	registry     event.Registry
 	store        event.Log
 	newAggregate func() TRoot
+}
+
+type EventSourcedRepositoryOption[TID ID, TE event.EventAny, TR Root[TID, TE]] func(*EventSourcedRepository[TID, TE, TR])
+
+func WithRegistryMemory[TID ID, TE event.EventAny, TR Root[TID, TE]](registry event.Registry) EventSourcedRepositoryOption[TID, TE, TR] {
+	return func(esr *EventSourcedRepository[TID, TE, TR]) {
+		esr.registry = registry
+	}
 }
 
 func NewEventSourcedRepository[TypeID ID, TEvent event.EventAny, TRoot Root[TypeID, TEvent]](
 	store event.Log,
 	newAggregateFunc func() TRoot,
+	opts ...EventSourcedRepositoryOption[TypeID, TEvent, TRoot],
 ) *EventSourcedRepository[TypeID, TEvent, TRoot] {
-	return &EventSourcedRepository[TypeID, TEvent, TRoot]{
+	esr := &EventSourcedRepository[TypeID, TEvent, TRoot]{
 		store:        store,
 		newAggregate: newAggregateFunc,
+		registry:     event.GlobalRegistry,
 	}
+
+	for _, o := range opts {
+		o(esr)
+	}
+
+	return esr
 }
 
-func LoadFromEvents[TypeID ID, TEvent event.EventAny](root Root[TypeID, TEvent], events event.RecordedEvents) error {
-	for event, err := range events {
+func LoadFromRecordedEvents[TypeID ID, TEvent event.EventAny](root Root[TypeID, TEvent], registry event.Registry, events event.RecordedEvents) error {
+	for e, err := range events {
 		if err != nil {
 			return fmt.Errorf("load from events: %w", err)
 		}
 
-		anyEvt, ok := event.EventAny().(TEvent)
+		fact, ok := registry.NewEvent(e.EventName())
+		if !ok {
+			return errors.New("factory not registered for" + e.EventName())
+		}
+
+		ev := fact()
+		if err := event.Unmarshal(e.Bytes(), ev); err != nil {
+			return fmt.Errorf("internal unmarshal record data: %w", err)
+		}
+
+		anyEvt, ok := ev.(TEvent)
 		if !ok {
 			return errors.New("internal: this isn't supposed to happen (todo)")
 		}
@@ -41,7 +68,8 @@ func LoadFromEvents[TypeID ID, TEvent event.EventAny](root Root[TypeID, TEvent],
 		if err := root.Apply(anyEvt); err != nil {
 			return fmt.Errorf("load from events: root apply: %w", err)
 		}
-		root.setVersion(event.Version())
+
+		root.setVersion(e.Version())
 	}
 
 	return nil
@@ -56,7 +84,7 @@ func (repo *EventSourcedRepository[TypeID, TEvent, TRoot]) Get(ctx context.Conte
 
 	root := repo.newAggregate()
 
-	if err := LoadFromEvents(root, recordedEvents); err != nil {
+	if err := LoadFromRecordedEvents(root, repo.registry, recordedEvents); err != nil {
 		return zeroValue, err
 	}
 
@@ -78,7 +106,12 @@ func (repo *EventSourcedRepository[TypeID, TEvent, TRoot]) Save(ctx context.Cont
 		root.Version() - version.Version(len(events)),
 	)
 
-	if _, err := repo.store.AppendEvents(ctx, logID, expectedVersion, events...); err != nil {
+	rawEvents, err := event.ToRawBatch(events)
+	if err != nil {
+		return fmt.Errorf("aggregate save: events to raw: %w", err)
+	}
+
+	if _, err := repo.store.AppendEvents(ctx, logID, expectedVersion, rawEvents...); err != nil {
 		return fmt.Errorf("aggregate save: append events: %w", err)
 	}
 

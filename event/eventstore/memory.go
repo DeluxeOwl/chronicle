@@ -3,7 +3,6 @@ package eventstore
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"sync"
 
@@ -19,42 +18,28 @@ var _ event.Log = new(Memory)
 type Memory struct {
 	mu sync.RWMutex
 
-	registry event.Registry
-	events   map[event.LogID][][]byte
+	events map[event.LogID][][]byte
 
 	// Versions need to be handled per id
 	logVersions map[event.LogID]version.Version
 }
 
 type internalRecord struct {
-	event.RecordedEventSerializableFields
-	Data []byte `json:"data"`
+	LogID     event.LogID     `json:"logID"`
+	Version   version.Version `json:"version"`
+	Data      []byte          `json:"data"`
+	EventName string          `json:"eventName"`
 }
 
-type OptionMemory func(*Memory)
-
-func WithRegistryMemory(registry event.Registry) OptionMemory {
-	return func(m *Memory) {
-		m.registry = registry
-	}
-}
-
-func NewMemory(opts ...OptionMemory) *Memory {
-	m := &Memory{
-		registry:    event.GlobalRegistry,
+func NewMemory() *Memory {
+	return &Memory{
 		mu:          sync.RWMutex{},
 		events:      map[event.LogID][][]byte{},
 		logVersions: map[event.LogID]version.Version{},
 	}
-
-	for _, o := range opts {
-		o(m)
-	}
-
-	return m
 }
 
-func (s *Memory) AppendEvents(ctx context.Context, id event.LogID, expected version.Check, events ...event.Event) (version.Version, error) {
+func (s *Memory) AppendEvents(ctx context.Context, id event.LogID, expected version.Check, events ...event.RawEvent) (version.Version, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -82,7 +67,7 @@ func (s *Memory) AppendEvents(ctx context.Context, id event.LogID, expected vers
 	}
 
 	// Store events with versions starting from currentStreamVersion + 1
-	recordedEvents := event.ToRecorded(currentStreamVersion, id, events...)
+	recordedEvents := event.RawToRecorded(currentStreamVersion, id, events)
 
 	internal, err := s.marshalRecordedToInternal(recordedEvents)
 	if err != nil {
@@ -102,17 +87,14 @@ func (s *Memory) marshalRecordedToInternal(recEvents []*event.RecordedEvent) ([]
 	internalBytes := make([][]byte, len(recEvents))
 
 	for i, r := range recEvents {
-		rbytes, err := event.Marshal(r.EventAny())
-		if err != nil {
-			return nil, fmt.Errorf("marshal snap record: %w", err)
-		}
-
 		ir := internalRecord{
-			RecordedEventSerializableFields: r.SerializableFields(),
-			Data:                            rbytes,
+			LogID:     r.LogID(),
+			Version:   r.Version(),
+			Data:      r.Bytes(),
+			EventName: r.EventName(),
 		}
 
-		rbytes, err = json.Marshal(ir)
+		rbytes, err := json.Marshal(ir)
 		if err != nil {
 			return nil, fmt.Errorf("marshal internal record: %w", err)
 		}
@@ -130,19 +112,7 @@ func (s *Memory) unmarshalInternalToRecorded(internalMarshaled []byte) (*event.R
 		return nil, fmt.Errorf("internal unmarshal record: %w", err)
 	}
 
-	fact, ok := s.registry.NewEvent(ir.EventName)
-	if !ok {
-		// TODO: errors
-		return nil, errors.New("factory not registered for " + ir.EventName)
-	}
-
-	ev := fact()
-	err = event.Unmarshal(ir.Data, ev)
-	if err != nil {
-		return nil, fmt.Errorf("internal unmarshal record data: %w", err)
-	}
-
-	return event.NewRecorded(ir.Version, ir.LogID, ev), nil
+	return event.NewRecorded(ir.Version, ir.LogID, ir.EventName, ir.Data), nil
 }
 
 // ReadEvents implements event.Store.

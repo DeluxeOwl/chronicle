@@ -1,6 +1,8 @@
 package event
 
 import (
+	"fmt"
+
 	"github.com/DeluxeOwl/eventuallynow/version"
 )
 
@@ -9,14 +11,17 @@ type LogID string
 type RecordedEvent struct {
 	version version.Version
 	logID   LogID
-	ev      Event
+	ev      RawEvent
 }
 
-func NewRecorded(version version.Version, logID LogID, event EventAny) *RecordedEvent {
+func NewRecorded(version version.Version, logID LogID, name string, data []byte) *RecordedEvent {
 	return &RecordedEvent{
 		version: version,
 		logID:   logID,
-		ev:      New(event),
+		ev: RawEvent{
+			data: data,
+			name: name,
+		},
 	}
 }
 
@@ -28,53 +33,45 @@ func (re *RecordedEvent) LogID() LogID {
 	return re.logID
 }
 
-func (re *RecordedEvent) Event() Event {
-	return re.ev
-}
-
 func (re *RecordedEvent) EventName() string {
-	return re.ev.event.EventName()
+	return re.ev.EventName()
 }
 
-func (re *RecordedEvent) EventAny() EventAny {
-	return re.ev.Unwrap()
+func (re *RecordedEvent) Bytes() []byte {
+	return re.ev.Bytes()
 }
 
-func (re *RecordedEvent) SerializableFields() RecordedEventSerializableFields {
-	return RecordedEventSerializableFields{
-		Version:   re.version,
-		LogID:     re.logID,
-		EventName: re.EventName(),
-	}
-}
-
-type RecordedEventSerializableFields struct {
-	Version   version.Version `json:"version"`
-	LogID     LogID           `json:"logID"`
-	EventName string          `json:"eventName"`
-}
-
-type RecordedEventSnapshot struct {
-	RecordedEventSerializableFields
-	Event EventAny `json:"event"`
-}
-
-func (re *RecordedEvent) Snapshot() *RecordedEventSnapshot {
-	return &RecordedEventSnapshot{
-		RecordedEventSerializableFields: RecordedEventSerializableFields{
-			Version:   re.version,
-			LogID:     re.logID,
-			EventName: re.EventName(),
-		},
-		Event: re.ev.event,
-	}
-}
-
-func ToRecorded(startingVersion version.Version, id LogID, events ...Event) []*RecordedEvent {
+func RawToRecorded(startingVersion version.Version, id LogID, events []RawEvent) []*RecordedEvent {
 	recordedEvents := make([]*RecordedEvent, len(events))
 	for i, e := range events {
 		//nolint:gosec // It's not a problem in practice.
-		recordedEvents[i] = NewRecorded(startingVersion+version.Version(i+1), id, e.Unwrap())
+		recordedEvents[i] = NewRecorded(startingVersion+version.Version(i+1), id, e.EventName(), e.Bytes())
 	}
 	return recordedEvents
+}
+
+func ToRaw(event Event) (RawEvent, error) {
+	bytes, err := Marshal(event.Unwrap())
+	if err != nil {
+		return RawEvent{}, fmt.Errorf("marshal event: %w", err)
+	}
+
+	return RawEvent{
+		data: bytes,
+		name: event.EventName(),
+	}, nil
+}
+
+func ToRawBatch(events []Event) ([]RawEvent, error) {
+	rawEvents := make([]RawEvent, len(events))
+	for i := range events {
+		raw, err := ToRaw(events[i])
+		if err != nil {
+			return nil, fmt.Errorf("to raw batch: %w", err)
+		}
+
+		rawEvents[i] = raw
+	}
+
+	return rawEvents, nil
 }
