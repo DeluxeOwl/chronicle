@@ -15,7 +15,7 @@ type ID interface {
 	fmt.Stringer
 }
 
-type Aggregate[TEvent event.EventAny] interface {
+type Aggregate[TEvent event.Any] interface {
 	Apply(TEvent) error
 }
 
@@ -24,7 +24,7 @@ type RecordedEventsFlusher interface {
 }
 
 type (
-	Root[TypeID ID, TEvent event.EventAny] interface {
+	Root[TypeID ID, TEvent event.Any] interface {
 		Aggregate[TEvent]
 		RecordedEventsFlusher
 		event.EventLister
@@ -34,15 +34,15 @@ type (
 
 		// EventRecorder implements these, so you *have* to embed EventRecorder.
 		setVersion(version.Version)
-		recordThat(Aggregate[event.EventAny], ...event.Event) error
+		recordThat(Aggregate[event.Any], ...event.Event) error
 	}
 )
 
-type anyRoot[TypeID ID, TEvent event.EventAny] struct {
+type anyRoot[TypeID ID, TEvent event.Any] struct {
 	internalRoot Root[TypeID, TEvent]
 }
 
-func (a *anyRoot[TypeID, TEvent]) Apply(evt event.EventAny) error {
+func (a *anyRoot[TypeID, TEvent]) Apply(evt event.Any) error {
 	anyEvt, ok := evt.(TEvent)
 	if !ok {
 		return errors.New("internal: this isn't supposed to happen (todo)")
@@ -51,7 +51,7 @@ func (a *anyRoot[TypeID, TEvent]) Apply(evt event.EventAny) error {
 	return a.internalRoot.Apply(anyEvt)
 }
 
-func RecordEvent[TypeID ID, TEvent event.EventAny](root Root[TypeID, TEvent], e event.EventAny) error {
+func RecordEvent[TypeID ID, TEvent event.Any](root Root[TypeID, TEvent], e event.Any) error {
 	r := &anyRoot[TypeID, TEvent]{
 		internalRoot: root,
 	}

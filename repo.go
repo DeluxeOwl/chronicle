@@ -12,15 +12,15 @@ import (
 	"github.com/DeluxeOwl/chronicle/version"
 )
 
-type AggregateRepository[ID aggregate.ID, E event.EventAny, R aggregate.Root[ID, E]] struct {
+type AggregateRepository[ID aggregate.ID, E event.Any, R aggregate.Root[ID, E]] struct {
 	registry event.Registry
 	store    event.Log
 	newRoot  func() R
 }
 
-type AggregateRepositoryOption[ID aggregate.ID, E event.EventAny, R aggregate.Root[ID, E]] func(*AggregateRepository[ID, E, R])
+type AggregateRepositoryOption[ID aggregate.ID, E event.Any, R aggregate.Root[ID, E]] func(*AggregateRepository[ID, E, R])
 
-func WithRegistry[ID aggregate.ID, E event.EventAny, R aggregate.Root[ID, E]](
+func WithRegistry[ID aggregate.ID, E event.Any, R aggregate.Root[ID, E]](
 	registry event.Registry,
 ) AggregateRepositoryOption[ID, E, R] {
 	return func(esr *AggregateRepository[ID, E, R]) {
@@ -28,7 +28,7 @@ func WithRegistry[ID aggregate.ID, E event.EventAny, R aggregate.Root[ID, E]](
 	}
 }
 
-func NewAggregateRepository[ID aggregate.ID, E event.EventAny, R aggregate.Root[ID, E]](
+func NewAggregateRepository[ID aggregate.ID, E event.Any, R aggregate.Root[ID, E]](
 	eventLog event.Log,
 	newRoot func() R,
 	opts ...AggregateRepositoryOption[ID, E, R],

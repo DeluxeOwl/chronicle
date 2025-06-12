@@ -8,10 +8,10 @@ type PersonEvent interface {
 	isPersonEvent()
 }
 
-func (p *Person) ListEvents() []event.EventAny {
-	return []event.EventAny{
-		&PersonWasBorn{},
-		&PersonAgedOneYear{},
+func (p *Person) ListEvents() []event.Factory {
+	return []event.Factory{
+		func() event.Any { return new(PersonWasBorn) },
+		func() event.Any { return new(PersonAgedOneYear) },
 	}
 }
 

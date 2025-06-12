@@ -2,25 +2,25 @@ package event
 
 import "encoding/json"
 
-type EventAny interface {
+type Any interface {
 	EventName() string
 }
 
-type wrapper[T EventAny] struct {
+type wrapper[T Any] struct {
 	event T
 }
 
-type Event wrapper[EventAny]
+type Event wrapper[Any]
 
 var Empty = Event{event: nil}
 
-func New(event EventAny) Event {
+func New(event Any) Event {
 	return Event{
 		event: event,
 	}
 }
 
-func (ge *Event) Unwrap() EventAny {
+func (ge *Event) Unwrap() Any {
 	return ge.event
 }
 
@@ -37,7 +37,7 @@ type Marshaler interface {
 }
 
 // TODO: allow global encoder/decoder, or constructor
-func Unmarshal(data []byte, v EventAny) error {
+func Unmarshal(data []byte, v Any) error {
 	if customUnmarshal, ok := v.(Unmarshaler); ok {
 		return customUnmarshal.UnmarshalEvent(data)
 	}
@@ -45,7 +45,7 @@ func Unmarshal(data []byte, v EventAny) error {
 	return json.Unmarshal(data, v)
 }
 
-func Marshal(v EventAny) ([]byte, error) {
+func Marshal(v Any) ([]byte, error) {
 	if customMarshal, ok := v.(Marshaler); ok {
 		return customMarshal.MarshalEvent()
 	}

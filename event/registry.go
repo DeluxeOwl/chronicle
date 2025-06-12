@@ -1,11 +1,14 @@
 package event
 
 import (
+	"fmt"
 	"sync"
 )
 
+type Factory func() Any
+
 type EventLister interface {
-	ListEvents() []EventAny
+	ListEvents() []Factory
 }
 
 type RootRegister interface {
@@ -13,7 +16,7 @@ type RootRegister interface {
 }
 
 type NewEventer interface {
-	NewEvent(eventName string) (func() EventAny, bool)
+	NewEvent(eventName string) (Factory, bool)
 }
 
 type Registry interface {
@@ -25,19 +28,19 @@ var GlobalRegistry = NewRegistry()
 
 func NewRegistry() *eventRegistry {
 	return &eventRegistry{
-		eventFactories: make(map[string]func() EventAny),
+		eventFactories: make(map[string]Factory),
 		registryMu:     sync.RWMutex{},
 	}
 }
 
 type eventRegistry struct {
-	eventFactories map[string]func() EventAny
+	eventFactories map[string]Factory
 	registryMu     sync.RWMutex
 }
 
 var _ Registry = (*eventRegistry)(nil)
 
-func (r *eventRegistry) NewEvent(eventName string) (func() EventAny, bool) {
+func (r *eventRegistry) NewEvent(eventName string) (Factory, bool) {
 	r.registryMu.RLock()
 	defer r.registryMu.RUnlock()
 
@@ -45,16 +48,18 @@ func (r *eventRegistry) NewEvent(eventName string) (func() EventAny, bool) {
 	return factory, ok
 }
 
-// Registers the aggregate root with its events.
 func (r *eventRegistry) RegisterRoot(root EventLister) {
 	r.registryMu.Lock()
 	defer r.registryMu.Unlock()
 
-	for _, ev := range root.ListEvents() {
-		// TODO: bug - this returns the same instance, which means that json is marshaled/unmarshaled overwriting previous
-		// Maybe the register needs to register functions
-		r.eventFactories[ev.EventName()] = func() EventAny {
-			return ev
+	for _, evFact := range root.ListEvents() {
+		ev := evFact()
+		eventName := ev.EventName()
+
+		if _, ok := r.eventFactories[eventName]; ok {
+			panic(fmt.Sprintf("duplicate event %q in registry, did you create multipler repos? (todo)", eventName))
 		}
+
+		r.eventFactories[eventName] = evFact
 	}
 }

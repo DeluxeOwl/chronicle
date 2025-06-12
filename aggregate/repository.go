@@ -7,7 +7,7 @@ import (
 	"github.com/DeluxeOwl/chronicle/event"
 )
 
-func LoadFromRecordedEvents[TypeID ID, TEvent event.EventAny](root Root[TypeID, TEvent], registry event.Registry, events event.Records) error {
+func LoadFromRecordedEvents[TypeID ID, TEvent event.Any](root Root[TypeID, TEvent], registry event.Registry, events event.Records) error {
 	for e, err := range events {
 		if err != nil {
 			return fmt.Errorf("load from events: %w", err)
