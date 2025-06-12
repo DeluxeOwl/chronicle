@@ -13,7 +13,7 @@ func LoadFromRecordedEvents[TypeID ID, TEvent event.Any](root Root[TypeID, TEven
 			return fmt.Errorf("load from events: %w", err)
 		}
 
-		fact, ok := registry.NewEvent(e.EventName())
+		fact, ok := registry.NewEventFactory(e.EventName())
 		if !ok {
 			return errors.New("factory not registered for" + e.EventName())
 		}

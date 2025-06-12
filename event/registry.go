@@ -16,7 +16,7 @@ type RootRegister interface {
 }
 
 type NewEventer interface {
-	NewEvent(eventName string) (Factory, bool)
+	NewEventFactory(eventName string) (Factory, bool)
 }
 
 type Registry interface {
@@ -40,7 +40,7 @@ type eventRegistry struct {
 
 var _ Registry = (*eventRegistry)(nil)
 
-func (r *eventRegistry) NewEvent(eventName string) (Factory, bool) {
+func (r *eventRegistry) NewEventFactory(eventName string) (Factory, bool) {
 	r.registryMu.RLock()
 	defer r.registryMu.RUnlock()
 
