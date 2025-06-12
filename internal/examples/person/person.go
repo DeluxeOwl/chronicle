@@ -43,6 +43,10 @@ func NewEmpty() *Person {
 	return new(Person)
 }
 
+func NewEvents() []PersonEvent {
+	return []PersonEvent{&PersonAgedOneYear{}, &PersonWasBorn{}}
+}
+
 func New(id PersonID, name string) (*Person, error) {
 	if name == "" {
 		return nil, errors.New("empty name")

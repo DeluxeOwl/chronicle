@@ -10,9 +10,6 @@ import (
 type Base struct {
 	version          version.Version
 	uncommitedEvents []event.Event
-
-	//nolint:unused // False positive.
-	registeredEvents bool
 }
 
 func (br *Base) Version() version.Version { return br.version }
@@ -27,16 +24,6 @@ func (br *Base) FlushUncommitedEvents() []event.Event {
 //nolint:unused // False positive.
 func (br *Base) setVersion(v version.Version) {
 	br.version = v
-}
-
-//nolint:unused // False positive.
-func (br *Base) setRegisteredEvents() {
-	br.registeredEvents = true
-}
-
-//nolint:unused // False positive.
-func (br *Base) hasRegisteredEvents() bool {
-	return br.registeredEvents
 }
 
 //nolint:unused // False positive.

@@ -30,18 +30,20 @@ func WithRegistry[ID aggregate.ID, E event.EventAny, R aggregate.Root[ID, E]](
 
 func NewAggregateRepository[ID aggregate.ID, E event.EventAny, R aggregate.Root[ID, E]](
 	eventLog event.Log,
-	newRootFunc func() R,
+	newRoot func() R,
 	opts ...AggregateRepositoryOption[ID, E, R],
 ) *AggregateRepository[ID, E, R] {
 	esr := &AggregateRepository[ID, E, R]{
 		store:    eventLog,
-		newRoot:  newRootFunc,
+		newRoot:  newRoot,
 		registry: event.GlobalRegistry,
 	}
 
 	for _, o := range opts {
 		o(esr)
 	}
+
+	esr.registry.RegisterRoot(newRoot())
 
 	return esr
 }

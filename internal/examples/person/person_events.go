@@ -1,6 +1,6 @@
 package person
 
-import "github.com/DeluxeOwl/chronicle/aggregate"
+import "github.com/DeluxeOwl/chronicle/event"
 
 //sumtype:decl
 type PersonEvent interface {
@@ -8,9 +8,11 @@ type PersonEvent interface {
 	isPersonEvent()
 }
 
-func (p *Person) RegisterEvents(r aggregate.RegisterFunc) {
-	r(&PersonWasBorn{})
-	r(&PersonAgedOneYear{})
+func (p *Person) ListEvents() []event.EventAny {
+	return []event.EventAny{
+		&PersonWasBorn{},
+		&PersonAgedOneYear{},
+	}
 }
 
 type PersonWasBorn struct {
