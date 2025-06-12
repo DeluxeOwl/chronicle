@@ -4,7 +4,7 @@ import (
 	"context"
 	"iter"
 
-	"github.com/DeluxeOwl/eventuallynow/version"
+	"github.com/DeluxeOwl/chronicle/version"
 )
 
 type AllReader interface {

@@ -1,7 +1,7 @@
 package event
 
 import (
-	"github.com/DeluxeOwl/eventuallynow/version"
+	"github.com/DeluxeOwl/chronicle/version"
 )
 
 // The raw event that's common to any event, has the name and a bytes payload.

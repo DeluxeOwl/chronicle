@@ -1,4 +1,4 @@
-module github.com/DeluxeOwl/eventuallynow
+module github.com/DeluxeOwl/chronicle
 
 go 1.24.2
 

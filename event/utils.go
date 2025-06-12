@@ -3,7 +3,7 @@ package event
 import (
 	"fmt"
 
-	"github.com/DeluxeOwl/eventuallynow/version"
+	"github.com/DeluxeOwl/chronicle/version"
 )
 
 func ConvertRawToRecorded(startingVersion version.Version, id LogID, events []Raw) []*Record {

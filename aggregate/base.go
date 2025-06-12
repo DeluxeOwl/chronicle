@@ -3,8 +3,8 @@ package aggregate
 import (
 	"fmt"
 
-	"github.com/DeluxeOwl/eventuallynow/event"
-	"github.com/DeluxeOwl/eventuallynow/version"
+	"github.com/DeluxeOwl/chronicle/event"
+	"github.com/DeluxeOwl/chronicle/version"
 )
 
 type Base struct {

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/DeluxeOwl/eventuallynow/aggregate"
+	"github.com/DeluxeOwl/chronicle/aggregate"
 )
 
 type PersonID string

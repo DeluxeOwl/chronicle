@@ -3,9 +3,8 @@ package person_test
 import (
 	"testing"
 
-	"github.com/DeluxeOwl/eventuallynow/aggregate"
-	"github.com/DeluxeOwl/eventuallynow/event/eventstore"
-	"github.com/DeluxeOwl/eventuallynow/internal/examples/person"
+	"github.com/DeluxeOwl/chronicle"
+	"github.com/DeluxeOwl/chronicle/internal/examples/person"
 	"github.com/stretchr/testify/require"
 )
 
@@ -17,8 +16,8 @@ func TestSTh(t *testing.T) {
 
 	require.NoError(t, err)
 
-	mem := eventstore.NewMemory()
-	repo := aggregate.NewEventSourcedRepository(mem, person.NewEmpty)
+	mem := chronicle.NewEventLogMemory()
+	repo := chronicle.NewAggregateRepository(mem, person.NewEmpty)
 
 	for range 2 {
 		p.Age()

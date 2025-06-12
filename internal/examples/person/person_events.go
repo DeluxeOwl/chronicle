@@ -1,6 +1,6 @@
 package person
 
-import "github.com/DeluxeOwl/eventuallynow/aggregate"
+import "github.com/DeluxeOwl/chronicle/aggregate"
 
 //sumtype:decl
 type PersonEvent interface {

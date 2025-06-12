@@ -4,9 +4,9 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/DeluxeOwl/eventuallynow/event"
+	"github.com/DeluxeOwl/chronicle/event"
 
-	"github.com/DeluxeOwl/eventuallynow/version"
+	"github.com/DeluxeOwl/chronicle/version"
 )
 
 type AggregateError string

@@ -1,4 +1,4 @@
-package eventstore
+package chronicle
 
 import (
 	"context"
@@ -6,16 +6,14 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/DeluxeOwl/eventuallynow/event"
+	"github.com/DeluxeOwl/chronicle/event"
 
-	"github.com/DeluxeOwl/eventuallynow/version"
+	"github.com/DeluxeOwl/chronicle/version"
 )
 
-type MemoryError string
+var _ event.Log = new(EventLogMemory)
 
-var _ event.Log = new(Memory)
-
-type Memory struct {
+type EventLogMemory struct {
 	mu sync.RWMutex
 
 	events map[event.LogID][][]byte
@@ -31,8 +29,8 @@ type internalRecord struct {
 	EventName string          `json:"eventName"`
 }
 
-func NewMemory() *Memory {
-	return &Memory{
+func NewEventLogMemory() *EventLogMemory {
+	return &EventLogMemory{
 		mu:          sync.RWMutex{},
 		events:      map[event.LogID][][]byte{},
 		logVersions: map[event.LogID]version.Version{},
@@ -40,7 +38,7 @@ func NewMemory() *Memory {
 }
 
 // TODO: I think a lot of logic would be similar between implementations? Like converting raw to recorded and checking the version
-func (s *Memory) AppendEvents(ctx context.Context, id event.LogID, expected version.Check, events []event.Raw) (version.Version, error) {
+func (s *EventLogMemory) AppendEvents(ctx context.Context, id event.LogID, expected version.Check, events []event.Raw) (version.Version, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -84,7 +82,7 @@ func (s *Memory) AppendEvents(ctx context.Context, id event.LogID, expected vers
 	return newStreamVersion, nil
 }
 
-func (s *Memory) marshalRecordedToInternal(recEvents []*event.Record) ([][]byte, error) {
+func (s *EventLogMemory) marshalRecordedToInternal(recEvents []*event.Record) ([][]byte, error) {
 	internalBytes := make([][]byte, len(recEvents))
 
 	for i, r := range recEvents {
@@ -106,7 +104,7 @@ func (s *Memory) marshalRecordedToInternal(recEvents []*event.Record) ([][]byte,
 	return internalBytes, nil
 }
 
-func (s *Memory) unmarshalInternalToRecorded(internalMarshaled []byte) (*event.Record, error) {
+func (s *EventLogMemory) unmarshalInternalToRecorded(internalMarshaled []byte) (*event.Record, error) {
 	var ir internalRecord
 	err := json.Unmarshal(internalMarshaled, &ir)
 	if err != nil {
@@ -116,7 +114,7 @@ func (s *Memory) unmarshalInternalToRecorded(internalMarshaled []byte) (*event.R
 	return event.NewRecord(ir.Version, ir.LogID, ir.EventName, ir.Data), nil
 }
 
-func (s *Memory) ReadEvents(ctx context.Context, id event.LogID, selector version.Selector) event.Records {
+func (s *EventLogMemory) ReadEvents(ctx context.Context, id event.LogID, selector version.Selector) event.Records {
 	return func(yield func(*event.Record, error) bool) {
 		s.mu.RLock()
 		defer s.mu.RUnlock()
