@@ -7,30 +7,16 @@ import (
 	"github.com/DeluxeOwl/eventuallynow/version"
 )
 
-type RawEvent struct {
-	// TODO: custom type here?
-	data []byte
-	name string
-}
-
-func (re *RawEvent) EventName() string {
-	return re.name
-}
-
-func (re *RawEvent) Bytes() []byte {
-	return re.data
-}
-
 type AllReader interface {
-	ReadAllEvents(ctx context.Context, selector version.Selector) RecordedEvents
+	ReadAllEvents(ctx context.Context, selector version.Selector) Records
 }
 
 type Reader interface {
-	ReadEvents(ctx context.Context, id LogID, selector version.Selector) RecordedEvents
+	ReadEvents(ctx context.Context, id LogID, selector version.Selector) Records
 }
 
 type Appender interface {
-	AppendEvents(ctx context.Context, id LogID, expected version.Check, events ...RawEvent) (version.Version, error)
+	AppendEvents(ctx context.Context, id LogID, expected version.Check, events []Raw) (version.Version, error)
 }
 
 type Log interface {
@@ -38,15 +24,4 @@ type Log interface {
 	Appender
 }
 
-type RecordedEvents iter.Seq2[*RecordedEvent, error]
-
-func (re RecordedEvents) AsSlice() ([]RecordedEvent, error) {
-	ee := []RecordedEvent{}
-	for ev, err := range re {
-		if err != nil {
-			return nil, err
-		}
-		ee = append(ee, *ev)
-	}
-	return ee, nil
-}
+type Records iter.Seq2[*Record, error]

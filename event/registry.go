@@ -5,8 +5,6 @@ import (
 	"sync"
 )
 
-// TODO: what if not global, but injected
-
 type RegisterFunc func(ev EventAny)
 
 type Registerer interface {

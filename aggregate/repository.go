@@ -44,7 +44,7 @@ func NewEventSourcedRepository[TypeID ID, TEvent event.EventAny, TRoot Root[Type
 	return esr
 }
 
-func LoadFromRecordedEvents[TypeID ID, TEvent event.EventAny](root Root[TypeID, TEvent], registry event.Registry, events event.RecordedEvents) error {
+func LoadFromRecordedEvents[TypeID ID, TEvent event.EventAny](root Root[TypeID, TEvent], registry event.Registry, events event.Records) error {
 	for e, err := range events {
 		if err != nil {
 			return fmt.Errorf("load from events: %w", err)
@@ -56,7 +56,7 @@ func LoadFromRecordedEvents[TypeID ID, TEvent event.EventAny](root Root[TypeID, 
 		}
 
 		ev := fact()
-		if err := event.Unmarshal(e.Bytes(), ev); err != nil {
+		if err := event.Unmarshal(e.Data(), ev); err != nil {
 			return fmt.Errorf("internal unmarshal record data: %w", err)
 		}
 
@@ -106,12 +106,12 @@ func (repo *EventSourcedRepository[TypeID, TEvent, TRoot]) Save(ctx context.Cont
 		root.Version() - version.Version(len(events)),
 	)
 
-	rawEvents, err := event.ToRawBatch(events)
+	rawEvents, err := event.ConvertEventsToRaw(events)
 	if err != nil {
 		return fmt.Errorf("aggregate save: events to raw: %w", err)
 	}
 
-	if _, err := repo.store.AppendEvents(ctx, logID, expectedVersion, rawEvents...); err != nil {
+	if _, err := repo.store.AppendEvents(ctx, logID, expectedVersion, rawEvents); err != nil {
 		return fmt.Errorf("aggregate save: append events: %w", err)
 	}
 

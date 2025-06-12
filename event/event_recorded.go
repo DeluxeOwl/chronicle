@@ -1,77 +1,68 @@
 package event
 
 import (
-	"fmt"
-
 	"github.com/DeluxeOwl/eventuallynow/version"
 )
 
-type LogID string
+// The raw event that's common to any event, has the name and a bytes payload.
+// Implementations of the log should handle the Raw event.
 
-type RecordedEvent struct {
-	version version.Version
-	logID   LogID
-	ev      RawEvent
+type RawData = []byte
+
+type Raw struct {
+	data RawData
+	name string
 }
 
-func NewRecorded(version version.Version, logID LogID, name string, data []byte) *RecordedEvent {
-	return &RecordedEvent{
+func NewRaw(name string, data RawData) *Raw {
+	return &Raw{
+		name: name,
+		data: data,
+	}
+}
+
+func (raw *Raw) EventName() string {
+	return raw.name
+}
+
+func (raw *Raw) Data() RawData {
+	return raw.data
+}
+
+// The event record which contains the raw event, its version and the logID it belongs to.
+// Implementations of the log should store the data from the event record.
+
+type LogID string
+
+type Record struct {
+	raw     Raw
+	logID   LogID
+	version version.Version
+}
+
+func NewRecord(version version.Version, logID LogID, name string, data RawData) *Record {
+	return &Record{
 		version: version,
 		logID:   logID,
-		ev: RawEvent{
+		raw: Raw{
 			data: data,
 			name: name,
 		},
 	}
 }
 
-func (re *RecordedEvent) Version() version.Version {
-	return re.version
+func (re *Record) EventName() string {
+	return re.raw.EventName()
 }
 
-func (re *RecordedEvent) LogID() LogID {
+func (re *Record) Data() RawData {
+	return re.raw.Data()
+}
+
+func (re *Record) LogID() LogID {
 	return re.logID
 }
 
-func (re *RecordedEvent) EventName() string {
-	return re.ev.EventName()
-}
-
-func (re *RecordedEvent) Bytes() []byte {
-	return re.ev.Bytes()
-}
-
-func RawToRecorded(startingVersion version.Version, id LogID, events []RawEvent) []*RecordedEvent {
-	recordedEvents := make([]*RecordedEvent, len(events))
-	for i, e := range events {
-		//nolint:gosec // It's not a problem in practice.
-		recordedEvents[i] = NewRecorded(startingVersion+version.Version(i+1), id, e.EventName(), e.Bytes())
-	}
-	return recordedEvents
-}
-
-func ToRaw(event Event) (RawEvent, error) {
-	bytes, err := Marshal(event.Unwrap())
-	if err != nil {
-		return RawEvent{}, fmt.Errorf("marshal event: %w", err)
-	}
-
-	return RawEvent{
-		data: bytes,
-		name: event.EventName(),
-	}, nil
-}
-
-func ToRawBatch(events []Event) ([]RawEvent, error) {
-	rawEvents := make([]RawEvent, len(events))
-	for i := range events {
-		raw, err := ToRaw(events[i])
-		if err != nil {
-			return nil, fmt.Errorf("to raw batch: %w", err)
-		}
-
-		rawEvents[i] = raw
-	}
-
-	return rawEvents, nil
+func (re *Record) Version() version.Version {
+	return re.version
 }

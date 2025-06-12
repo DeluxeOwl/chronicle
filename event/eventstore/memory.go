@@ -39,7 +39,8 @@ func NewMemory() *Memory {
 	}
 }
 
-func (s *Memory) AppendEvents(ctx context.Context, id event.LogID, expected version.Check, events ...event.RawEvent) (version.Version, error) {
+// TODO: I think a lot of logic would be similar between implementations? Like converting raw to recorded and checking the version
+func (s *Memory) AppendEvents(ctx context.Context, id event.LogID, expected version.Check, events []event.Raw) (version.Version, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -67,7 +68,7 @@ func (s *Memory) AppendEvents(ctx context.Context, id event.LogID, expected vers
 	}
 
 	// Store events with versions starting from currentStreamVersion + 1
-	recordedEvents := event.RawToRecorded(currentStreamVersion, id, events)
+	recordedEvents := event.ConvertRawToRecorded(currentStreamVersion, id, events)
 
 	internal, err := s.marshalRecordedToInternal(recordedEvents)
 	if err != nil {
@@ -83,14 +84,14 @@ func (s *Memory) AppendEvents(ctx context.Context, id event.LogID, expected vers
 	return newStreamVersion, nil
 }
 
-func (s *Memory) marshalRecordedToInternal(recEvents []*event.RecordedEvent) ([][]byte, error) {
+func (s *Memory) marshalRecordedToInternal(recEvents []*event.Record) ([][]byte, error) {
 	internalBytes := make([][]byte, len(recEvents))
 
 	for i, r := range recEvents {
 		ir := internalRecord{
 			LogID:     r.LogID(),
 			Version:   r.Version(),
-			Data:      r.Bytes(),
+			Data:      r.Data(),
 			EventName: r.EventName(),
 		}
 
@@ -105,19 +106,18 @@ func (s *Memory) marshalRecordedToInternal(recEvents []*event.RecordedEvent) ([]
 	return internalBytes, nil
 }
 
-func (s *Memory) unmarshalInternalToRecorded(internalMarshaled []byte) (*event.RecordedEvent, error) {
+func (s *Memory) unmarshalInternalToRecorded(internalMarshaled []byte) (*event.Record, error) {
 	var ir internalRecord
 	err := json.Unmarshal(internalMarshaled, &ir)
 	if err != nil {
 		return nil, fmt.Errorf("internal unmarshal record: %w", err)
 	}
 
-	return event.NewRecorded(ir.Version, ir.LogID, ir.EventName, ir.Data), nil
+	return event.NewRecord(ir.Version, ir.LogID, ir.EventName, ir.Data), nil
 }
 
-// ReadEvents implements event.Store.
-func (s *Memory) ReadEvents(ctx context.Context, id event.LogID, selector version.Selector) event.RecordedEvents {
-	return func(yield func(*event.RecordedEvent, error) bool) {
+func (s *Memory) ReadEvents(ctx context.Context, id event.LogID, selector version.Selector) event.Records {
+	return func(yield func(*event.Record, error) bool) {
 		s.mu.RLock()
 		defer s.mu.RUnlock()
 
