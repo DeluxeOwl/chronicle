@@ -58,6 +58,19 @@ func RecordEvent[TypeID ID, TEvent event.Any](root Root[TypeID, TEvent], e event
 	return root.recordThat(r, event.New(e))
 }
 
+func RecordEvents[TypeID ID, TEvent event.Any](root Root[TypeID, TEvent], events ...event.Any) error {
+	r := &anyRoot[TypeID, TEvent]{
+		internalRoot: root,
+	}
+
+	evs := make([]event.Event, len(events))
+	for i := range events {
+		evs[i] = event.New(events[i])
+	}
+
+	return root.recordThat(r, evs...)
+}
+
 func LoadFromRecordedEvents[TypeID ID, TEvent event.Any](root Root[TypeID, TEvent], registry event.Registry, events event.Records) error {
 	for e, err := range events {
 		if err != nil {

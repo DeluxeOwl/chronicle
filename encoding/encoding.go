@@ -1,9 +1,8 @@
 package encoding
 
 import (
-	"encoding/json"
-
 	"github.com/DeluxeOwl/chronicle/event"
+	"github.com/DeluxeOwl/chronicle/internal"
 )
 
 // Custom marshaler and unmarshaler.
@@ -20,7 +19,7 @@ func Unmarshal(data []byte, v event.Any) error {
 		return customUnmarshal.UnmarshalEvent(data)
 	}
 
-	return json.Unmarshal(data, v)
+	return internal.Config.Unmarshal(data, v)
 }
 
 func Marshal(v event.Any) ([]byte, error) {
@@ -28,5 +27,5 @@ func Marshal(v event.Any) ([]byte, error) {
 		return customMarshal.MarshalEvent()
 	}
 
-	return json.Marshal(v)
+	return internal.Config.Marshal(v)
 }

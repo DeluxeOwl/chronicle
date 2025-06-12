@@ -1,13 +1,7 @@
 package chronicle
 
-import "encoding/json"
+import (
+	"github.com/DeluxeOwl/chronicle/internal"
+)
 
-type ChronicleConfig struct {
-	Unmarshaler func(data []byte, v any) error
-	Marshaler   func(v any) ([]byte, error)
-}
-
-var Config = ChronicleConfig{
-	Marshaler:   json.Marshal,
-	Unmarshaler: json.Unmarshal,
-}
+var Config = &internal.Config
