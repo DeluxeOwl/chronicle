@@ -13,9 +13,9 @@ import (
 )
 
 type AggregateRepository[ID aggregate.ID, E event.EventAny, R aggregate.Root[ID, E]] struct {
-	registry     event.Registry
-	store        event.Log
-	newAggregate func() R
+	registry event.Registry
+	store    event.Log
+	newRoot  func() R
 }
 
 type AggregateRepositoryOption[ID aggregate.ID, E event.EventAny, R aggregate.Root[ID, E]] func(*AggregateRepository[ID, E, R])
@@ -30,13 +30,13 @@ func WithRegistry[ID aggregate.ID, E event.EventAny, R aggregate.Root[ID, E]](
 
 func NewAggregateRepository[ID aggregate.ID, E event.EventAny, R aggregate.Root[ID, E]](
 	eventLog event.Log,
-	newAggregateFunc func() R,
+	newRootFunc func() R,
 	opts ...AggregateRepositoryOption[ID, E, R],
 ) *AggregateRepository[ID, E, R] {
 	esr := &AggregateRepository[ID, E, R]{
-		store:        eventLog,
-		newAggregate: newAggregateFunc,
-		registry:     event.GlobalRegistry,
+		store:    eventLog,
+		newRoot:  newRootFunc,
+		registry: event.GlobalRegistry,
 	}
 
 	for _, o := range opts {
@@ -53,7 +53,7 @@ func (repo *AggregateRepository[ID, E, R]) Get(ctx context.Context, id ID) (R, e
 	logID := event.LogID(id.String())
 	recordedEvents := repo.store.ReadEvents(ctx, logID, version.SelectFromBeginning)
 
-	root := repo.newAggregate()
+	root := repo.newRoot()
 
 	if err := aggregate.LoadFromRecordedEvents(root, repo.registry, recordedEvents); err != nil {
 		return zeroValue, err
