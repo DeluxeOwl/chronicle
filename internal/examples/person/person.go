@@ -37,7 +37,8 @@ func (p *Person) ID() PersonID {
 	return PersonID(p.id.String())
 }
 
-// TODO: how would I add a custom registry/dependencies??
+// Note: you'd add custom dependencies by returning a non-empty
+// instance, or creating a closure.
 func NewEmpty() *Person {
 	return new(Person)
 }
