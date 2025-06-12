@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/DeluxeOwl/chronicle/convert"
 	"github.com/DeluxeOwl/chronicle/event"
 
 	"github.com/DeluxeOwl/chronicle/version"
@@ -66,7 +67,7 @@ func (s *EventLogMemory) AppendEvents(ctx context.Context, id event.LogID, expec
 	}
 
 	// Store events with versions starting from currentStreamVersion + 1
-	recordedEvents := event.ConvertRawToRecorded(currentStreamVersion, id, events)
+	recordedEvents := convert.RawToRecorded(currentStreamVersion, id, events)
 
 	internal, err := s.marshalRecordedToInternal(recordedEvents)
 	if err != nil {

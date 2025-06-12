@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/DeluxeOwl/chronicle/aggregate"
+	"github.com/DeluxeOwl/chronicle/convert"
 	"github.com/DeluxeOwl/chronicle/event"
 	"github.com/DeluxeOwl/chronicle/version"
 )
@@ -79,7 +80,7 @@ func (repo *AggregateRepository[ID, E, R]) Save(ctx context.Context, root R) err
 		root.Version() - version.Version(len(events)),
 	)
 
-	rawEvents, err := event.ConvertEventsToRaw(events)
+	rawEvents, err := convert.EventsToRaw(events)
 	if err != nil {
 		return fmt.Errorf("aggregate save: events to raw: %w", err)
 	}

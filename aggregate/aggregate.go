@@ -4,35 +4,34 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/DeluxeOwl/chronicle/encoding"
 	"github.com/DeluxeOwl/chronicle/event"
 
 	"github.com/DeluxeOwl/chronicle/version"
 )
 
-type AggregateError string
-
 type ID interface {
 	fmt.Stringer
 }
 
-type Aggregate[TEvent event.Any] interface {
-	Apply(TEvent) error
+type Aggregate[E event.Any] interface {
+	Apply(E) error
 }
 
-type RecordedEventsFlusher interface {
+type UncommitedEventsFlusher interface {
 	FlushUncommitedEvents() []event.Event
 }
 
 type (
 	Root[TypeID ID, TEvent event.Any] interface {
 		Aggregate[TEvent]
-		RecordedEventsFlusher
+		UncommitedEventsFlusher
 		event.EventLister
 
 		ID() TypeID
 		Version() version.Version
 
-		// EventRecorder implements these, so you *have* to embed EventRecorder.
+		// Base implements these, so you *have* to embed Base.
 		setVersion(version.Version)
 		recordThat(Aggregate[event.Any], ...event.Event) error
 	}
@@ -71,7 +70,7 @@ func LoadFromRecordedEvents[TypeID ID, TEvent event.Any](root Root[TypeID, TEven
 		}
 
 		ev := fact()
-		if err := event.Unmarshal(e.Data(), ev); err != nil {
+		if err := encoding.Unmarshal(e.Data(), ev); err != nil {
 			return fmt.Errorf("internal unmarshal record data: %w", err)
 		}
 
