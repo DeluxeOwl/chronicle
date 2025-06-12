@@ -39,5 +39,12 @@ func TestSTh(t *testing.T) {
 	event1 := agedOneFactory()
 	event2 := agedOneFactory()
 
-	require.NotSame(t, event1, event2)
+	// This is because of the zero sized struct
+	require.Same(t, event1, event2)
+
+	wasBornFactory, ok := event.GlobalRegistry.NewEventFactory("person/was-born")
+	require.True(t, ok)
+	event3 := wasBornFactory()
+	event4 := wasBornFactory()
+	require.NotSame(t, event3, event4)
 }
