@@ -34,22 +34,22 @@ func NewEventLogMemory() *EventLogMemory {
 	}
 }
 
-func (l *EventLogMemory) AppendEvents(ctx context.Context, id event.LogID, expected version.Check, events event.RawEvents) (version.Version, error) {
+func (store *EventLogMemory) AppendEvents(ctx context.Context, id event.LogID, expected version.Check, events event.RawEvents) (version.Version, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
 
 	if len(events) == 0 {
-		l.mu.RLock()
-		actualLogVersion := l.logVersions[id]
-		l.mu.RUnlock()
+		store.mu.RLock()
+		actualLogVersion := store.logVersions[id]
+		store.mu.RUnlock()
 		return actualLogVersion, nil
 	}
 
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	store.mu.Lock()
+	defer store.mu.Unlock()
 
-	actualLogVersion := l.logVersions[id] // Defaults to 0 if id is not in map
+	actualLogVersion := store.logVersions[id] // Defaults to 0 if id is not in map
 
 	if exp, ok := expected.(version.CheckExact); ok {
 		expectedVersion := version.Version(exp)
@@ -64,21 +64,21 @@ func (l *EventLogMemory) AppendEvents(ctx context.Context, id event.LogID, expec
 	// Store events with versions starting from actualLogVersion + 1
 	eventRecords := events.ToRecords(id, actualLogVersion)
 
-	internal, err := l.recordsToInternal(eventRecords)
+	internal, err := store.recordsToInternal(eventRecords)
 	if err != nil {
 		return 0, fmt.Errorf("append events: %w", err)
 	}
 
-	l.events[id] = append(l.events[id], internal...)
+	store.events[id] = append(store.events[id], internal...)
 
 	// Update and store the new version for this specific stream
 	newStreamVersion := actualLogVersion + version.Version(len(events))
-	l.logVersions[id] = newStreamVersion
+	store.logVersions[id] = newStreamVersion
 
 	return newStreamVersion, nil
 }
 
-func (l *EventLogMemory) recordsToInternal(records []*event.Record) ([][]byte, error) {
+func (store *EventLogMemory) recordsToInternal(records []*event.Record) ([][]byte, error) {
 	memoryRecords := make([][]byte, len(records))
 
 	for i, record := range records {
@@ -100,7 +100,7 @@ func (l *EventLogMemory) recordsToInternal(records []*event.Record) ([][]byte, e
 	return memoryRecords, nil
 }
 
-func (l *EventLogMemory) memoryRecordToRecord(memoryRecordB []byte) (*event.Record, error) {
+func (store *EventLogMemory) memoryRecordToRecord(memoryRecordB []byte) (*event.Record, error) {
 	var memoryRecord memoryRecord
 	err := json.Unmarshal(memoryRecordB, &memoryRecord)
 	if err != nil {
@@ -110,18 +110,18 @@ func (l *EventLogMemory) memoryRecordToRecord(memoryRecordB []byte) (*event.Reco
 	return event.NewRecord(memoryRecord.Version, memoryRecord.LogID, memoryRecord.EventName, memoryRecord.Data), nil
 }
 
-func (l *EventLogMemory) ReadEvents(ctx context.Context, id event.LogID, selector version.Selector) event.Records {
+func (store *EventLogMemory) ReadEvents(ctx context.Context, id event.LogID, selector version.Selector) event.Records {
 	return func(yield func(*event.Record, error) bool) {
-		l.mu.RLock()
-		defer l.mu.RUnlock()
+		store.mu.RLock()
+		defer store.mu.RUnlock()
 
-		events, ok := l.events[id]
+		events, ok := store.events[id]
 		if !ok {
 			return
 		}
 
 		for _, internalSerialized := range events {
-			record, err := l.memoryRecordToRecord(internalSerialized)
+			record, err := store.memoryRecordToRecord(internalSerialized)
 
 			if err != nil && !yield(nil, err) {
 				return

@@ -1,0 +1,18 @@
+- retry with version
+- all events reader
+- global versioning
+- metadata?
+- infinite stream
+- sync with sql (projections)
+- IVM
+- example of typed events with json schema
+- postgres backend with jsonb, kv backend
+- subscription to events
+- event versioning
+- aggregate snapshotting
+- document stuff: how to use the lib, how to implement a store, how to implement a custom repo
+  - add interfaces
+- version checking? version range?
+- event deletion/compaction/encryption/tombstones
+- can the log be abstracted?
+- durable workflow
