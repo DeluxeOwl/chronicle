@@ -1,7 +1,5 @@
 package chronicle
 
-// TODO: rename package to "es"
-
 import (
 	"context"
 	"errors"
@@ -49,12 +47,19 @@ func NewAggregateRepository[ID aggregate.ID, E event.Any, R aggregate.Root[ID, E
 	return esr
 }
 
-// todo: internal .get and GetVersioned
 func (repo *AggregateRepository[ID, E, R]) Get(ctx context.Context, id ID) (R, error) {
+	return repo.get(ctx, id, version.SelectFromBeginning)
+}
+
+func (repo *AggregateRepository[ID, E, R]) GetVersioned(ctx context.Context, id ID, selector version.Selector) (R, error) {
+	return repo.get(ctx, id, selector)
+}
+
+func (repo *AggregateRepository[ID, E, R]) get(ctx context.Context, id ID, selector version.Selector) (R, error) {
 	var zeroValue R
 
 	logID := event.LogID(id.String())
-	recordedEvents := repo.store.ReadEvents(ctx, logID, version.SelectFromBeginning)
+	recordedEvents := repo.store.ReadEvents(ctx, logID, selector)
 
 	root := repo.newRoot()
 
