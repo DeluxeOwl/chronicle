@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/DeluxeOwl/chronicle"
+	"github.com/DeluxeOwl/chronicle/aggregate"
 	"github.com/DeluxeOwl/chronicle/event"
 	"github.com/DeluxeOwl/chronicle/internal/examples/person"
 	"github.com/stretchr/testify/require"
@@ -18,7 +19,7 @@ func TestPlayground(t *testing.T) {
 	require.NoError(t, err)
 
 	mem := chronicle.NewEventLogMemory()
-	repo, err := chronicle.NewAggregateRepository(mem, person.NewEmpty)
+	repo, err := aggregate.NewRepository(mem, person.NewEmpty)
 	require.NoError(t, err)
 
 	for range 2 {

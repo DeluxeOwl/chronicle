@@ -12,22 +12,25 @@ type PersonEvent interface {
 
 func (p *Person) EventConstructors() event.NewFuncs {
 	return event.NewFuncs{
-		event.NewFuncFor[*PersonWasBorn](),
-		event.NewFuncFor[*PersonAgedOneYear](),
+		event.NewFuncFor[*personWasBorn](),
+		event.NewFuncFor[*personAgedOneYear](),
 		// Or function
 		// func() event.Any { return new(PersonAgedOneYear) },
 	}
 }
 
-type PersonWasBorn struct {
+// Note: events are unexported so people outside the package can't
+// use person.Apply with random events
+
+type personWasBorn struct {
 	ID       PersonID `json:"id" exhaustruct:"optional"`
 	BornName string   `json:"bornName" exhaustruct:"optional"`
 }
 
-func (*PersonWasBorn) EventName() string { return "person/was-born" }
-func (*PersonWasBorn) isPersonEvent()    {}
+func (*personWasBorn) EventName() string { return "person/was-born" }
+func (*personWasBorn) isPersonEvent()    {}
 
-type PersonAgedOneYear struct{}
+type personAgedOneYear struct{}
 
-func (*PersonAgedOneYear) EventName() string { return "person/aged-one-year" }
-func (*PersonAgedOneYear) isPersonEvent()    {}
+func (*personAgedOneYear) EventName() string { return "person/aged-one-year" }
+func (*personAgedOneYear) isPersonEvent()    {}

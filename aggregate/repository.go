@@ -1,37 +1,36 @@
-package chronicle
+package aggregate
 
 import (
 	"context"
 	"errors"
 	"fmt"
 
-	"github.com/DeluxeOwl/chronicle/aggregate"
 	"github.com/DeluxeOwl/chronicle/event"
 	"github.com/DeluxeOwl/chronicle/version"
 )
 
-type AggregateRepository[ID aggregate.ID, E event.Any, R aggregate.Root[ID, E]] struct {
+type Repository[TID ID, E event.Any, R Root[TID, E]] struct {
 	registry event.Registry
 	store    event.Log
 	newRoot  func() R
 }
 
-type AggregateRepositoryOption[ID aggregate.ID, E event.Any, R aggregate.Root[ID, E]] func(*AggregateRepository[ID, E, R])
+type RepositoryOption[TID ID, E event.Any, R Root[TID, E]] func(*Repository[TID, E, R])
 
-func WithRegistry[ID aggregate.ID, E event.Any, R aggregate.Root[ID, E]](
+func WithRegistry[TID ID, E event.Any, R Root[TID, E]](
 	registry event.Registry,
-) AggregateRepositoryOption[ID, E, R] {
-	return func(esr *AggregateRepository[ID, E, R]) {
+) RepositoryOption[TID, E, R] {
+	return func(esr *Repository[TID, E, R]) {
 		esr.registry = registry
 	}
 }
 
-func NewAggregateRepository[ID aggregate.ID, E event.Any, R aggregate.Root[ID, E]](
+func NewRepository[TID ID, E event.Any, R Root[TID, E]](
 	eventLog event.Log,
 	newRoot func() R,
-	opts ...AggregateRepositoryOption[ID, E, R],
-) (*AggregateRepository[ID, E, R], error) {
-	esr := &AggregateRepository[ID, E, R]{
+	opts ...RepositoryOption[TID, E, R],
+) (*Repository[TID, E, R], error) {
+	esr := &Repository[TID, E, R]{
 		store:    eventLog,
 		newRoot:  newRoot,
 		registry: event.GlobalRegistry,
@@ -49,15 +48,15 @@ func NewAggregateRepository[ID aggregate.ID, E event.Any, R aggregate.Root[ID, E
 	return esr, nil
 }
 
-func (repo *AggregateRepository[ID, E, R]) Get(ctx context.Context, id ID) (R, error) {
+func (repo *Repository[TID, E, R]) Get(ctx context.Context, id ID) (R, error) {
 	return repo.get(ctx, id, version.SelectFromBeginning)
 }
 
-func (repo *AggregateRepository[ID, E, R]) GetVersioned(ctx context.Context, id ID, selector version.Selector) (R, error) {
+func (repo *Repository[TID, E, R]) GetVersioned(ctx context.Context, id ID, selector version.Selector) (R, error) {
 	return repo.get(ctx, id, selector)
 }
 
-func (repo *AggregateRepository[ID, E, R]) get(ctx context.Context, id ID, selector version.Selector) (R, error) {
+func (repo *Repository[TID, E, R]) get(ctx context.Context, id ID, selector version.Selector) (R, error) {
 	var zeroValue R
 
 	logID := event.LogID(id.String())
@@ -65,7 +64,7 @@ func (repo *AggregateRepository[ID, E, R]) get(ctx context.Context, id ID, selec
 
 	root := repo.newRoot()
 
-	if err := aggregate.LoadFromRecords(root, repo.registry, recordedEvents); err != nil {
+	if err := LoadFromRecords(root, repo.registry, recordedEvents); err != nil {
 		return zeroValue, err
 	}
 
@@ -76,8 +75,11 @@ func (repo *AggregateRepository[ID, E, R]) get(ctx context.Context, id ID, selec
 	return root, nil
 }
 
-func (repo *AggregateRepository[ID, E, R]) Save(ctx context.Context, root R) error {
-	uncommitedEvents := root.FlushUncommitedEvents()
+func (repo *Repository[TID, E, R]) Save(ctx context.Context, root R) error {
+	// Theoretically, if we wanted to allow custom repo
+	// we could make it like so: any(root).(UncommitedEventsFlusher)
+	uncommitedEvents := root.flushUncommitedEvents()
+
 	if len(uncommitedEvents) == 0 {
 		return nil
 	}

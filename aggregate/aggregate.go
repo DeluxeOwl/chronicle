@@ -16,20 +16,17 @@ type Aggregate[E event.Any] interface {
 	Apply(E) error
 }
 
-type UncommitedEventsFlusher interface {
-	FlushUncommitedEvents() event.UncommitedEvents
-}
-
 type (
 	Root[TypeID ID, TEvent event.Any] interface {
 		Aggregate[TEvent]
-		UncommitedEventsFlusher
+
 		event.ConstructorProvider
 
 		ID() TypeID
 		Version() version.Version
 
 		// Base implements these, so you *have* to embed Base.
+		flushUncommitedEvents() event.UncommitedEvents
 		setVersion(version.Version)
 		recordThat(Aggregate[event.Any], ...event.Event) error
 	}

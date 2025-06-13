@@ -43,10 +43,6 @@ func NewEmpty() *Person {
 	return new(Person)
 }
 
-func NewEvents() []PersonEvent {
-	return []PersonEvent{&PersonAgedOneYear{}, &PersonWasBorn{}}
-}
-
 func New(id PersonID, name string) (*Person, error) {
 	if name == "" {
 		return nil, errors.New("empty name")
@@ -54,7 +50,7 @@ func New(id PersonID, name string) (*Person, error) {
 
 	p := NewEmpty()
 
-	if err := p.recordThat(&PersonWasBorn{
+	if err := p.recordThat(&personWasBorn{
 		ID:       id,
 		BornName: name,
 	}); err != nil {
@@ -66,11 +62,11 @@ func New(id PersonID, name string) (*Person, error) {
 
 func (p *Person) Apply(evt PersonEvent) error {
 	switch event := evt.(type) {
-	case *PersonWasBorn:
+	case *personWasBorn:
 		p.id = event.ID
 		p.age = 0
 		p.name = event.BornName
-	case *PersonAgedOneYear:
+	case *personAgedOneYear:
 		p.age++
 	default:
 		return fmt.Errorf("unexpected event kind: %T", event)
@@ -80,7 +76,7 @@ func (p *Person) Apply(evt PersonEvent) error {
 }
 
 func (p *Person) Age() error {
-	return p.recordThat(&PersonAgedOneYear{})
+	return p.recordThat(&personAgedOneYear{})
 }
 
 func (p *Person) recordThat(event PersonEvent) error {

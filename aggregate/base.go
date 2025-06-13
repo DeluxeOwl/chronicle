@@ -8,13 +8,16 @@ import (
 )
 
 type Base struct {
-	version          version.Version
+	version version.Version
+
+	//nolint:unused // False positive.
 	uncommitedEvents event.UncommitedEvents
 }
 
 func (br *Base) Version() version.Version { return br.version }
 
-func (br *Base) FlushUncommitedEvents() event.UncommitedEvents {
+//nolint:unused // False positive.
+func (br *Base) flushUncommitedEvents() event.UncommitedEvents {
 	flushed := br.uncommitedEvents
 	br.uncommitedEvents = nil
 
