@@ -24,7 +24,7 @@ type (
 	Root[TypeID ID, TEvent event.Any] interface {
 		Aggregate[TEvent]
 		UncommitedEventsFlusher
-		event.EventLister
+		event.ConstructorProvider
 
 		ID() TypeID
 		Version() version.Version

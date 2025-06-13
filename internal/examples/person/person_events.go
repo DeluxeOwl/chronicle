@@ -1,6 +1,8 @@
 package person
 
-import "github.com/DeluxeOwl/chronicle/event"
+import (
+	"github.com/DeluxeOwl/chronicle/event"
+)
 
 //sumtype:decl
 type PersonEvent interface {
@@ -8,10 +10,12 @@ type PersonEvent interface {
 	isPersonEvent()
 }
 
-func (p *Person) ListEvents() []event.Factory {
-	return []event.Factory{
-		func() event.Any { return new(PersonWasBorn) },
-		func() event.Any { return new(PersonAgedOneYear) },
+func (p *Person) EventConstructors() event.NewFuncs {
+	return event.NewFuncs{
+		event.NewFuncFor[*PersonWasBorn](),
+		event.NewFuncFor[*PersonAgedOneYear](),
+		// Or function
+		// func() event.Any { return new(PersonAgedOneYear) },
 	}
 }
 
