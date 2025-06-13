@@ -2,7 +2,6 @@ package chronicle
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sync"
 
@@ -15,11 +14,11 @@ var _ event.Log = new(EventLogMemory)
 
 type EventLogMemory struct {
 	mu          sync.RWMutex
-	events      map[event.LogID][][]byte
+	events      map[event.LogID][]memStoreRecord
 	logVersions map[event.LogID]version.Version
 }
 
-type memoryRecord struct {
+type memStoreRecord struct {
 	LogID     event.LogID     `json:"logID"`
 	Version   version.Version `json:"version"`
 	Data      []byte          `json:"data"`
@@ -29,7 +28,7 @@ type memoryRecord struct {
 func NewEventLogMemory() *EventLogMemory {
 	return &EventLogMemory{
 		mu:          sync.RWMutex{},
-		events:      map[event.LogID][][]byte{},
+		events:      map[event.LogID][]memStoreRecord{},
 		logVersions: map[event.LogID]version.Version{},
 	}
 }
@@ -64,10 +63,7 @@ func (store *EventLogMemory) AppendEvents(ctx context.Context, id event.LogID, e
 	// Store events with versions starting from actualLogVersion + 1
 	eventRecords := events.ToRecords(id, actualLogVersion)
 
-	internal, err := store.recordsToInternal(eventRecords)
-	if err != nil {
-		return 0, fmt.Errorf("append events: %w", err)
-	}
+	internal := store.recordsToInternal(eventRecords)
 
 	store.events[id] = append(store.events[id], internal...)
 
@@ -78,36 +74,25 @@ func (store *EventLogMemory) AppendEvents(ctx context.Context, id event.LogID, e
 	return newStreamVersion, nil
 }
 
-func (store *EventLogMemory) recordsToInternal(records []*event.Record) ([][]byte, error) {
-	memoryRecords := make([][]byte, len(records))
+func (store *EventLogMemory) recordsToInternal(records []*event.Record) []memStoreRecord {
+	memoryRecords := make([]memStoreRecord, len(records))
 
 	for i, record := range records {
-		memoryRecord := memoryRecord{
+		memoryRecord := memStoreRecord{
 			LogID:     record.LogID(),
 			Version:   record.Version(),
 			Data:      record.Data(),
 			EventName: record.EventName(),
 		}
 
-		memoryRecordB, err := json.Marshal(memoryRecord)
-		if err != nil {
-			return nil, fmt.Errorf("marshal records to internal: %w", err)
-		}
-
-		memoryRecords[i] = memoryRecordB
+		memoryRecords[i] = memoryRecord
 	}
 
-	return memoryRecords, nil
+	return memoryRecords
 }
 
-func (store *EventLogMemory) memoryRecordToRecord(memoryRecordB []byte) (*event.Record, error) {
-	var memoryRecord memoryRecord
-	err := json.Unmarshal(memoryRecordB, &memoryRecord)
-	if err != nil {
-		return nil, fmt.Errorf("unmarshal record to internal: %w", err)
-	}
-
-	return event.NewRecord(memoryRecord.Version, memoryRecord.LogID, memoryRecord.EventName, memoryRecord.Data), nil
+func (store *EventLogMemory) memoryRecordToRecord(memRecord *memStoreRecord) *event.Record {
+	return event.NewRecord(memRecord.Version, memRecord.LogID, memRecord.EventName, memRecord.Data)
 }
 
 func (store *EventLogMemory) ReadEvents(ctx context.Context, id event.LogID, selector version.Selector) event.Records {
@@ -121,11 +106,7 @@ func (store *EventLogMemory) ReadEvents(ctx context.Context, id event.LogID, sel
 		}
 
 		for _, internalSerialized := range events {
-			record, err := store.memoryRecordToRecord(internalSerialized)
-
-			if err != nil && !yield(nil, err) {
-				return
-			}
+			record := store.memoryRecordToRecord(&internalSerialized)
 
 			if record.Version() < selector.From {
 				continue
