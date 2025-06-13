@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/DeluxeOwl/chronicle/aggregate"
-	"github.com/DeluxeOwl/chronicle/convert"
 	"github.com/DeluxeOwl/chronicle/event"
 	"github.com/DeluxeOwl/chronicle/version"
 )
@@ -78,17 +77,17 @@ func (repo *AggregateRepository[ID, E, R]) get(ctx context.Context, id ID, selec
 }
 
 func (repo *AggregateRepository[ID, E, R]) Save(ctx context.Context, root R) error {
-	events := root.FlushUncommitedEvents()
-	if len(events) == 0 {
+	uncommitedEvents := root.FlushUncommitedEvents()
+	if len(uncommitedEvents) == 0 {
 		return nil
 	}
 
 	logID := event.LogID(root.ID().String())
 	expectedVersion := version.CheckExact(
-		root.Version() - version.Version(len(events)),
+		root.Version() - version.Version(len(uncommitedEvents)),
 	)
 
-	rawEvents, err := convert.EventsToRaw(events)
+	rawEvents, err := uncommitedEvents.ToRaw()
 	if err != nil {
 		return fmt.Errorf("aggregate save: events to raw: %w", err)
 	}

@@ -1,11 +1,40 @@
 package event
 
 import (
+	"iter"
+
 	"github.com/DeluxeOwl/chronicle/version"
 )
 
 // The raw event that's common to any event, has the name and a bytes payload.
 // Implementations of the log should handle the Raw event.
+
+type RawEvents []Raw
+
+func (re RawEvents) All() iter.Seq[Raw] {
+	return func(yield func(Raw) bool) {
+		for _, e := range re {
+			if !yield(e) {
+				return
+			}
+		}
+	}
+}
+
+func (re RawEvents) ToRecords(logID LogID, startingVersion version.Version) []*Record {
+	records := make([]*Record, len(re))
+
+	for i, rawEvt := range re {
+		//nolint:gosec // It's not a problem in practice.
+		records[i] = NewRecord(
+			startingVersion+version.Version(i+1),
+			logID,
+			rawEvt.EventName(),
+			rawEvt.Data())
+	}
+
+	return records
+}
 
 type RawData = []byte
 

@@ -9,12 +9,12 @@ import (
 
 type Base struct {
 	version          version.Version
-	uncommitedEvents []event.Event
+	uncommitedEvents event.UncommitedEvents
 }
 
 func (br *Base) Version() version.Version { return br.version }
 
-func (br *Base) FlushUncommitedEvents() []event.Event {
+func (br *Base) FlushUncommitedEvents() event.UncommitedEvents {
 	flushed := br.uncommitedEvents
 	br.uncommitedEvents = nil
 

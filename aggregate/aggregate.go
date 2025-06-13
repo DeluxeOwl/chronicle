@@ -3,7 +3,6 @@ package aggregate
 import (
 	"fmt"
 
-	"github.com/DeluxeOwl/chronicle/encoding"
 	"github.com/DeluxeOwl/chronicle/event"
 
 	"github.com/DeluxeOwl/chronicle/version"
@@ -18,7 +17,7 @@ type Aggregate[E event.Any] interface {
 }
 
 type UncommitedEventsFlusher interface {
-	FlushUncommitedEvents() []event.Event
+	FlushUncommitedEvents() event.UncommitedEvents
 }
 
 type (
@@ -70,19 +69,19 @@ func RecordEvents[TypeID ID, TEvent event.Any](root Root[TypeID, TEvent], events
 	return root.recordThat(r, evs...)
 }
 
-func LoadFromRecords[TypeID ID, TEvent event.Any](root Root[TypeID, TEvent], registry event.Registry, events event.Records) error {
-	for e, err := range events {
+func LoadFromRecords[TypeID ID, TEvent event.Any](root Root[TypeID, TEvent], registry event.Registry, records event.Records) error {
+	for record, err := range records {
 		if err != nil {
 			return fmt.Errorf("load from records: %w", err)
 		}
 
-		fact, ok := registry.NewEventFactory(e.EventName())
+		fact, ok := registry.NewEventFactory(record.EventName())
 		if !ok {
-			return fmt.Errorf("load from records: factory not registered for event %q", e.EventName())
+			return fmt.Errorf("load from records: factory not registered for event %q", record.EventName())
 		}
 
 		evt := fact()
-		if err := encoding.Unmarshal(e.Data(), evt); err != nil {
+		if err := event.Unmarshal(record.Data(), evt); err != nil {
 			return fmt.Errorf("load from records: unmarshal record data: %w", err)
 		}
 
@@ -95,7 +94,7 @@ func LoadFromRecords[TypeID ID, TEvent event.Any](root Root[TypeID, TEvent], reg
 			return fmt.Errorf("load from records: root apply: %w", err)
 		}
 
-		root.setVersion(e.Version())
+		root.setVersion(record.Version())
 	}
 
 	return nil

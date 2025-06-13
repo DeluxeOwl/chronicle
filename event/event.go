@@ -1,27 +1,52 @@
 package event
 
+import (
+	"fmt"
+)
+
 type Any interface {
 	EventName() string
 }
 
-type wrapper[T Any] struct {
-	event T
+type Event struct {
+	wrappedEvent Any
 }
-
-type Event wrapper[Any]
-
-var Empty = Event{event: nil}
 
 func New(event Any) Event {
 	return Event{
-		event: event,
+		wrappedEvent: event,
 	}
 }
 
 func (ge *Event) Unwrap() Any {
-	return ge.event
+	return ge.wrappedEvent
 }
 
 func (ge *Event) EventName() string {
-	return ge.event.EventName()
+	return ge.wrappedEvent.EventName()
+}
+
+func (ge *Event) ToRaw() (Raw, error) {
+	bytes, err := Marshal(ge.Unwrap())
+	if err != nil {
+		return Raw{}, fmt.Errorf("convert event to raw event: marshal event: %w", err)
+	}
+
+	return *NewRaw(ge.EventName(), bytes), nil
+}
+
+type UncommitedEvents []Event
+
+func (events UncommitedEvents) ToRaw() ([]Raw, error) {
+	rawEvents := make([]Raw, len(events))
+	for i := range events {
+		raw, err := events[i].ToRaw()
+		if err != nil {
+			return nil, fmt.Errorf("convert events: %w", err)
+		}
+
+		rawEvents[i] = raw
+	}
+
+	return rawEvents, nil
 }

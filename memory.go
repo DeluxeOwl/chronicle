@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/DeluxeOwl/chronicle/convert"
 	"github.com/DeluxeOwl/chronicle/event"
 
 	"github.com/DeluxeOwl/chronicle/version"
@@ -35,22 +34,22 @@ func NewEventLogMemory() *EventLogMemory {
 	}
 }
 
-func (s *EventLogMemory) AppendEvents(ctx context.Context, id event.LogID, expected version.Check, events []event.Raw) (version.Version, error) {
+func (l *EventLogMemory) AppendEvents(ctx context.Context, id event.LogID, expected version.Check, events event.RawEvents) (version.Version, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
 
 	if len(events) == 0 {
-		s.mu.RLock()
-		currentLogVersion := s.logVersions[id]
-		s.mu.RUnlock()
-		return currentLogVersion, nil
+		l.mu.RLock()
+		actualLogVersion := l.logVersions[id]
+		l.mu.RUnlock()
+		return actualLogVersion, nil
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	l.mu.Lock()
+	defer l.mu.Unlock()
 
-	actualLogVersion := s.logVersions[id] // Defaults to 0 if id is not in map
+	actualLogVersion := l.logVersions[id] // Defaults to 0 if id is not in map
 
 	if exp, ok := expected.(version.CheckExact); ok {
 		expectedVersion := version.Version(exp)
@@ -62,24 +61,24 @@ func (s *EventLogMemory) AppendEvents(ctx context.Context, id event.LogID, expec
 		}
 	}
 
-	// Store events with versions starting from currentStreamVersion + 1
-	recordedEvents := convert.RawToRecorded(actualLogVersion, id, events)
+	// Store events with versions starting from actualLogVersion + 1
+	eventRecords := events.ToRecords(id, actualLogVersion)
 
-	internal, err := s.recordsToInternal(recordedEvents)
+	internal, err := l.recordsToInternal(eventRecords)
 	if err != nil {
 		return 0, fmt.Errorf("append events: %w", err)
 	}
 
-	s.events[id] = append(s.events[id], internal...)
+	l.events[id] = append(l.events[id], internal...)
 
 	// Update and store the new version for this specific stream
 	newStreamVersion := actualLogVersion + version.Version(len(events))
-	s.logVersions[id] = newStreamVersion
+	l.logVersions[id] = newStreamVersion
 
 	return newStreamVersion, nil
 }
 
-func (s *EventLogMemory) recordsToInternal(records []*event.Record) ([][]byte, error) {
+func (l *EventLogMemory) recordsToInternal(records []*event.Record) ([][]byte, error) {
 	memoryRecords := make([][]byte, len(records))
 
 	for i, record := range records {
@@ -101,9 +100,9 @@ func (s *EventLogMemory) recordsToInternal(records []*event.Record) ([][]byte, e
 	return memoryRecords, nil
 }
 
-func (s *EventLogMemory) unmarshalInternalToRecords(internalMarshaled []byte) (*event.Record, error) {
+func (l *EventLogMemory) memoryRecordToRecord(memoryRecordB []byte) (*event.Record, error) {
 	var memoryRecord memoryRecord
-	err := json.Unmarshal(internalMarshaled, &memoryRecord)
+	err := json.Unmarshal(memoryRecordB, &memoryRecord)
 	if err != nil {
 		return nil, fmt.Errorf("unmarshal record to internal: %w", err)
 	}
@@ -111,24 +110,24 @@ func (s *EventLogMemory) unmarshalInternalToRecords(internalMarshaled []byte) (*
 	return event.NewRecord(memoryRecord.Version, memoryRecord.LogID, memoryRecord.EventName, memoryRecord.Data), nil
 }
 
-func (s *EventLogMemory) ReadEvents(ctx context.Context, id event.LogID, selector version.Selector) event.Records {
+func (l *EventLogMemory) ReadEvents(ctx context.Context, id event.LogID, selector version.Selector) event.Records {
 	return func(yield func(*event.Record, error) bool) {
-		s.mu.RLock()
-		defer s.mu.RUnlock()
+		l.mu.RLock()
+		defer l.mu.RUnlock()
 
-		events, ok := s.events[id]
+		events, ok := l.events[id]
 		if !ok {
 			return
 		}
 
 		for _, internalSerialized := range events {
-			e, err := s.unmarshalInternalToRecords(internalSerialized)
+			record, err := l.memoryRecordToRecord(internalSerialized)
 
 			if err != nil && !yield(nil, err) {
 				return
 			}
 
-			if e.Version() < selector.From {
+			if record.Version() < selector.From {
 				continue
 			}
 
@@ -138,7 +137,7 @@ func (s *EventLogMemory) ReadEvents(ctx context.Context, id event.LogID, selecto
 				return
 			}
 
-			if !yield(e, nil) {
+			if !yield(record, nil) {
 				return
 			}
 		}
