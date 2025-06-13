@@ -1,4 +1,4 @@
-package chronicle
+package eventlog
 
 import (
 	"context"
@@ -10,9 +10,9 @@ import (
 	"github.com/DeluxeOwl/chronicle/version"
 )
 
-var _ event.Log = new(EventLogMemory)
+var _ event.Log = new(Memory)
 
-type EventLogMemory struct {
+type Memory struct {
 	mu          sync.RWMutex
 	events      map[event.LogID][]memStoreRecord
 	logVersions map[event.LogID]version.Version
@@ -25,15 +25,15 @@ type memStoreRecord struct {
 	EventName string          `json:"eventName"`
 }
 
-func NewEventLogMemory() *EventLogMemory {
-	return &EventLogMemory{
+func NewMemory() *Memory {
+	return &Memory{
 		mu:          sync.RWMutex{},
 		events:      map[event.LogID][]memStoreRecord{},
 		logVersions: map[event.LogID]version.Version{},
 	}
 }
 
-func (store *EventLogMemory) AppendEvents(ctx context.Context, id event.LogID, expected version.Check, events event.RawEvents) (version.Version, error) {
+func (store *Memory) AppendEvents(ctx context.Context, id event.LogID, expected version.Check, events event.RawEvents) (version.Version, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -74,7 +74,7 @@ func (store *EventLogMemory) AppendEvents(ctx context.Context, id event.LogID, e
 	return newStreamVersion, nil
 }
 
-func (store *EventLogMemory) recordsToInternal(records []*event.Record) []memStoreRecord {
+func (store *Memory) recordsToInternal(records []*event.Record) []memStoreRecord {
 	memoryRecords := make([]memStoreRecord, len(records))
 
 	for i, record := range records {
@@ -91,11 +91,11 @@ func (store *EventLogMemory) recordsToInternal(records []*event.Record) []memSto
 	return memoryRecords
 }
 
-func (store *EventLogMemory) memoryRecordToRecord(memRecord *memStoreRecord) *event.Record {
+func (store *Memory) memoryRecordToRecord(memRecord *memStoreRecord) *event.Record {
 	return event.NewRecord(memRecord.Version, memRecord.LogID, memRecord.EventName, memRecord.Data)
 }
 
-func (store *EventLogMemory) ReadEvents(ctx context.Context, id event.LogID, selector version.Selector) event.Records {
+func (store *Memory) ReadEvents(ctx context.Context, id event.LogID, selector version.Selector) event.Records {
 	return func(yield func(*event.Record, error) bool) {
 		store.mu.RLock()
 		defer store.mu.RUnlock()
