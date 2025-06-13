@@ -12,7 +12,7 @@ type EventLister interface {
 }
 
 type RootRegister interface {
-	RegisterRoot(root EventLister)
+	RegisterRoot(root EventLister) error
 }
 
 type NewEventer interface {
@@ -48,7 +48,7 @@ func (r *eventRegistry) NewEventFactory(eventName string) (Factory, bool) {
 	return factory, ok
 }
 
-func (r *eventRegistry) RegisterRoot(root EventLister) {
+func (r *eventRegistry) RegisterRoot(root EventLister) error {
 	r.registryMu.Lock()
 	defer r.registryMu.Unlock()
 
@@ -57,9 +57,11 @@ func (r *eventRegistry) RegisterRoot(root EventLister) {
 		eventName := ev.EventName()
 
 		if _, ok := r.eventFactories[eventName]; ok {
-			panic(fmt.Sprintf("duplicate event %q in registry, did you create multipler repos? (todo)", eventName))
+			return fmt.Errorf("duplicate event %q in registry", eventName)
 		}
 
 		r.eventFactories[eventName] = evFact
 	}
+
+	return nil
 }

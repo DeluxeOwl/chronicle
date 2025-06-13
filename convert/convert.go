@@ -20,7 +20,7 @@ func RawToRecorded(startingVersion version.Version, id event.LogID, events []eve
 func EventToRaw(ev event.Event) (event.Raw, error) {
 	bytes, err := encoding.Marshal(ev.Unwrap())
 	if err != nil {
-		return event.Raw{}, fmt.Errorf("marshal event: %w", err)
+		return event.Raw{}, fmt.Errorf("convert event to raw event: marshal event: %w", err)
 	}
 
 	return *event.NewRaw(ev.EventName(), bytes), nil
@@ -31,7 +31,7 @@ func EventsToRaw(events []event.Event) ([]event.Raw, error) {
 	for i := range events {
 		raw, err := EventToRaw(events[i])
 		if err != nil {
-			return nil, fmt.Errorf("to raw batch: %w", err)
+			return nil, fmt.Errorf("convert events: %w", err)
 		}
 
 		rawEvents[i] = raw

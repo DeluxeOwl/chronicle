@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSTh(t *testing.T) {
+func TestPlayground(t *testing.T) {
 	ctx := t.Context()
 
 	johnID := person.PersonID("some-id")
@@ -18,7 +18,8 @@ func TestSTh(t *testing.T) {
 	require.NoError(t, err)
 
 	mem := chronicle.NewEventLogMemory()
-	repo := chronicle.NewAggregateRepository(mem, person.NewEmpty)
+	repo, err := chronicle.NewAggregateRepository(mem, person.NewEmpty)
+	require.NoError(t, err)
 
 	for range 2 {
 		p.Age()

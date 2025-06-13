@@ -31,7 +31,7 @@ func NewAggregateRepository[ID aggregate.ID, E event.Any, R aggregate.Root[ID, E
 	eventLog event.Log,
 	newRoot func() R,
 	opts ...AggregateRepositoryOption[ID, E, R],
-) *AggregateRepository[ID, E, R] {
+) (*AggregateRepository[ID, E, R], error) {
 	esr := &AggregateRepository[ID, E, R]{
 		store:    eventLog,
 		newRoot:  newRoot,
@@ -42,9 +42,12 @@ func NewAggregateRepository[ID aggregate.ID, E event.Any, R aggregate.Root[ID, E
 		o(esr)
 	}
 
-	esr.registry.RegisterRoot(newRoot())
+	err := esr.registry.RegisterRoot(newRoot())
+	if err != nil {
+		return nil, fmt.Errorf("new aggregate repository: %w", err)
+	}
 
-	return esr
+	return esr, nil
 }
 
 func (repo *AggregateRepository[ID, E, R]) Get(ctx context.Context, id ID) (R, error) {
@@ -63,7 +66,7 @@ func (repo *AggregateRepository[ID, E, R]) get(ctx context.Context, id ID, selec
 
 	root := repo.newRoot()
 
-	if err := aggregate.LoadFromRecordedEvents(root, repo.registry, recordedEvents); err != nil {
+	if err := aggregate.LoadFromRecords(root, repo.registry, recordedEvents); err != nil {
 		return zeroValue, err
 	}
 

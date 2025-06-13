@@ -30,7 +30,7 @@ type ConflictError struct {
 
 func (err ConflictError) Error() string {
 	return fmt.Sprintf(
-		"conflict detected; expected stream version: %d, actual: %d",
+		"version conflict error: expected log version: %d, actual: %d",
 		err.Expected,
 		err.Actual,
 	)

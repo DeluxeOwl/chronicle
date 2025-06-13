@@ -1,7 +1,6 @@
 package aggregate
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/DeluxeOwl/chronicle/encoding"
@@ -44,7 +43,7 @@ type anyRoot[TypeID ID, TEvent event.Any] struct {
 func (a *anyRoot[TypeID, TEvent]) Apply(evt event.Any) error {
 	anyEvt, ok := evt.(TEvent)
 	if !ok {
-		return errors.New("internal: this isn't supposed to happen (todo)")
+		return &DataIntegrityError[TEvent]{Event: evt}
 	}
 
 	return a.internalRoot.Apply(anyEvt)
@@ -71,29 +70,29 @@ func RecordEvents[TypeID ID, TEvent event.Any](root Root[TypeID, TEvent], events
 	return root.recordThat(r, evs...)
 }
 
-func LoadFromRecordedEvents[TypeID ID, TEvent event.Any](root Root[TypeID, TEvent], registry event.Registry, events event.Records) error {
+func LoadFromRecords[TypeID ID, TEvent event.Any](root Root[TypeID, TEvent], registry event.Registry, events event.Records) error {
 	for e, err := range events {
 		if err != nil {
-			return fmt.Errorf("load from events: %w", err)
+			return fmt.Errorf("load from records: %w", err)
 		}
 
 		fact, ok := registry.NewEventFactory(e.EventName())
 		if !ok {
-			return errors.New("factory not registered for" + e.EventName())
+			return fmt.Errorf("load from records: factory not registered for event %q", e.EventName())
 		}
 
-		ev := fact()
-		if err := encoding.Unmarshal(e.Data(), ev); err != nil {
-			return fmt.Errorf("internal unmarshal record data: %w", err)
+		evt := fact()
+		if err := encoding.Unmarshal(e.Data(), evt); err != nil {
+			return fmt.Errorf("load from records: unmarshal record data: %w", err)
 		}
 
-		anyEvt, ok := ev.(TEvent)
+		anyEvt, ok := evt.(TEvent)
 		if !ok {
-			return errors.New("internal: this isn't supposed to happen (todo)")
+			return fmt.Errorf("load from records: %w", &DataIntegrityError[TEvent]{Event: evt})
 		}
 
 		if err := root.Apply(anyEvt); err != nil {
-			return fmt.Errorf("load from events: root apply: %w", err)
+			return fmt.Errorf("load from records: root apply: %w", err)
 		}
 
 		root.setVersion(e.Version())

@@ -15,15 +15,12 @@ import (
 var _ event.Log = new(EventLogMemory)
 
 type EventLogMemory struct {
-	mu sync.RWMutex
-
-	events map[event.LogID][][]byte
-
-	// Versions need to be handled per id
+	mu          sync.RWMutex
+	events      map[event.LogID][][]byte
 	logVersions map[event.LogID]version.Version
 }
 
-type internalRecord struct {
+type memoryRecord struct {
 	LogID     event.LogID     `json:"logID"`
 	Version   version.Version `json:"version"`
 	Data      []byte          `json:"data"`
@@ -38,7 +35,6 @@ func NewEventLogMemory() *EventLogMemory {
 	}
 }
 
-// TODO: I think a lot of logic would be similar between implementations? Like converting raw to recorded and checking the version
 func (s *EventLogMemory) AppendEvents(ctx context.Context, id event.LogID, expected version.Check, events []event.Raw) (version.Version, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
@@ -46,73 +42,73 @@ func (s *EventLogMemory) AppendEvents(ctx context.Context, id event.LogID, expec
 
 	if len(events) == 0 {
 		s.mu.RLock()
-		currentStreamVersion := s.logVersions[id]
+		currentLogVersion := s.logVersions[id]
 		s.mu.RUnlock()
-		return currentStreamVersion, nil
+		return currentLogVersion, nil
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	currentStreamVersion := s.logVersions[id] // Defaults to 0 if id is not in map
+	actualLogVersion := s.logVersions[id] // Defaults to 0 if id is not in map
 
 	if exp, ok := expected.(version.CheckExact); ok {
-		expectedVer := version.Version(exp)
-		if currentStreamVersion != expectedVer {
-			return 0, fmt.Errorf("append events to stream: %w", version.ConflictError{
-				Expected: expectedVer,
-				Actual:   currentStreamVersion,
+		expectedVersion := version.Version(exp)
+		if actualLogVersion != expectedVersion {
+			return 0, fmt.Errorf("append events: %w", version.ConflictError{
+				Expected: expectedVersion,
+				Actual:   actualLogVersion,
 			})
 		}
 	}
 
 	// Store events with versions starting from currentStreamVersion + 1
-	recordedEvents := convert.RawToRecorded(currentStreamVersion, id, events)
+	recordedEvents := convert.RawToRecorded(actualLogVersion, id, events)
 
-	internal, err := s.marshalRecordedToInternal(recordedEvents)
+	internal, err := s.recordsToInternal(recordedEvents)
 	if err != nil {
-		return 0, fmt.Errorf("marshal recorded to internal: %w", err)
+		return 0, fmt.Errorf("append events: %w", err)
 	}
 
 	s.events[id] = append(s.events[id], internal...)
 
 	// Update and store the new version for this specific stream
-	newStreamVersion := currentStreamVersion + version.Version(len(events))
+	newStreamVersion := actualLogVersion + version.Version(len(events))
 	s.logVersions[id] = newStreamVersion
 
 	return newStreamVersion, nil
 }
 
-func (s *EventLogMemory) marshalRecordedToInternal(recEvents []*event.Record) ([][]byte, error) {
-	internalBytes := make([][]byte, len(recEvents))
+func (s *EventLogMemory) recordsToInternal(records []*event.Record) ([][]byte, error) {
+	memoryRecords := make([][]byte, len(records))
 
-	for i, r := range recEvents {
-		ir := internalRecord{
-			LogID:     r.LogID(),
-			Version:   r.Version(),
-			Data:      r.Data(),
-			EventName: r.EventName(),
+	for i, record := range records {
+		memoryRecord := memoryRecord{
+			LogID:     record.LogID(),
+			Version:   record.Version(),
+			Data:      record.Data(),
+			EventName: record.EventName(),
 		}
 
-		rbytes, err := json.Marshal(ir)
+		memoryRecordB, err := json.Marshal(memoryRecord)
 		if err != nil {
-			return nil, fmt.Errorf("marshal internal record: %w", err)
+			return nil, fmt.Errorf("marshal records to internal: %w", err)
 		}
 
-		internalBytes[i] = rbytes
+		memoryRecords[i] = memoryRecordB
 	}
 
-	return internalBytes, nil
+	return memoryRecords, nil
 }
 
-func (s *EventLogMemory) unmarshalInternalToRecorded(internalMarshaled []byte) (*event.Record, error) {
-	var ir internalRecord
-	err := json.Unmarshal(internalMarshaled, &ir)
+func (s *EventLogMemory) unmarshalInternalToRecords(internalMarshaled []byte) (*event.Record, error) {
+	var memoryRecord memoryRecord
+	err := json.Unmarshal(internalMarshaled, &memoryRecord)
 	if err != nil {
-		return nil, fmt.Errorf("internal unmarshal record: %w", err)
+		return nil, fmt.Errorf("unmarshal record to internal: %w", err)
 	}
 
-	return event.NewRecord(ir.Version, ir.LogID, ir.EventName, ir.Data), nil
+	return event.NewRecord(memoryRecord.Version, memoryRecord.LogID, memoryRecord.EventName, memoryRecord.Data), nil
 }
 
 func (s *EventLogMemory) ReadEvents(ctx context.Context, id event.LogID, selector version.Selector) event.Records {
@@ -126,7 +122,7 @@ func (s *EventLogMemory) ReadEvents(ctx context.Context, id event.LogID, selecto
 		}
 
 		for _, internalSerialized := range events {
-			e, err := s.unmarshalInternalToRecorded(internalSerialized)
+			e, err := s.unmarshalInternalToRecords(internalSerialized)
 
 			if err != nil && !yield(nil, err) {
 				return

@@ -32,7 +32,7 @@ func (br *Base) recordThat(aggregate Aggregate[event.Any], events ...event.Event
 		anyEvent := event.Unwrap()
 
 		if err := aggregate.Apply(anyEvent); err != nil {
-			return fmt.Errorf("record that: aggregate apply: %w", err)
+			return fmt.Errorf("record events: root apply: %w", err)
 		}
 
 		br.uncommitedEvents = append(br.uncommitedEvents, event)
