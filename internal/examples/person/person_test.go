@@ -18,7 +18,7 @@ func TestPlayground(t *testing.T) {
 	require.NoError(t, err)
 
 	mem := chronicle.NewEventLogMemory()
-	repo, err := chronicle.NewAggregateRepository(mem, person.NewEmpty)
+	repo, err := chronicle.NewEventSourcedRepository(mem, person.NewEmpty)
 	require.NoError(t, err)
 
 	for range 2 {

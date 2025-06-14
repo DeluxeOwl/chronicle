@@ -22,38 +22,38 @@ type Repository[TID ID, E event.Any, R Root[TID, E]] interface {
 	Saver[TID, E, R]
 }
 
-type Repo[TID ID, E event.Any, R Root[TID, E]] struct {
+type EventSourcedRepo[TID ID, E event.Any, R Root[TID, E]] struct {
 	registry event.Registry
 	serde    event.Serializer
 	store    event.Log
 	newRoot  func() R
 }
 
-type RepoOption[TID ID, E event.Any, R Root[TID, E]] func(*Repo[TID, E, R])
+type EventSourcedRepoOption[TID ID, E event.Any, R Root[TID, E]] func(*EventSourcedRepo[TID, E, R])
 
 func WithRegistry[TID ID, E event.Any, R Root[TID, E]](
 	registry event.Registry,
-) RepoOption[TID, E, R] {
-	return func(esr *Repo[TID, E, R]) {
+) EventSourcedRepoOption[TID, E, R] {
+	return func(esr *EventSourcedRepo[TID, E, R]) {
 		esr.registry = registry
 	}
 }
 
 func WithSerializer[TID ID, E event.Any, R Root[TID, E]](
 	serializer event.Serializer,
-) RepoOption[TID, E, R] {
-	return func(esr *Repo[TID, E, R]) {
+) EventSourcedRepoOption[TID, E, R] {
+	return func(esr *EventSourcedRepo[TID, E, R]) {
 		esr.serde = serializer
 	}
 }
 
 // An implementation of the repo, uses a global type registry and a json serializer.
-func NewRepo[TID ID, E event.Any, R Root[TID, E]](
+func NewEventSourcedRepo[TID ID, E event.Any, R Root[TID, E]](
 	eventLog event.Log,
 	newRoot func() R,
-	opts ...RepoOption[TID, E, R],
-) (*Repo[TID, E, R], error) {
-	esr := &Repo[TID, E, R]{
+	opts ...EventSourcedRepoOption[TID, E, R],
+) (*EventSourcedRepo[TID, E, R], error) {
+	esr := &EventSourcedRepo[TID, E, R]{
 		store:    eventLog,
 		newRoot:  newRoot,
 		registry: event.GlobalRegistry,
@@ -72,12 +72,12 @@ func NewRepo[TID ID, E event.Any, R Root[TID, E]](
 	return esr, nil
 }
 
-func (repo *Repo[TID, E, R]) Get(ctx context.Context, id ID) (R, error) {
+func (repo *EventSourcedRepo[TID, E, R]) Get(ctx context.Context, id ID) (R, error) {
 	return repo.getFromVersion(ctx, id, version.SelectFromBeginning)
 }
 
 // Would a public method for this help?
-func (repo *Repo[TID, E, R]) getFromVersion(ctx context.Context, id ID, selector version.Selector) (R, error) {
+func (repo *EventSourcedRepo[TID, E, R]) getFromVersion(ctx context.Context, id ID, selector version.Selector) (R, error) {
 	var zeroValue R
 
 	logID := event.LogID(id.String())
@@ -96,6 +96,6 @@ func (repo *Repo[TID, E, R]) getFromVersion(ctx context.Context, id ID, selector
 	return root, nil
 }
 
-func (repo *Repo[TID, E, R]) Save(ctx context.Context, root R) error {
+func (repo *EventSourcedRepo[TID, E, R]) Save(ctx context.Context, root R) error {
 	return CommitEvents(ctx, root, repo.serde, repo.store)
 }
