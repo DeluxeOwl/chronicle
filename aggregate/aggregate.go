@@ -108,9 +108,9 @@ func LoadFromRecords[TypeID ID, TEvent event.Any](
 // custom Repository's Save method.
 func CommitEvents[TID ID, E event.Any, R Root[TID, E]](
 	ctx context.Context,
-	store event.Log,
-	serializer event.Serializer,
 	root R,
+	serializer event.Serializer,
+	store event.Log,
 ) error {
 	// Theoretically, if we wanted to allow custom implementations
 	// we could make it like so: any(root).(UncommitedEventsFlusher)

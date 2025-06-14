@@ -97,5 +97,5 @@ func (repo *Repo[TID, E, R]) getFromVersion(ctx context.Context, id ID, selector
 }
 
 func (repo *Repo[TID, E, R]) Save(ctx context.Context, root R) error {
-	return CommitEvents(ctx, repo.store, repo.serde, root)
+	return CommitEvents(ctx, root, repo.serde, repo.store)
 }
