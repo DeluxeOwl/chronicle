@@ -9,8 +9,8 @@
 - example of typed events with json schema
 - postgres backend with jsonb, kv backend
 - subscription to events
-- event versioning
-- aggregate snapshotting
+- event versioning https://event-driven.io/en/how_to_do_event_versioning/
+- aggregate snapshotting https://www.kurrent.io/blog/snapshots-in-event-sourcing
 - document stuff: how to use the lib, how to implement a store, how to implement a custom repo
   - add interfaces
 - version checking? version range?
