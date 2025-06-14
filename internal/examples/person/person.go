@@ -12,7 +12,7 @@ type PersonID string
 func (p PersonID) String() string { return string(p) }
 
 type Person struct {
-	aggregate.Base
+	aggregate.Base `exhaustruct:"optional"`
 
 	id   PersonID
 	name string
@@ -25,7 +25,24 @@ type PersonSnapshot struct {
 	Age  int      `json:"age"`
 }
 
-func (p *Person) Snapshot() *PersonSnapshot {
+// TODO: probably need to ensure that it needs an ID
+func (p *Person) WithSnapshot() aggregate.WithSnapshot {
+	return aggregate.FromSnapshot(func(snap *PersonSnapshot) *Person {
+		return &Person{
+			id:   snap.ID,
+			name: snap.Name,
+			age:  snap.Age,
+		}
+	}).To(func() *PersonSnapshot {
+		return &PersonSnapshot{
+			ID:   p.id,
+			Name: p.name,
+			Age:  p.age,
+		}
+	})
+}
+
+func (p *Person) GetSnapshot() *PersonSnapshot {
 	return &PersonSnapshot{
 		ID:   p.id,
 		Name: p.name,
