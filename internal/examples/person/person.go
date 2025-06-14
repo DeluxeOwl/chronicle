@@ -26,6 +26,11 @@ type PersonSnapshot struct {
 }
 
 // TODO: probably need to ensure that it needs an ID
+// Maybe I should focus more on the store itself and loading the aggregate from a snapshot and using that
+// Because there's plenty of ways to make a snapshot.
+//
+// what im saying is that maybe its not my responsability as the library author to implement this method below or to dictate how people snapshot things
+// but maybe they need a sample implementation or something to get started, it's nice to have sensible defaults
 func (p *Person) WithSnapshot() aggregate.WithSnapshot {
 	return aggregate.FromSnapshot(func(snap *PersonSnapshot) *Person {
 		return &Person{
