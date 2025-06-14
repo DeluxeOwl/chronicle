@@ -5,6 +5,7 @@
 - infinite stream
 - sync with sql (projections)
 - IVM
+- outbox pattern?
 - example of typed events with json schema
 - postgres backend with jsonb, kv backend
 - subscription to events
@@ -14,5 +15,6 @@
   - add interfaces
 - version checking? version range?
 - event deletion/compaction/encryption/tombstones
-- can the log be abstracted?
 - durable workflow
+- decorators?
+- run in tx pattern?
