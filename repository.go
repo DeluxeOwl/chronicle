@@ -5,10 +5,10 @@ import (
 	"github.com/DeluxeOwl/chronicle/event"
 )
 
-func NewRepository[TID aggregate.ID, E event.Any, R aggregate.Root[TID, E]](
+func NewAggregateRepository[TID aggregate.ID, E event.Any, R aggregate.Root[TID, E]](
 	eventLog event.Log,
 	newRoot func() R,
-	opts ...aggregate.RepositoryOption[TID, E, R],
-) (*aggregate.Repository[TID, E, R], error) {
-	return aggregate.NewRepository(eventLog, newRoot, opts...)
+	opts ...aggregate.RepoOption[TID, E, R],
+) (*aggregate.Repo[TID, E, R], error) {
+	return aggregate.NewRepo(eventLog, newRoot, opts...)
 }

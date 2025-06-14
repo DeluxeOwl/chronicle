@@ -9,28 +9,41 @@ import (
 	"github.com/DeluxeOwl/chronicle/version"
 )
 
-type Repository[TID ID, E event.Any, R Root[TID, E]] struct {
+type Getter[TID ID, E event.Any, R Root[TID, E]] interface {
+	Get(ctx context.Context, id ID) (R, error)
+}
+
+type Saver[TID ID, E event.Any, R Root[TID, E]] interface {
+	Save(ctx context.Context, root R) error
+}
+
+type Repository[TID ID, E event.Any, R Root[TID, E]] interface {
+	Getter[TID, E, R]
+	Saver[TID, E, R]
+}
+
+type Repo[TID ID, E event.Any, R Root[TID, E]] struct {
 	registry event.Registry
 	store    event.Log
 	newRoot  func() R
 }
 
-type RepositoryOption[TID ID, E event.Any, R Root[TID, E]] func(*Repository[TID, E, R])
+type RepoOption[TID ID, E event.Any, R Root[TID, E]] func(*Repo[TID, E, R])
 
 func WithRegistry[TID ID, E event.Any, R Root[TID, E]](
 	registry event.Registry,
-) RepositoryOption[TID, E, R] {
-	return func(esr *Repository[TID, E, R]) {
+) RepoOption[TID, E, R] {
+	return func(esr *Repo[TID, E, R]) {
 		esr.registry = registry
 	}
 }
 
-func NewRepository[TID ID, E event.Any, R Root[TID, E]](
+func NewRepo[TID ID, E event.Any, R Root[TID, E]](
 	eventLog event.Log,
 	newRoot func() R,
-	opts ...RepositoryOption[TID, E, R],
-) (*Repository[TID, E, R], error) {
-	esr := &Repository[TID, E, R]{
+	opts ...RepoOption[TID, E, R],
+) (*Repo[TID, E, R], error) {
+	esr := &Repo[TID, E, R]{
 		store:    eventLog,
 		newRoot:  newRoot,
 		registry: event.GlobalRegistry,
@@ -48,15 +61,12 @@ func NewRepository[TID ID, E event.Any, R Root[TID, E]](
 	return esr, nil
 }
 
-func (repo *Repository[TID, E, R]) Get(ctx context.Context, id ID) (R, error) {
-	return repo.get(ctx, id, version.SelectFromBeginning)
+func (repo *Repo[TID, E, R]) Get(ctx context.Context, id ID) (R, error) {
+	return repo.getFromVersion(ctx, id, version.SelectFromBeginning)
 }
 
-func (repo *Repository[TID, E, R]) GetVersioned(ctx context.Context, id ID, selector version.Selector) (R, error) {
-	return repo.get(ctx, id, selector)
-}
-
-func (repo *Repository[TID, E, R]) get(ctx context.Context, id ID, selector version.Selector) (R, error) {
+// Would a public method for this help?
+func (repo *Repo[TID, E, R]) getFromVersion(ctx context.Context, id ID, selector version.Selector) (R, error) {
 	var zeroValue R
 
 	logID := event.LogID(id.String())
@@ -75,28 +85,6 @@ func (repo *Repository[TID, E, R]) get(ctx context.Context, id ID, selector vers
 	return root, nil
 }
 
-func (repo *Repository[TID, E, R]) Save(ctx context.Context, root R) error {
-	// Theoretically, if we wanted to allow custom repo
-	// we could make it like so: any(root).(UncommitedEventsFlusher)
-	uncommitedEvents := root.flushUncommitedEvents()
-
-	if len(uncommitedEvents) == 0 {
-		return nil
-	}
-
-	logID := event.LogID(root.ID().String())
-	expectedVersion := version.CheckExact(
-		root.Version() - version.Version(len(uncommitedEvents)),
-	)
-
-	rawEvents, err := uncommitedEvents.ToRaw()
-	if err != nil {
-		return fmt.Errorf("aggregate save: events to raw: %w", err)
-	}
-
-	if _, err := repo.store.AppendEvents(ctx, logID, expectedVersion, rawEvents); err != nil {
-		return fmt.Errorf("aggregate save: append events: %w", err)
-	}
-
-	return nil
+func (repo *Repo[TID, E, R]) Save(ctx context.Context, root R) error {
+	return CommitEvents(ctx, repo.store, root)
 }

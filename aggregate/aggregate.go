@@ -1,6 +1,7 @@
 package aggregate
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/DeluxeOwl/chronicle/event"
@@ -92,6 +93,41 @@ func LoadFromRecords[TypeID ID, TEvent event.Any](root Root[TypeID, TEvent], reg
 		}
 
 		root.setVersion(record.Version())
+	}
+
+	return nil
+}
+
+// CommitEvents takes a root aggregate, flushes its uncommitted events, and appends them
+// to the provided event log. It's a reusable helper for implementing any
+// custom Repository's Save method.
+func CommitEvents[TID ID, E event.Any, R Root[TID, E]](
+	ctx context.Context,
+	store event.Log,
+	root R,
+) error {
+	// Theoretically, if we wanted to allow custom implementations
+	// we could make it like so: any(root).(UncommitedEventsFlusher)
+	uncommitedEvents := root.flushUncommitedEvents()
+
+	if len(uncommitedEvents) == 0 {
+		return nil // Nothing to save
+	}
+
+	logID := event.LogID(root.ID().String())
+
+	// This logic correctly calculates the version before the new events were applied
+	expectedVersion := version.CheckExact(
+		root.Version() - version.Version(len(uncommitedEvents)),
+	)
+
+	rawEvents, err := uncommitedEvents.ToRaw()
+	if err != nil {
+		return fmt.Errorf("aggregate commit: events to raw: %w", err)
+	}
+
+	if _, err := store.AppendEvents(ctx, logID, expectedVersion, rawEvents); err != nil {
+		return fmt.Errorf("aggregate commit: append events: %w", err)
 	}
 
 	return nil
