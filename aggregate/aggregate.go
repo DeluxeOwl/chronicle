@@ -67,7 +67,12 @@ func RecordEvents[TypeID ID, TEvent event.Any](root Root[TypeID, TEvent], events
 	return root.recordThat(r, evs...)
 }
 
-func LoadFromRecords[TypeID ID, TEvent event.Any](root Root[TypeID, TEvent], registry event.Registry, records event.Records) error {
+func LoadFromRecords[TypeID ID, TEvent event.Any](
+	root Root[TypeID, TEvent],
+	registry event.Registry,
+	serde event.Serializer,
+	records event.Records,
+) error {
 	for record, err := range records {
 		if err != nil {
 			return fmt.Errorf("load from records: %w", err)
@@ -79,7 +84,7 @@ func LoadFromRecords[TypeID ID, TEvent event.Any](root Root[TypeID, TEvent], reg
 		}
 
 		evt := fact()
-		if err := event.Unmarshal(record.Data(), evt); err != nil {
+		if err := serde.UnmarshalEvent(record.Data(), evt); err != nil {
 			return fmt.Errorf("load from records: unmarshal record data: %w", err)
 		}
 
@@ -104,6 +109,7 @@ func LoadFromRecords[TypeID ID, TEvent event.Any](root Root[TypeID, TEvent], reg
 func CommitEvents[TID ID, E event.Any, R Root[TID, E]](
 	ctx context.Context,
 	store event.Log,
+	serializer event.Serializer,
 	root R,
 ) error {
 	// Theoretically, if we wanted to allow custom implementations
@@ -121,7 +127,7 @@ func CommitEvents[TID ID, E event.Any, R Root[TID, E]](
 		root.Version() - version.Version(len(uncommitedEvents)),
 	)
 
-	rawEvents, err := uncommitedEvents.ToRaw()
+	rawEvents, err := uncommitedEvents.ToRaw(serializer)
 	if err != nil {
 		return fmt.Errorf("aggregate commit: events to raw: %w", err)
 	}

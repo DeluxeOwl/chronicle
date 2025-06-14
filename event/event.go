@@ -26,8 +26,8 @@ func (ge *Event) EventName() string {
 	return ge.wrappedEvent.EventName()
 }
 
-func (ge *Event) ToRaw() (Raw, error) {
-	bytes, err := Marshal(ge.Unwrap())
+func (ge *Event) ToRaw(serde Serializer) (Raw, error) {
+	bytes, err := serde.MarshalEvent(ge.Unwrap())
 	if err != nil {
 		return Raw{}, fmt.Errorf("convert event to raw event: marshal event: %w", err)
 	}
@@ -37,10 +37,10 @@ func (ge *Event) ToRaw() (Raw, error) {
 
 type UncommitedEvents []Event
 
-func (events UncommitedEvents) ToRaw() ([]Raw, error) {
+func (events UncommitedEvents) ToRaw(serializer Serializer) ([]Raw, error) {
 	rawEvents := make([]Raw, len(events))
 	for i := range events {
-		raw, err := events[i].ToRaw()
+		raw, err := events[i].ToRaw(serializer)
 		if err != nil {
 			return nil, fmt.Errorf("convert events: %w", err)
 		}

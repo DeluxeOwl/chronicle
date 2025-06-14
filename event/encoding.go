@@ -1,27 +1,47 @@
 package event
 
-import "github.com/DeluxeOwl/chronicle/internal"
+import (
+	"encoding/json"
+)
 
-type Unmarshaler interface {
-	UnmarshalEvent(data RawData) error
+type Serializer interface {
+	MarshalEvent(v Any) (RawData, error)
+	UnmarshalEvent(data RawData, v Any) error
 }
 
-type Marshaler interface {
-	MarshalEvent() (RawData, error)
+type jsonSerializer struct{}
+
+func NewJSONSerializer() *jsonSerializer {
+	return &jsonSerializer{}
 }
 
-func Unmarshal(data RawData, v Any) error {
-	if customUnmarshal, ok := v.(Unmarshaler); ok {
-		return customUnmarshal.UnmarshalEvent(data)
+func (j *jsonSerializer) MarshalEvent(v Any) (RawData, error) {
+	return json.Marshal(v)
+}
+
+func (j *jsonSerializer) UnmarshalEvent(data RawData, v Any) error {
+	return json.Unmarshal(data, v)
+}
+
+type genericSerializer struct {
+	marshal   func(v Any) (RawData, error)
+	unmarshal func(data RawData, v Any) error
+}
+
+func NewGenericSerializer(
+	marshal func(v Any) (RawData, error),
+	unmarshal func(data RawData, v Any) error,
+) *genericSerializer {
+	return &genericSerializer{
+		marshal:   marshal,
+		unmarshal: unmarshal,
 	}
-
-	return internal.Config.Unmarshal(data, v)
 }
 
-func Marshal(v Any) (RawData, error) {
-	if customMarshal, ok := v.(Marshaler); ok {
-		return customMarshal.MarshalEvent()
-	}
+func (gs *genericSerializer) MarshalEvent(v Any) (RawData, error) {
+	return gs.marshal(v)
+}
 
-	return internal.Config.Marshal(v)
+func (gs *genericSerializer) UnmarshalEvent(data RawData, v Any) error {
+	return gs.unmarshal(data, v)
 }

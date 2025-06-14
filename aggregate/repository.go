@@ -24,6 +24,7 @@ type Repository[TID ID, E event.Any, R Root[TID, E]] interface {
 
 type Repo[TID ID, E event.Any, R Root[TID, E]] struct {
 	registry event.Registry
+	serde    event.Serializer
 	store    event.Log
 	newRoot  func() R
 }
@@ -38,6 +39,15 @@ func WithRegistry[TID ID, E event.Any, R Root[TID, E]](
 	}
 }
 
+func WithSerializer[TID ID, E event.Any, R Root[TID, E]](
+	serializer event.Serializer,
+) RepoOption[TID, E, R] {
+	return func(esr *Repo[TID, E, R]) {
+		esr.serde = serializer
+	}
+}
+
+// An implementation of the repo, uses a global type registry and a json serializer.
 func NewRepo[TID ID, E event.Any, R Root[TID, E]](
 	eventLog event.Log,
 	newRoot func() R,
@@ -47,6 +57,7 @@ func NewRepo[TID ID, E event.Any, R Root[TID, E]](
 		store:    eventLog,
 		newRoot:  newRoot,
 		registry: event.GlobalRegistry,
+		serde:    event.NewJSONSerializer(),
 	}
 
 	for _, o := range opts {
@@ -74,7 +85,7 @@ func (repo *Repo[TID, E, R]) getFromVersion(ctx context.Context, id ID, selector
 
 	root := repo.newRoot()
 
-	if err := LoadFromRecords(root, repo.registry, recordedEvents); err != nil {
+	if err := LoadFromRecords(root, repo.registry, repo.serde, recordedEvents); err != nil {
 		return zeroValue, err
 	}
 
@@ -86,5 +97,5 @@ func (repo *Repo[TID, E, R]) getFromVersion(ctx context.Context, id ID, selector
 }
 
 func (repo *Repo[TID, E, R]) Save(ctx context.Context, root R) error {
-	return CommitEvents(ctx, repo.store, root)
+	return CommitEvents(ctx, repo.store, repo.serde, root)
 }
