@@ -11,6 +11,7 @@ import (
 
 type Getter[TID ID, E event.Any, R Root[TID, E]] interface {
 	Get(ctx context.Context, id ID) (R, error)
+	GetVersion(ctx context.Context, id ID, selector version.Selector) (R, error)
 }
 
 type Saver[TID ID, E event.Any, R Root[TID, E]] interface {
@@ -88,11 +89,10 @@ func NewEventSourcedRepo[TID ID, E event.Any, R Root[TID, E]](
 }
 
 func (repo *EventSourcedRepo[TID, E, R]) Get(ctx context.Context, id ID) (R, error) {
-	return repo.getFromVersion(ctx, id, version.SelectFromBeginning)
+	return repo.GetVersion(ctx, id, version.SelectFromBeginning)
 }
 
-// Would a public method for this help?
-func (repo *EventSourcedRepo[TID, E, R]) getFromVersion(ctx context.Context, id ID, selector version.Selector) (R, error) {
+func (repo *EventSourcedRepo[TID, E, R]) GetVersion(ctx context.Context, id ID, selector version.Selector) (R, error) {
 	var zeroValue R
 
 	logID := event.LogID(id.String())
