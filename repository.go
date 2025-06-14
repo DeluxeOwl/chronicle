@@ -8,7 +8,7 @@ import (
 func NewEventSourcedRepository[TID aggregate.ID, E event.Any, R aggregate.Root[TID, E]](
 	eventLog event.Log,
 	newRoot func() R,
-	opts ...aggregate.EventSourcedRepoOption[TID, E, R],
+	opts ...aggregate.EventSourcedRepoOption,
 ) (*aggregate.EventSourcedRepo[TID, E, R], error) {
 	return aggregate.NewEventSourcedRepo(eventLog, newRoot, opts...)
 }

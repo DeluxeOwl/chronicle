@@ -27,46 +27,61 @@ type EventSourcedRepo[TID ID, E event.Any, R Root[TID, E]] struct {
 	serde    event.Serializer
 	store    event.Log
 	newRoot  func() R
+
+	shouldRegisterRoot bool
 }
 
-type EventSourcedRepoOption[TID ID, E event.Any, R Root[TID, E]] func(*EventSourcedRepo[TID, E, R])
+// Note: we do it this way because otherwise go can't infer the type.
+type repoConfigurator interface {
+	setRegistry(r event.Registry)
+	setSerializer(s event.Serializer)
+	setShouldRegisterRoot(b bool)
+}
 
-func WithRegistry[TID ID, E event.Any, R Root[TID, E]](
-	registry event.Registry,
-) EventSourcedRepoOption[TID, E, R] {
-	return func(esr *EventSourcedRepo[TID, E, R]) {
-		esr.registry = registry
+type EventSourcedRepoOption func(repoConfigurator)
+
+func Registry(registry event.Registry) EventSourcedRepoOption {
+	return func(c repoConfigurator) {
+		c.setRegistry(registry)
 	}
 }
 
-func WithSerializer[TID ID, E event.Any, R Root[TID, E]](
-	serializer event.Serializer,
-) EventSourcedRepoOption[TID, E, R] {
-	return func(esr *EventSourcedRepo[TID, E, R]) {
-		esr.serde = serializer
+func Serializer(serializer event.Serializer) EventSourcedRepoOption {
+	return func(c repoConfigurator) {
+		c.setSerializer(serializer)
+	}
+}
+
+func DontRegisterRoot() EventSourcedRepoOption {
+	return func(c repoConfigurator) {
+		c.setShouldRegisterRoot(false)
 	}
 }
 
 // An implementation of the repo, uses a global type registry and a json serializer.
+// It also performs the side effect of registering the root aggregate into the registry (use the option to not do that if you wish).
 func NewEventSourcedRepo[TID ID, E event.Any, R Root[TID, E]](
 	eventLog event.Log,
 	newRoot func() R,
-	opts ...EventSourcedRepoOption[TID, E, R],
+	opts ...EventSourcedRepoOption,
 ) (*EventSourcedRepo[TID, E, R], error) {
 	esr := &EventSourcedRepo[TID, E, R]{
-		store:    eventLog,
-		newRoot:  newRoot,
-		registry: event.GlobalRegistry,
-		serde:    event.NewJSONSerializer(),
+		store:              eventLog,
+		newRoot:            newRoot,
+		registry:           event.GlobalRegistry,
+		serde:              event.NewJSONSerializer(),
+		shouldRegisterRoot: true,
 	}
 
 	for _, o := range opts {
 		o(esr)
 	}
 
-	err := esr.registry.RegisterRoot(newRoot())
-	if err != nil {
-		return nil, fmt.Errorf("new aggregate repository: %w", err)
+	if esr.shouldRegisterRoot {
+		err := esr.registry.RegisterRoot(newRoot())
+		if err != nil {
+			return nil, fmt.Errorf("new aggregate repository: %w", err)
+		}
 	}
 
 	return esr, nil
@@ -98,4 +113,16 @@ func (repo *EventSourcedRepo[TID, E, R]) getFromVersion(ctx context.Context, id 
 
 func (repo *EventSourcedRepo[TID, E, R]) Save(ctx context.Context, root R) error {
 	return CommitEvents(ctx, root, repo.serde, repo.store)
+}
+
+func (esr *EventSourcedRepo[TID, E, R]) setRegistry(r event.Registry) {
+	esr.registry = r
+}
+
+func (esr *EventSourcedRepo[TID, E, R]) setSerializer(s event.Serializer) {
+	esr.serde = s
+}
+
+func (esr *EventSourcedRepo[TID, E, R]) setShouldRegisterRoot(b bool) {
+	esr.shouldRegisterRoot = b
 }
