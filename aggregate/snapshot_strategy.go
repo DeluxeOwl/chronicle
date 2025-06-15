@@ -36,3 +36,25 @@ func SnapshotNever() SnapshotStrategy {
 		return false
 	}
 }
+
+// OnEvent returns a strategy that creates a snapshot if a specific event was committed.
+func OnEvent(eventNames ...string) SnapshotStrategy {
+	if len(eventNames) == 0 {
+		return SnapshotNever()
+	}
+
+	eventsToMatch := make(map[string]struct{}, len(eventNames))
+	for _, name := range eventNames {
+		eventsToMatch[name] = struct{}{}
+	}
+
+	return func(_ context.Context, _, _ version.Version, committedEvents event.CommitedEvents) bool {
+		for _, committedEvent := range committedEvents {
+			if _, ok := eventsToMatch[committedEvent.EventName()]; ok {
+				return true
+			}
+		}
+
+		return false
+	}
+}
