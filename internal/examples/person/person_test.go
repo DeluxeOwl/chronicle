@@ -5,6 +5,7 @@ import (
 
 	"github.com/DeluxeOwl/chronicle"
 	"github.com/DeluxeOwl/chronicle/aggregate"
+	"github.com/DeluxeOwl/chronicle/aggregate/snapshotstore"
 	"github.com/DeluxeOwl/chronicle/event"
 	"github.com/DeluxeOwl/chronicle/internal/examples/person"
 	"github.com/stretchr/testify/require"
@@ -21,10 +22,17 @@ func TestPlayground(t *testing.T) {
 	mem := chronicle.NewEventLogMemory()
 	registry := event.NewRegistry()
 
-	repo, err := chronicle.NewEventSourcedRepository(mem, person.NewEmpty, aggregate.Registry(registry))
+	snapshotStore := snapshotstore.NewMemoryStore(person.NewSnapshot)
+
+	repo, err := chronicle.NewEventSourcedRepositoryWithSnapshots(mem,
+		person.NewEmpty,
+		snapshotStore,
+		person.NewEmpty(), // Person is a snapshotter.
+		aggregate.RegistryS(registry))
+
 	require.NoError(t, err)
 
-	for range 2 {
+	for range 44 {
 		p.Age()
 	}
 
@@ -36,7 +44,7 @@ func TestPlayground(t *testing.T) {
 
 	ps := newp.ToSnapshot(newp)
 	require.Equal(t, "john", ps.Name)
-	require.Equal(t, 2, ps.Age)
+	require.Equal(t, 44, ps.Age)
 
 	agedOneFactory, ok := registry.NewEventFactory("person/aged-one-year")
 	require.True(t, ok)

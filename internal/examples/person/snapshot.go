@@ -14,6 +14,10 @@ type PersonSnapshot struct {
 	Age             int             `json:"age"`
 }
 
+func NewSnapshot() *PersonSnapshot {
+	return new(PersonSnapshot)
+}
+
 func (ps *PersonSnapshot) Version() version.Version {
 	return ps.SnapshotVersion
 }
