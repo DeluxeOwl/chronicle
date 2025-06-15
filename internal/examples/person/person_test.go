@@ -29,8 +29,7 @@ func TestPlayground(t *testing.T) {
 		person.NewEmpty,
 		snapshotStore,
 		person.NewEmpty(), // Person is a snapshotter.
-		// TODO: builder pattern http://localhost:3000/c/165e0126-83bf-4849-bfb0-868979780288
-		aggregate.SnapshotEveryNEvents(person.NewEmpty(), 10),
+		aggregate.SnapshotStrategyFor[*person.Person]().OnEvents(),
 		aggregate.RegistryS(registry),
 	)
 
