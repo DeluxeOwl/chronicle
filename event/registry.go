@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
+
+	"github.com/DeluxeOwl/chronicle/internal/assert"
 )
 
 // The core purpose of this type is to create a new, zero-value instance of a specific event type.
@@ -31,11 +33,9 @@ func NewFuncFor[T Any]() NewFunc {
 		newInstance := reflect.New(typ).Interface()
 
 		eventInstance, ok := newInstance.(Any)
-		if !ok {
-			// This should theoretically never happen because of the
-			// generic constraint.
-			panic("failed to assert type to event.Any")
-		}
+		// This should theoretically never happen because of the
+		// generic constraint.
+		assert.That(ok, "assert type to event.Any")
 
 		return eventInstance
 	}
