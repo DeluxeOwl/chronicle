@@ -8,14 +8,15 @@ import (
 	"github.com/DeluxeOwl/chronicle/version"
 )
 
-type SnapshottingRepository[TID ID, E event.Any] struct {
+// TODO: should I add the types here for snapshot and root?
+type SnapshottingRepository[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]] struct {
 	// Embed the existing repo to reuse its Save logic and basic Get logic
-	internal *EventSourcedRepo[TID, E, Root[TID, E]]
+	internal *EventSourcedRepo[TID, E, R]
 
 	onSnapshotError func(error) error
 
-	snapshotStore SnapshotStore[TID, Snapshot[TID]]
-	snapshotter   Snapshotter[TID, E, Root[TID, E], Snapshot[TID]]
+	snapshotStore SnapshotStore[TID, TS]
+	snapshotter   Snapshotter[TID, E, R, TS]
 
 	// Optional: a policy for when to save snapshots
 	snapshotFrequency uint64
@@ -23,12 +24,12 @@ type SnapshottingRepository[TID ID, E event.Any] struct {
 
 const SnapshotFrequency = 100
 
-func NewSnapshottingRepository[TID ID, E event.Any](
-	esr *EventSourcedRepo[TID, E, Root[TID, E]],
-	snapshotStore SnapshotStore[TID, Snapshot[TID]],
-	snapshotter Snapshotter[TID, E, Root[TID, E], Snapshot[TID]],
-) *SnapshottingRepository[TID, E] {
-	return &SnapshottingRepository[TID, E]{
+func NewSnapshottingRepository[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]](
+	esr *EventSourcedRepo[TID, E, R],
+	snapshotStore SnapshotStore[TID, TS],
+	snapshotter Snapshotter[TID, E, R, TS],
+) *SnapshottingRepository[TID, E, R, TS] {
+	return &SnapshottingRepository[TID, E, R, TS]{
 		internal:          esr,
 		onSnapshotError:   func(err error) error { return nil },
 		snapshotStore:     snapshotStore,
@@ -37,8 +38,8 @@ func NewSnapshottingRepository[TID ID, E event.Any](
 	}
 }
 
-func (r *SnapshottingRepository[TID, E]) Get(ctx context.Context, id TID) (Root[TID, E], error) {
-	var zeroValue Root[TID, E]
+func (r *SnapshottingRepository[TID, E, R, TS]) Get(ctx context.Context, id TID) (R, error) {
+	var zeroValue R
 
 	root, found, err := LoadFromSnapshot(ctx, r.snapshotStore, r.snapshotter, id)
 	if err != nil {
@@ -63,7 +64,7 @@ func (r *SnapshottingRepository[TID, E]) Get(ctx context.Context, id TID) (Root[
 
 // Save persists the uncommitted events of an aggregate and, if the policy dictates,
 // creates and saves a new snapshot of the aggregate's state.
-func (r *SnapshottingRepository[TID, E]) Save(ctx context.Context, root Root[TID, E]) (version.Version, event.CommitedEvents, error) {
+func (r *SnapshottingRepository[TID, E, R, TS]) Save(ctx context.Context, root R) (version.Version, event.CommitedEvents, error) {
 	// First, commit events to the event log. This is the source of truth.
 	newVersion, committedEvents, err := r.internal.Save(ctx, root)
 	if err != nil {
