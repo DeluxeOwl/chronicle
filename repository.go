@@ -18,7 +18,8 @@ func NewEventSourcedRepositoryWithSnapshots[TID aggregate.ID, E event.Any, R agg
 	newRoot func() R,
 	snapshotStore aggregate.SnapshotStore[TID, TS],
 	snapshotter aggregate.Snapshotter[TID, E, R, TS],
+	strategy aggregate.SnapshotStrategy[TID, E, R],
 	opts ...aggregate.ESRepoWithSnapshotsOption,
 ) (*aggregate.ESRepoWithSnapshots[TID, E, R, TS], error) {
-	return aggregate.NewESRepoWithSnapshots(eventLog, newRoot, snapshotStore, snapshotter, opts...)
+	return aggregate.NewESRepoWithSnapshots(eventLog, newRoot, snapshotStore, snapshotter, strategy, opts...)
 }

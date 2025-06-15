@@ -24,11 +24,15 @@ func TestPlayground(t *testing.T) {
 
 	snapshotStore := snapshotstore.NewMemoryStore(person.NewSnapshot)
 
-	repo, err := chronicle.NewEventSourcedRepositoryWithSnapshots(mem,
+	repo, err := chronicle.NewEventSourcedRepositoryWithSnapshots(
+		mem,
 		person.NewEmpty,
 		snapshotStore,
 		person.NewEmpty(), // Person is a snapshotter.
-		aggregate.RegistryS(registry))
+		// TODO: builder pattern http://localhost:3000/c/165e0126-83bf-4849-bfb0-868979780288
+		aggregate.SnapshotEveryNEvents(person.NewEmpty(), 10),
+		aggregate.RegistryS(registry),
+	)
 
 	require.NoError(t, err)
 
@@ -59,4 +63,8 @@ func TestPlayground(t *testing.T) {
 	event3 := wasBornFactory()
 	event4 := wasBornFactory()
 	require.NotSame(t, event3, event4)
+
+	_, found, err := snapshotStore.GetSnapshot(ctx, johnID)
+	require.NoError(t, err)
+	require.True(t, found)
 }

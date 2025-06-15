@@ -15,7 +15,7 @@ type ESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]] 
 	snapshotter   Snapshotter[TID, E, R, TS]
 
 	onSnapshotError  OnSnapshotErrorFunc
-	snapshotStrategy SnapshotStrategy
+	snapshotStrategy SnapshotStrategy[TID, E, R]
 }
 
 const SnapshotFrequency = 3
@@ -27,6 +27,7 @@ func NewESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID
 	newRoot func() R,
 	snapshotStore SnapshotStore[TID, TS],
 	snapshotter Snapshotter[TID, E, R, TS],
+	strategy SnapshotStrategy[TID, E, R],
 	opts ...ESRepoWithSnapshotsOption,
 ) (*ESRepoWithSnapshots[TID, E, R, TS], error) {
 	esr := &ESRepoWithSnapshots[TID, E, R, TS]{
@@ -40,7 +41,7 @@ func NewESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID
 		onSnapshotError:  func(err error) error { return nil },
 		snapshotStore:    snapshotStore,
 		snapshotter:      snapshotter,
-		snapshotStrategy: SnapshotEveryNEvents(DefaultSnapshotFrequency),
+		snapshotStrategy: strategy,
 	}
 
 	for _, o := range opts {
@@ -97,7 +98,7 @@ func (esr *ESRepoWithSnapshots[TID, E, R, TS]) Save(ctx context.Context, root R)
 
 	previousVersion := newVersion - version.Version(len(committedEvents))
 
-	if esr.snapshotStrategy(ctx, previousVersion, newVersion, committedEvents) {
+	if esr.snapshotStrategy.ShouldSnapshot(ctx, root, previousVersion, newVersion, committedEvents) {
 		snapshot := esr.snapshotter.ToSnapshot(root)
 		if err := esr.snapshotStore.SaveSnapshot(ctx, snapshot); err != nil {
 			return newVersion, committedEvents, esr.onSnapshotError(err)
@@ -119,10 +120,6 @@ func (esr *ESRepoWithSnapshots[TID, E, R, TS]) setShouldRegisterRoot(b bool) {
 	esr.internal.shouldRegisterRoot = b
 }
 
-func (esr *ESRepoWithSnapshots[TID, E, R, TS]) setSnapshotStrategy(strategy SnapshotStrategy) {
-	esr.snapshotStrategy = strategy
-}
-
 func (esr *ESRepoWithSnapshots[TID, E, R, TS]) setOnSnapshotError(fn OnSnapshotErrorFunc) {
 	esr.onSnapshotError = fn
 }
@@ -132,7 +129,6 @@ type esRepoWithSnapshotsConfigurator interface {
 	setSerializer(s event.Serializer)
 	setShouldRegisterRoot(b bool)
 	setOnSnapshotError(OnSnapshotErrorFunc)
-	setSnapshotStrategy(strategy SnapshotStrategy)
 }
 
 type ESRepoWithSnapshotsOption func(esRepoWithSnapshotsConfigurator)
@@ -152,12 +148,6 @@ func SerializerS(serializer event.Serializer) ESRepoWithSnapshotsOption {
 func DontRegisterRootS() ESRepoWithSnapshotsOption {
 	return func(c esRepoWithSnapshotsConfigurator) {
 		c.setShouldRegisterRoot(false)
-	}
-}
-
-func SnapshotStrategyS(strategy SnapshotStrategy) ESRepoWithSnapshotsOption {
-	return func(c esRepoWithSnapshotsConfigurator) {
-		c.setSnapshotStrategy(strategy)
 	}
 }
 
