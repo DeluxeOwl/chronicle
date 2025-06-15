@@ -29,7 +29,7 @@ func TestPlayground(t *testing.T) {
 		person.NewEmpty,
 		snapshotStore,
 		person.NewEmpty(), // Person is a snapshotter.
-		aggregate.SnapshotStrategyFor[*person.Person]().OnEvents(),
+		aggregate.SnapshotStrategyFor[*person.Person]().EveryNEvents(10),
 		aggregate.RegistryS(registry),
 	)
 

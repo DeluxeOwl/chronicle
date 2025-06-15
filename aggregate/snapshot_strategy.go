@@ -28,12 +28,6 @@ func SnapshotStrategyFor[R Root[TID, E], TID ID, E event.Any]() *strategyBuilder
 	return &strategyBuilder[TID, E, R]{}
 }
 
-func (b *strategyBuilder[TID, E, R]) EveryNEvents(n uint64) *everyNEventsStrategy[TID, E, R] {
-	return &everyNEventsStrategy[TID, E, R]{N: n}
-}
-
-const DefaultSnapshotFrequency = 100 // A sensible default
-
 type everyNEventsStrategy[TID ID, E event.Any, R Root[TID, E]] struct {
 	N uint64
 }
@@ -44,6 +38,10 @@ func (s *everyNEventsStrategy[TID, E, R]) ShouldSnapshot(_ context.Context, _ R,
 	}
 	nextSnapshotVersion := (uint64(previousVersion)/s.N + 1) * s.N
 	return uint64(newVersion) >= nextSnapshotVersion
+}
+
+func (b *strategyBuilder[TID, E, R]) EveryNEvents(n uint64) *everyNEventsStrategy[TID, E, R] {
+	return &everyNEventsStrategy[TID, E, R]{N: n}
 }
 
 type onEventsStrategy[TID ID, E event.Any, R Root[TID, E]] struct {
