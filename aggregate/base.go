@@ -30,7 +30,7 @@ func (br *Base) setVersion(v version.Version) {
 }
 
 //nolint:unused // False positive.
-func (br *Base) recordThat(aggregate Aggregate[event.Any], events ...event.Event) error {
+func (br *Base) recordThat(aggregate anyAggregate, events ...event.Event) error {
 	for _, event := range events {
 		anyEvent := event.Unwrap()
 

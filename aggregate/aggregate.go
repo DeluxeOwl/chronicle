@@ -13,23 +13,26 @@ type ID interface {
 	fmt.Stringer
 }
 
-type Aggregate[E event.Any] interface {
+type Aggregate[TypeID ID, E event.Any] interface {
 	Apply(E) error
+	ID() TypeID
+}
+
+type anyAggregate interface {
+	Apply(event.Any) error
 }
 
 type (
 	Root[TypeID ID, TEvent event.Any] interface {
-		Aggregate[TEvent]
-
+		Aggregate[TypeID, TEvent]
 		event.ConstructorProvider
 
-		ID() TypeID
 		Version() version.Version
 
 		// Base implements these, so you *have* to embed Base.
 		flushUncommitedEvents() event.UncommitedEvents
 		setVersion(version.Version)
-		recordThat(Aggregate[event.Any], ...event.Event) error
+		recordThat(anyAggregate, ...event.Event) error
 	}
 )
 
@@ -44,6 +47,10 @@ func (a *anyRoot[TypeID, TEvent]) Apply(evt event.Any) error {
 	}
 
 	return a.internalRoot.Apply(anyEvt)
+}
+
+func (a *anyRoot[TypeID, TEvent]) ID() TypeID {
+	return a.internalRoot.ID()
 }
 
 func RecordEvent[TypeID ID, TEvent event.Any](root Root[TypeID, TEvent], e event.Any) error {
