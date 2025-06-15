@@ -18,8 +18,6 @@ type ESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]] 
 	snapshotStrategy SnapshotStrategy[TID, E, R]
 }
 
-const SnapshotFrequency = 3
-
 type OnSnapshotErrorFunc = func(error) error
 
 func NewESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]](
