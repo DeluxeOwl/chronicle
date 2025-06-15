@@ -34,7 +34,7 @@ func TestPlayground(t *testing.T) {
 	newp, err := repo.Get(ctx, johnID)
 	require.NoError(t, err)
 
-	ps := newp.ToSnapshot()
+	ps := newp.ToSnapshot(newp)
 	require.Equal(t, "john", ps.Name)
 	require.Equal(t, 2, ps.Age)
 

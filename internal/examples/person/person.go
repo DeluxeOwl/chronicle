@@ -25,11 +25,21 @@ type PersonSnapshot struct {
 	Age  int      `json:"age"`
 }
 
-func (p *Person) ToSnapshot() *PersonSnapshot {
+var _ aggregate.Snapshotter[PersonID, PersonEvent, *Person, *PersonSnapshot] = (*Person)(nil)
+
+func (p *Person) ToSnapshot(person *Person) *PersonSnapshot {
 	return &PersonSnapshot{
-		ID:   p.id,
-		Name: p.name,
-		Age:  p.age,
+		ID:   person.id,
+		Name: person.name,
+		Age:  person.age,
+	}
+}
+
+func (p *Person) FromSnapshot(snapshot *PersonSnapshot) *Person {
+	return &Person{
+		id:   snapshot.ID,
+		name: snapshot.Name,
+		age:  snapshot.Age,
 	}
 }
 
