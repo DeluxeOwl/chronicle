@@ -92,12 +92,10 @@ func (repo *EventSourcedRepo[TID, E, R]) Get(ctx context.Context, id TID) (R, er
 }
 
 func (repo *EventSourcedRepo[TID, E, R]) GetVersion(ctx context.Context, id TID, selector version.Selector) (R, error) {
-	var zeroValue R
-
 	root := repo.newRoot()
 
 	if err := ReadAndLoadFromStore(ctx, root, repo.store, repo.registry, repo.serde, id, selector); err != nil {
-		return zeroValue, fmt.Errorf("repo get: %w", err)
+		return emptyRoot[R](), fmt.Errorf("repo get: %w", err)
 	}
 
 	return root, nil

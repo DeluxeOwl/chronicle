@@ -25,7 +25,6 @@ func (p *Person) ID() PersonID {
 
 // Note: you'd add custom dependencies by returning a non-empty
 // instance, or creating a closure.
-// TODO: I have a lot of zero value passing around, should I add this as a required method on the aggregate?
 func NewEmpty() *Person {
 	return new(Person)
 }

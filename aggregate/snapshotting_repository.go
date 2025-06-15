@@ -8,9 +8,7 @@ import (
 	"github.com/DeluxeOwl/chronicle/version"
 )
 
-// TODO: should I add the types here for snapshot and root?
 type SnapshottingRepository[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]] struct {
-	// Embed the existing repo to reuse its Save logic and basic Get logic
 	internal *EventSourcedRepo[TID, E, R]
 
 	onSnapshotError func(error) error
@@ -39,11 +37,9 @@ func NewSnapshottingRepository[TID ID, E event.Any, R Root[TID, E], TS Snapshot[
 }
 
 func (r *SnapshottingRepository[TID, E, R, TS]) Get(ctx context.Context, id TID) (R, error) {
-	var zeroValue R
-
 	root, found, err := LoadFromSnapshot(ctx, r.snapshotStore, r.snapshotter, id)
 	if err != nil {
-		return zeroValue, fmt.Errorf("snapshot repo get: could not retrieve snapshot: %w", err)
+		return emptyRoot[R](), fmt.Errorf("snapshot repo get: could not retrieve snapshot: %w", err)
 	}
 
 	if !found {
@@ -53,7 +49,7 @@ func (r *SnapshottingRepository[TID, E, R, TS]) Get(ctx context.Context, id TID)
 	if err := ReadAndLoadFromStore(ctx, root, r.internal.store, r.internal.registry, r.internal.serde, id, version.Selector{
 		From: root.Version() + 1,
 	}); err != nil {
-		return zeroValue, fmt.Errorf("snapshot repo get: failed to load events after snapshot: %w", err)
+		return emptyRoot[R](), fmt.Errorf("snapshot repo get: failed to load events after snapshot: %w", err)
 	}
 
 	return root, nil

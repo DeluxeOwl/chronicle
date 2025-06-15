@@ -24,22 +24,19 @@ type SnapshotStore[TID ID, TS Snapshot[TID]] interface {
 	GetSnapshot(ctx context.Context, aggregateID TID) (TS, bool, error)
 }
 
-// TODO: do we need the found? in other places we check root.Version() == 0
 func LoadFromSnapshot[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]](
 	ctx context.Context,
 	store SnapshotStore[TID, TS],
 	snapshotter Snapshotter[TID, E, R, TS],
 	aggregateID TID,
 ) (R, bool, error) {
-	var zeroValue R
-
 	snap, found, err := store.GetSnapshot(ctx, aggregateID)
 	if err != nil {
-		return zeroValue, found, fmt.Errorf("load from snapshot: get snapshot: %w", err)
+		return emptyRoot[R](), found, fmt.Errorf("load from snapshot: get snapshot: %w", err)
 	}
 
 	if !found {
-		return zeroValue, false, nil
+		return emptyRoot[R](), false, nil
 	}
 
 	root := snapshotter.FromSnapshot(snap)
