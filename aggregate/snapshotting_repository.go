@@ -50,12 +50,9 @@ func (r *SnapshottingRepository[TID, E, R, TS]) Get(ctx context.Context, id TID)
 		return r.internal.Get(ctx, id)
 	}
 
-	logID := event.LogID(id.String())
-	records := r.internal.store.ReadEvents(ctx, logID, version.Selector{
+	if err := ReadAndLoadFromStore(ctx, root, r.internal.store, r.internal.registry, r.internal.serde, id, version.Selector{
 		From: root.Version() + 1,
-	})
-
-	if err := LoadFromRecords(root, r.internal.registry, r.internal.serde, records); err != nil {
+	}); err != nil {
 		return zeroValue, fmt.Errorf("snapshot repo get: failed to load events after snapshot: %w", err)
 	}
 

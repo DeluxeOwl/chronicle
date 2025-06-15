@@ -2,7 +2,6 @@ package aggregate
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/DeluxeOwl/chronicle/event"
@@ -95,17 +94,10 @@ func (repo *EventSourcedRepo[TID, E, R]) Get(ctx context.Context, id TID) (R, er
 func (repo *EventSourcedRepo[TID, E, R]) GetVersion(ctx context.Context, id TID, selector version.Selector) (R, error) {
 	var zeroValue R
 
-	logID := event.LogID(id.String())
-	recordedEvents := repo.store.ReadEvents(ctx, logID, selector)
-
 	root := repo.newRoot()
 
-	if err := LoadFromRecords(root, repo.registry, repo.serde, recordedEvents); err != nil {
+	if err := ReadAndLoadFromStore(ctx, root, repo.store, repo.registry, repo.serde, id, selector); err != nil {
 		return zeroValue, fmt.Errorf("repo get: %w", err)
-	}
-
-	if root.Version() == 0 {
-		return zeroValue, errors.New("root not found")
 	}
 
 	return root, nil

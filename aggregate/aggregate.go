@@ -2,6 +2,7 @@ package aggregate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/DeluxeOwl/chronicle/event"
@@ -13,13 +14,13 @@ type ID interface {
 	fmt.Stringer
 }
 
-type IDer[TypeID ID] interface {
-	ID() TypeID
+type IDer[TID ID] interface {
+	ID() TID
 }
 
-type Aggregate[TypeID ID, E event.Any] interface {
+type Aggregate[TID ID, E event.Any] interface {
 	Apply(E) error
-	IDer[TypeID]
+	IDer[TID]
 }
 
 type anyAggregate interface {
@@ -31,8 +32,8 @@ type Versioner interface {
 }
 
 type (
-	Root[TypeID ID, TEvent event.Any] interface {
-		Aggregate[TypeID, TEvent]
+	Root[TID ID, E event.Any] interface {
+		Aggregate[TID, E]
 		Versioner
 		event.ConstructorProvider
 
@@ -43,33 +44,33 @@ type (
 	}
 )
 
-type anyRoot[TypeID ID, TEvent event.Any] struct {
-	internalRoot Root[TypeID, TEvent]
+type anyRoot[TID ID, E event.Any] struct {
+	internalRoot Root[TID, E]
 }
 
-func (a *anyRoot[TypeID, TEvent]) Apply(evt event.Any) error {
-	anyEvt, ok := evt.(TEvent)
+func (a *anyRoot[TID, E]) Apply(evt event.Any) error {
+	anyEvt, ok := evt.(E)
 	if !ok {
-		return &DataIntegrityError[TEvent]{Event: evt}
+		return &DataIntegrityError[E]{Event: evt}
 	}
 
 	return a.internalRoot.Apply(anyEvt)
 }
 
-func (a *anyRoot[TypeID, TEvent]) ID() TypeID {
+func (a *anyRoot[TID, E]) ID() TID {
 	return a.internalRoot.ID()
 }
 
-func RecordEvent[TypeID ID, TEvent event.Any](root Root[TypeID, TEvent], e event.Any) error {
-	r := &anyRoot[TypeID, TEvent]{
+func RecordEvent[TID ID, E event.Any](root Root[TID, E], e event.Any) error {
+	r := &anyRoot[TID, E]{
 		internalRoot: root,
 	}
 
 	return root.recordThat(r, event.New(e))
 }
 
-func RecordEvents[TypeID ID, TEvent event.Any](root Root[TypeID, TEvent], events ...event.Any) error {
-	r := &anyRoot[TypeID, TEvent]{
+func RecordEvents[TID ID, E event.Any](root Root[TID, E], events ...event.Any) error {
+	r := &anyRoot[TID, E]{
 		internalRoot: root,
 	}
 
@@ -81,8 +82,31 @@ func RecordEvents[TypeID ID, TEvent event.Any](root Root[TypeID, TEvent], events
 	return root.recordThat(r, evs...)
 }
 
-func LoadFromRecords[TypeID ID, E event.Any](
-	root Root[TypeID, E],
+func ReadAndLoadFromStore[TID ID, E event.Any](
+	ctx context.Context,
+	root Root[TID, E],
+	store event.Log,
+	registry event.Registry,
+	serde event.Serializer,
+	id TID,
+	selector version.Selector,
+) error {
+	logID := event.LogID(id.String())
+	recordedEvents := store.ReadEvents(ctx, logID, selector)
+
+	if err := LoadFromRecords(root, registry, serde, recordedEvents); err != nil {
+		return fmt.Errorf("read and load from store: %w", err)
+	}
+
+	if root.Version() == 0 {
+		return errors.New("read and load from store: root not found")
+	}
+
+	return nil
+}
+
+func LoadFromRecords[TID ID, E event.Any](
+	root Root[TID, E],
 	registry event.Registry,
 	serde event.Serializer,
 	records event.Records,

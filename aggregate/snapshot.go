@@ -7,29 +7,29 @@ import (
 	"github.com/DeluxeOwl/chronicle/event"
 )
 
-type Snapshot[TypeID ID] interface {
-	IDer[TypeID]
+type Snapshot[TID ID] interface {
+	IDer[TID]
 	Versioner
 }
 
-type Snapshotter[TypeID ID, E event.Any, TRoot Root[TypeID, E], TSnapshot Snapshot[TypeID]] interface {
-	ToSnapshot(TRoot) TSnapshot
-	FromSnapshot(TSnapshot) TRoot
+type Snapshotter[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]] interface {
+	ToSnapshot(R) TS
+	FromSnapshot(TS) R
 }
 
-type SnapshotStore[TypeID ID, TSnapshot Snapshot[TypeID]] interface {
-	SaveSnapshot(ctx context.Context, snapshot TSnapshot) error
+type SnapshotStore[TID ID, TS Snapshot[TID]] interface {
+	SaveSnapshot(ctx context.Context, snapshot TS) error
 
 	// Returns the snapshot, if it was found and an error if any
-	GetSnapshot(ctx context.Context, aggregateID TypeID) (TSnapshot, bool, error)
+	GetSnapshot(ctx context.Context, aggregateID TID) (TS, bool, error)
 }
 
 // TODO: do we need the found? in other places we check root.Version() == 0
-func LoadFromSnapshot[TypeID ID, E event.Any, R Root[TypeID, E], TS Snapshot[TypeID]](
+func LoadFromSnapshot[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]](
 	ctx context.Context,
-	store SnapshotStore[TypeID, TS],
-	snapshotter Snapshotter[TypeID, E, R, TS],
-	aggregateID TypeID,
+	store SnapshotStore[TID, TS],
+	snapshotter Snapshotter[TID, E, R, TS],
+	aggregateID TID,
 ) (R, bool, error) {
 	var zeroValue R
 
