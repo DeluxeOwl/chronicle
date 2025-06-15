@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/DeluxeOwl/chronicle/event"
+	"github.com/DeluxeOwl/chronicle/internal/typeutils"
 	"github.com/DeluxeOwl/chronicle/version"
 )
 
@@ -68,7 +69,7 @@ func (repo *ESRepo[TID, E, R]) GetVersion(ctx context.Context, id TID, selector 
 	root := repo.newRoot()
 
 	if err := ReadAndLoadFromStore(ctx, root, repo.store, repo.registry, repo.serde, id, selector); err != nil {
-		return emptyRoot[R](), fmt.Errorf("repo get: %w", err)
+		return typeutils.Zero[R](), fmt.Errorf("repo get: %w", err)
 	}
 
 	return root, nil

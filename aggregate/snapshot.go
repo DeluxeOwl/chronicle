@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/DeluxeOwl/chronicle/event"
+	"github.com/DeluxeOwl/chronicle/internal/typeutils"
 )
 
 type Snapshot[TID ID] interface {
@@ -32,11 +33,11 @@ func LoadFromSnapshot[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]](
 ) (R, bool, error) {
 	snap, found, err := store.GetSnapshot(ctx, aggregateID)
 	if err != nil {
-		return emptyRoot[R](), found, fmt.Errorf("load from snapshot: get snapshot: %w", err)
+		return typeutils.Zero[R](), found, fmt.Errorf("load from snapshot: get snapshot: %w", err)
 	}
 
 	if !found {
-		return emptyRoot[R](), false, nil
+		return typeutils.Zero[R](), false, nil
 	}
 
 	root := snapshotter.FromSnapshot(snap)

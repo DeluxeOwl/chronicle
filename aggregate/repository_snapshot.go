@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/DeluxeOwl/chronicle/event"
+	"github.com/DeluxeOwl/chronicle/internal/typeutils"
 	"github.com/DeluxeOwl/chronicle/version"
 )
 
@@ -60,7 +61,7 @@ func NewESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID
 func (esr *ESRepoWithSnapshots[TID, E, R, TS]) Get(ctx context.Context, id TID) (R, error) {
 	root, found, err := LoadFromSnapshot(ctx, esr.snapshotStore, esr.snapshotter, id)
 	if err != nil {
-		return emptyRoot[R](), fmt.Errorf("snapshot repo get: could not retrieve snapshot: %w", err)
+		return typeutils.Zero[R](), fmt.Errorf("snapshot repo get: could not retrieve snapshot: %w", err)
 	}
 
 	if !found {
@@ -76,7 +77,7 @@ func (esr *ESRepoWithSnapshots[TID, E, R, TS]) Get(ctx context.Context, id TID) 
 		version.Selector{
 			From: root.Version() + 1,
 		}); err != nil {
-		return emptyRoot[R](), fmt.Errorf("snapshot repo get: failed to load events after snapshot: %w", err)
+		return typeutils.Zero[R](), fmt.Errorf("snapshot repo get: failed to load events after snapshot: %w", err)
 	}
 
 	return root, nil
