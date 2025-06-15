@@ -103,6 +103,12 @@ func LoadFromRecords[TypeID ID, TEvent event.Any](
 	return nil
 }
 
+func FlushUncommitedEvents[TID ID, E event.Any, R Root[TID, E]](
+	root R,
+) event.UncommitedEvents {
+	return root.flushUncommitedEvents()
+}
+
 // CommitEvents takes a root aggregate, flushes its uncommitted events, and appends them
 // to the provided event log. It's a reusable helper for implementing any
 // custom Repository's Save method.
@@ -114,7 +120,7 @@ func CommitEvents[TID ID, E event.Any, R Root[TID, E]](
 ) error {
 	// Theoretically, if we wanted to allow custom implementations
 	// we could make it like so: any(root).(UncommitedEventsFlusher)
-	uncommitedEvents := root.flushUncommitedEvents()
+	uncommitedEvents := FlushUncommitedEvents(root)
 
 	if len(uncommitedEvents) == 0 {
 		return nil // Nothing to save
