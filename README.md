@@ -18,3 +18,5 @@
 - durable workflow
 - decorators?
 - run in tx pattern?
+- ask ai to find repeating patterns, discrepancies, suggestions etc.
+  - and document

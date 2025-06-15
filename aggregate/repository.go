@@ -111,8 +111,12 @@ func (repo *EventSourcedRepo[TID, E, R]) GetVersion(ctx context.Context, id TID,
 	return root, nil
 }
 
-func (repo *EventSourcedRepo[TID, E, R]) Save(ctx context.Context, root R) error {
-	return CommitEvents(ctx, repo.store, repo.serde, root)
+func (repo *EventSourcedRepo[TID, E, R]) Save(ctx context.Context, root R) (version.Version, event.CommitedEvents, error) {
+	newVersion, commitedEvents, err := CommitEvents(ctx, repo.store, repo.serde, root)
+	if err != nil {
+		return newVersion, commitedEvents, fmt.Errorf("repo save: %w", err)
+	}
+	return newVersion, commitedEvents, nil
 }
 
 func (esr *EventSourcedRepo[TID, E, R]) setRegistry(r event.Registry) {

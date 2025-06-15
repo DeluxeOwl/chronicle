@@ -35,7 +35,10 @@ func (ge *Event) ToRaw(serde Serializer) (Raw, error) {
 	return *NewRaw(ge.EventName(), bytes), nil
 }
 
-type UncommitedEvents []Event
+type (
+	UncommitedEvents []Event
+	CommitedEvents   []Event
+)
 
 func (events UncommitedEvents) ToRaw(serializer Serializer) ([]Raw, error) {
 	rawEvents := make([]Raw, len(events))

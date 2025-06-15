@@ -131,13 +131,11 @@ func CommitEvents[TID ID, E event.Any, R Root[TID, E]](
 	store event.Log,
 	serializer event.Serializer,
 	root R,
-) error {
-	// Theoretically, if we wanted to allow custom implementations
-	// we could make it like so: any(root).(UncommitedEventsFlusher)
+) (version.Version, event.CommitedEvents, error) {
 	uncommitedEvents := FlushUncommitedEvents(root)
 
 	if len(uncommitedEvents) == 0 {
-		return nil // Nothing to save
+		return root.Version(), event.CommitedEvents{}, nil // Nothing to save
 	}
 
 	logID := event.LogID(root.ID().String())
@@ -149,12 +147,14 @@ func CommitEvents[TID ID, E event.Any, R Root[TID, E]](
 
 	rawEvents, err := uncommitedEvents.ToRaw(serializer)
 	if err != nil {
-		return fmt.Errorf("aggregate commit: events to raw: %w", err)
+		return root.Version(), event.CommitedEvents{}, fmt.Errorf("aggregate commit: events to raw: %w", err)
 	}
 
-	if _, err := store.AppendEvents(ctx, logID, expectedVersion, rawEvents); err != nil {
-		return fmt.Errorf("aggregate commit: append events: %w", err)
+	newVersion, err := store.AppendEvents(ctx, logID, expectedVersion, rawEvents)
+	if err != nil {
+		return root.Version(), event.CommitedEvents{}, fmt.Errorf("aggregate commit: append events: %w", err)
 	}
 
-	return nil
+	// These events now become committed
+	return newVersion, event.CommitedEvents(uncommitedEvents), nil
 }

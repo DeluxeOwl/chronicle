@@ -28,7 +28,7 @@ func TestPlayground(t *testing.T) {
 		p.Age()
 	}
 
-	err = repo.Save(ctx, p)
+	_, _, err = repo.Save(ctx, p)
 	require.NoError(t, err)
 
 	newp, err := repo.Get(ctx, johnID)
