@@ -10,7 +10,7 @@ import (
 )
 
 type Getter[TID ID, E event.Any, R Root[TID, E]] interface {
-	Get(ctx context.Context, id ID) (R, error)
+	Get(ctx context.Context, id TID) (R, error)
 	GetVersion(ctx context.Context, id ID, selector version.Selector) (R, error)
 }
 
@@ -88,11 +88,11 @@ func NewEventSourcedRepo[TID ID, E event.Any, R Root[TID, E]](
 	return esr, nil
 }
 
-func (repo *EventSourcedRepo[TID, E, R]) Get(ctx context.Context, id ID) (R, error) {
+func (repo *EventSourcedRepo[TID, E, R]) Get(ctx context.Context, id TID) (R, error) {
 	return repo.GetVersion(ctx, id, version.SelectFromBeginning)
 }
 
-func (repo *EventSourcedRepo[TID, E, R]) GetVersion(ctx context.Context, id ID, selector version.Selector) (R, error) {
+func (repo *EventSourcedRepo[TID, E, R]) GetVersion(ctx context.Context, id TID, selector version.Selector) (R, error) {
 	var zeroValue R
 
 	logID := event.LogID(id.String())
@@ -101,7 +101,7 @@ func (repo *EventSourcedRepo[TID, E, R]) GetVersion(ctx context.Context, id ID, 
 	root := repo.newRoot()
 
 	if err := LoadFromRecords(root, repo.registry, repo.serde, recordedEvents); err != nil {
-		return zeroValue, err
+		return zeroValue, fmt.Errorf("repo get: %w", err)
 	}
 
 	if root.Version() == 0 {
