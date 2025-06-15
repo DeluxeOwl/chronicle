@@ -24,6 +24,7 @@ func (ps *PersonSnapshot) ID() PersonID {
 
 func (p *Person) ToSnapshot(person *Person) *PersonSnapshot {
 	return &PersonSnapshot{
+		// Important: store the version
 		SnapshotVersion: person.Version(),
 		SnapshotID:      person.id,
 		Name:            person.name,
