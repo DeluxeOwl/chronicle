@@ -112,7 +112,7 @@ func (repo *EventSourcedRepo[TID, E, R]) GetVersion(ctx context.Context, id ID, 
 }
 
 func (repo *EventSourcedRepo[TID, E, R]) Save(ctx context.Context, root R) error {
-	return CommitEvents(ctx, root, repo.serde, repo.store)
+	return CommitEvents(ctx, repo.store, repo.serde, root)
 }
 
 func (esr *EventSourcedRepo[TID, E, R]) setRegistry(r event.Registry) {

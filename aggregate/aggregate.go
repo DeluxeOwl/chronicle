@@ -13,21 +13,28 @@ type ID interface {
 	fmt.Stringer
 }
 
+type IDer[TypeID ID] interface {
+	ID() TypeID
+}
+
 type Aggregate[TypeID ID, E event.Any] interface {
 	Apply(E) error
-	ID() TypeID
+	IDer[TypeID]
 }
 
 type anyAggregate interface {
 	Apply(event.Any) error
 }
 
+type Versioner interface {
+	Version() version.Version
+}
+
 type (
 	Root[TypeID ID, TEvent event.Any] interface {
 		Aggregate[TypeID, TEvent]
+		Versioner
 		event.ConstructorProvider
-
-		Version() version.Version
 
 		// Base implements these, so you *have* to embed Base.
 		flushUncommitedEvents() event.UncommitedEvents
@@ -74,8 +81,8 @@ func RecordEvents[TypeID ID, TEvent event.Any](root Root[TypeID, TEvent], events
 	return root.recordThat(r, evs...)
 }
 
-func LoadFromRecords[TypeID ID, TEvent event.Any](
-	root Root[TypeID, TEvent],
+func LoadFromRecords[TypeID ID, E event.Any](
+	root Root[TypeID, E],
 	registry event.Registry,
 	serde event.Serializer,
 	records event.Records,
@@ -95,9 +102,9 @@ func LoadFromRecords[TypeID ID, TEvent event.Any](
 			return fmt.Errorf("load from records: unmarshal record data: %w", err)
 		}
 
-		anyEvt, ok := evt.(TEvent)
+		anyEvt, ok := evt.(E)
 		if !ok {
-			return fmt.Errorf("load from records: %w", &DataIntegrityError[TEvent]{Event: evt})
+			return fmt.Errorf("load from records: %w", &DataIntegrityError[E]{Event: evt})
 		}
 
 		if err := root.Apply(anyEvt); err != nil {
@@ -121,9 +128,9 @@ func FlushUncommitedEvents[TID ID, E event.Any, R Root[TID, E]](
 // custom Repository's Save method.
 func CommitEvents[TID ID, E event.Any, R Root[TID, E]](
 	ctx context.Context,
-	root R,
-	serializer event.Serializer,
 	store event.Log,
+	serializer event.Serializer,
+	root R,
 ) error {
 	// Theoretically, if we wanted to allow custom implementations
 	// we could make it like so: any(root).(UncommitedEventsFlusher)

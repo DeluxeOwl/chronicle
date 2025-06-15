@@ -19,32 +19,8 @@ type Person struct {
 	age  int
 }
 
-type PersonSnapshot struct {
-	ID   PersonID `json:"id"`
-	Name string   `json:"name"`
-	Age  int      `json:"age"`
-}
-
-var _ aggregate.Snapshotter[PersonID, PersonEvent, *Person, *PersonSnapshot] = (*Person)(nil)
-
-func (p *Person) ToSnapshot(person *Person) *PersonSnapshot {
-	return &PersonSnapshot{
-		ID:   person.id,
-		Name: person.name,
-		Age:  person.age,
-	}
-}
-
-func (p *Person) FromSnapshot(snapshot *PersonSnapshot) *Person {
-	return &Person{
-		id:   snapshot.ID,
-		name: snapshot.Name,
-		age:  snapshot.Age,
-	}
-}
-
 func (p *Person) ID() PersonID {
-	return PersonID(p.id.String())
+	return p.id
 }
 
 // Note: you'd add custom dependencies by returning a non-empty
