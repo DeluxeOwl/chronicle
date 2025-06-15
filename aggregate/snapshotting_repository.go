@@ -2,7 +2,6 @@ package aggregate
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/DeluxeOwl/chronicle/event"
@@ -57,10 +56,6 @@ func (r *SnapshottingRepository[TID, E]) Get(ctx context.Context, id TID) (Root[
 
 	if err := LoadFromRecords(root, r.internal.registry, r.internal.serde, records); err != nil {
 		return zeroValue, fmt.Errorf("snapshot repo get: failed to load events after snapshot: %w", err)
-	}
-
-	if root.Version() == 0 {
-		return zeroValue, errors.New("root not found")
 	}
 
 	return root, nil
