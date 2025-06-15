@@ -22,7 +22,7 @@ type Repository[TID ID, E event.Any, R Root[TID, E]] interface {
 	Saver[TID, E, R]
 }
 
-type EventSourcedRepo[TID ID, E event.Any, R Root[TID, E]] struct {
+type ESRepo[TID ID, E event.Any, R Root[TID, E]] struct {
 	registry event.Registry
 	serde    event.Serializer
 	store    event.Log
@@ -31,41 +31,14 @@ type EventSourcedRepo[TID ID, E event.Any, R Root[TID, E]] struct {
 	shouldRegisterRoot bool
 }
 
-// Note: we do it this way because otherwise go can't infer the type.
-type repoConfigurator interface {
-	setRegistry(r event.Registry)
-	setSerializer(s event.Serializer)
-	setShouldRegisterRoot(b bool)
-}
-
-type EventSourcedRepoOption func(repoConfigurator)
-
-func Registry(registry event.Registry) EventSourcedRepoOption {
-	return func(c repoConfigurator) {
-		c.setRegistry(registry)
-	}
-}
-
-func Serializer(serializer event.Serializer) EventSourcedRepoOption {
-	return func(c repoConfigurator) {
-		c.setSerializer(serializer)
-	}
-}
-
-func DontRegisterRoot() EventSourcedRepoOption {
-	return func(c repoConfigurator) {
-		c.setShouldRegisterRoot(false)
-	}
-}
-
 // An implementation of the repo, uses a global type registry and a json serializer.
 // It also performs the side effect of registering the root aggregate into the registry (use the option to not do that if you wish).
-func NewEventSourcedRepo[TID ID, E event.Any, R Root[TID, E]](
+func NewESRepo[TID ID, E event.Any, R Root[TID, E]](
 	eventLog event.Log,
 	newRoot func() R,
-	opts ...EventSourcedRepoOption,
-) (*EventSourcedRepo[TID, E, R], error) {
-	esr := &EventSourcedRepo[TID, E, R]{
+	opts ...ESRepoOption,
+) (*ESRepo[TID, E, R], error) {
+	esr := &ESRepo[TID, E, R]{
 		store:              eventLog,
 		newRoot:            newRoot,
 		registry:           event.GlobalRegistry,
@@ -87,11 +60,11 @@ func NewEventSourcedRepo[TID ID, E event.Any, R Root[TID, E]](
 	return esr, nil
 }
 
-func (repo *EventSourcedRepo[TID, E, R]) Get(ctx context.Context, id TID) (R, error) {
+func (repo *ESRepo[TID, E, R]) Get(ctx context.Context, id TID) (R, error) {
 	return repo.GetVersion(ctx, id, version.SelectFromBeginning)
 }
 
-func (repo *EventSourcedRepo[TID, E, R]) GetVersion(ctx context.Context, id TID, selector version.Selector) (R, error) {
+func (repo *ESRepo[TID, E, R]) GetVersion(ctx context.Context, id TID, selector version.Selector) (R, error) {
 	root := repo.newRoot()
 
 	if err := ReadAndLoadFromStore(ctx, root, repo.store, repo.registry, repo.serde, id, selector); err != nil {
@@ -101,7 +74,7 @@ func (repo *EventSourcedRepo[TID, E, R]) GetVersion(ctx context.Context, id TID,
 	return root, nil
 }
 
-func (repo *EventSourcedRepo[TID, E, R]) Save(ctx context.Context, root R) (version.Version, event.CommitedEvents, error) {
+func (repo *ESRepo[TID, E, R]) Save(ctx context.Context, root R) (version.Version, event.CommitedEvents, error) {
 	newVersion, commitedEvents, err := CommitEvents(ctx, repo.store, repo.serde, root)
 	if err != nil {
 		return newVersion, commitedEvents, fmt.Errorf("repo save: %w", err)
@@ -109,14 +82,41 @@ func (repo *EventSourcedRepo[TID, E, R]) Save(ctx context.Context, root R) (vers
 	return newVersion, commitedEvents, nil
 }
 
-func (esr *EventSourcedRepo[TID, E, R]) setRegistry(r event.Registry) {
+func (esr *ESRepo[TID, E, R]) setRegistry(r event.Registry) {
 	esr.registry = r
 }
 
-func (esr *EventSourcedRepo[TID, E, R]) setSerializer(s event.Serializer) {
+func (esr *ESRepo[TID, E, R]) setSerializer(s event.Serializer) {
 	esr.serde = s
 }
 
-func (esr *EventSourcedRepo[TID, E, R]) setShouldRegisterRoot(b bool) {
+func (esr *ESRepo[TID, E, R]) setShouldRegisterRoot(b bool) {
 	esr.shouldRegisterRoot = b
+}
+
+// Note: we do it this way because otherwise go can't infer the type.
+type esRepoConfigurator interface {
+	setRegistry(r event.Registry)
+	setSerializer(s event.Serializer)
+	setShouldRegisterRoot(b bool)
+}
+
+type ESRepoOption func(esRepoConfigurator)
+
+func Registry(registry event.Registry) ESRepoOption {
+	return func(c esRepoConfigurator) {
+		c.setRegistry(registry)
+	}
+}
+
+func Serializer(serializer event.Serializer) ESRepoOption {
+	return func(c esRepoConfigurator) {
+		c.setSerializer(serializer)
+	}
+}
+
+func DontRegisterRoot() ESRepoOption {
+	return func(c esRepoConfigurator) {
+		c.setShouldRegisterRoot(false)
+	}
 }

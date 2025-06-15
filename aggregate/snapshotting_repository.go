@@ -8,47 +8,74 @@ import (
 	"github.com/DeluxeOwl/chronicle/version"
 )
 
-type SnapshottingRepository[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]] struct {
-	internal *EventSourcedRepo[TID, E, R]
-
-	onSnapshotError func(error) error
-
+type ESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]] struct {
+	internal      *ESRepo[TID, E, R]
 	snapshotStore SnapshotStore[TID, TS]
 	snapshotter   Snapshotter[TID, E, R, TS]
 
+	onSnapshotError OnSnapshotErrorFunc
 	// Optional: a policy for when to save snapshots
 	snapshotFrequency uint64
 }
 
 const SnapshotFrequency = 100
 
-func NewSnapshottingRepository[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]](
-	esr *EventSourcedRepo[TID, E, R],
+type OnSnapshotErrorFunc = func(error) error
+
+func NewESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]](
+	eventLog event.Log,
+	newRoot func() R,
 	snapshotStore SnapshotStore[TID, TS],
 	snapshotter Snapshotter[TID, E, R, TS],
-) *SnapshottingRepository[TID, E, R, TS] {
-	return &SnapshottingRepository[TID, E, R, TS]{
-		internal:          esr,
+	opts ...ESRepoWithSnapshotsOption,
+) (*ESRepoWithSnapshots[TID, E, R, TS], error) {
+	esr := &ESRepoWithSnapshots[TID, E, R, TS]{
+		internal: &ESRepo[TID, E, R]{
+			store:              eventLog,
+			newRoot:            newRoot,
+			registry:           event.GlobalRegistry,
+			serde:              event.NewJSONSerializer(),
+			shouldRegisterRoot: true,
+		},
 		onSnapshotError:   func(err error) error { return nil },
 		snapshotStore:     snapshotStore,
 		snapshotter:       snapshotter,
 		snapshotFrequency: SnapshotFrequency,
 	}
+
+	for _, o := range opts {
+		o(esr)
+	}
+
+	if esr.internal.shouldRegisterRoot {
+		err := esr.internal.registry.RegisterRoot(newRoot())
+		if err != nil {
+			return nil, fmt.Errorf("new aggregate repository: %w", err)
+		}
+	}
+
+	return esr, nil
 }
 
-func (r *SnapshottingRepository[TID, E, R, TS]) Get(ctx context.Context, id TID) (R, error) {
-	root, found, err := LoadFromSnapshot(ctx, r.snapshotStore, r.snapshotter, id)
+func (esr *ESRepoWithSnapshots[TID, E, R, TS]) Get(ctx context.Context, id TID) (R, error) {
+	root, found, err := LoadFromSnapshot(ctx, esr.snapshotStore, esr.snapshotter, id)
 	if err != nil {
 		return emptyRoot[R](), fmt.Errorf("snapshot repo get: could not retrieve snapshot: %w", err)
 	}
 
 	if !found {
-		return r.internal.Get(ctx, id)
+		return esr.internal.Get(ctx, id)
 	}
 
-	if err := ReadAndLoadFromStore(ctx, root, r.internal.store, r.internal.registry, r.internal.serde, id, version.Selector{
-		From: root.Version() + 1,
-	}); err != nil {
+	if err := ReadAndLoadFromStore(ctx,
+		root,
+		esr.internal.store,
+		esr.internal.registry,
+		esr.internal.serde,
+		id,
+		version.Selector{
+			From: root.Version() + 1,
+		}); err != nil {
 		return emptyRoot[R](), fmt.Errorf("snapshot repo get: failed to load events after snapshot: %w", err)
 	}
 
@@ -57,19 +84,68 @@ func (r *SnapshottingRepository[TID, E, R, TS]) Get(ctx context.Context, id TID)
 
 // Save persists the uncommitted events of an aggregate and, if the policy dictates,
 // creates and saves a new snapshot of the aggregate's state.
-func (r *SnapshottingRepository[TID, E, R, TS]) Save(ctx context.Context, root R) (version.Version, event.CommitedEvents, error) {
+func (esr *ESRepoWithSnapshots[TID, E, R, TS]) Save(ctx context.Context, root R) (version.Version, event.CommitedEvents, error) {
 	// First, commit events to the event log. This is the source of truth.
-	newVersion, committedEvents, err := r.internal.Save(ctx, root)
+	newVersion, committedEvents, err := esr.internal.Save(ctx, root)
 	if err != nil {
 		return newVersion, committedEvents, fmt.Errorf("snapshot repo save: %w", err)
 	}
 
-	if uint64(newVersion)%r.snapshotFrequency == 0 {
-		snapshot := r.snapshotter.ToSnapshot(root)
-		if err := r.snapshotStore.SaveSnapshot(ctx, snapshot); err != nil {
-			return newVersion, committedEvents, r.onSnapshotError(err)
+	if uint64(newVersion)%esr.snapshotFrequency == 0 {
+		snapshot := esr.snapshotter.ToSnapshot(root)
+		if err := esr.snapshotStore.SaveSnapshot(ctx, snapshot); err != nil {
+			return newVersion, committedEvents, esr.onSnapshotError(err)
 		}
 	}
 
 	return newVersion, committedEvents, nil
+}
+
+func (esr *ESRepoWithSnapshots[TID, E, R, TS]) setRegistry(r event.Registry) {
+	esr.internal.registry = r
+}
+
+func (esr *ESRepoWithSnapshots[TID, E, R, TS]) setSerializer(s event.Serializer) {
+	esr.internal.serde = s
+}
+
+func (esr *ESRepoWithSnapshots[TID, E, R, TS]) setShouldRegisterRoot(b bool) {
+	esr.internal.shouldRegisterRoot = b
+}
+
+func (esr *ESRepoWithSnapshots[TID, E, R, TS]) setOnSnapshotError(fn OnSnapshotErrorFunc) {
+	esr.onSnapshotError = fn
+}
+
+type esRepoWithSnapshotsConfigurator interface {
+	setRegistry(r event.Registry)
+	setSerializer(s event.Serializer)
+	setShouldRegisterRoot(b bool)
+	setOnSnapshotError(OnSnapshotErrorFunc)
+}
+
+type ESRepoWithSnapshotsOption func(esRepoWithSnapshotsConfigurator)
+
+func RegistryS(registry event.Registry) ESRepoWithSnapshotsOption {
+	return func(c esRepoWithSnapshotsConfigurator) {
+		c.setRegistry(registry)
+	}
+}
+
+func SerializerS(serializer event.Serializer) ESRepoWithSnapshotsOption {
+	return func(c esRepoWithSnapshotsConfigurator) {
+		c.setSerializer(serializer)
+	}
+}
+
+func DontRegisterRootS() ESRepoWithSnapshotsOption {
+	return func(c esRepoWithSnapshotsConfigurator) {
+		c.setShouldRegisterRoot(false)
+	}
+}
+
+func OnSnapshotErrorS(fn OnSnapshotErrorFunc) ESRepoWithSnapshotsOption {
+	return func(c esRepoWithSnapshotsConfigurator) {
+		c.setOnSnapshotError(fn)
+	}
 }
