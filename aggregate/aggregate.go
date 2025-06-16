@@ -39,7 +39,7 @@ type (
 		// Base implements these, so you *have* to embed Base.
 		flushUncommitedEvents() flushedUncommitedEvents
 		setVersion(version.Version)
-		recordThat(anyEventApplier, ...Event[event.Any]) error
+		recordThat(anyEventApplier, ...eventWrapper[event.Any]) error
 	}
 )
 
@@ -71,7 +71,7 @@ func RecordEvent[TID ID, E event.Any](root Root[TID, E], e E) error {
 }
 
 func RecordEvents[TID ID, E event.Any](root Root[TID, E], events ...E) error {
-	evs := make([]Event[event.Any], len(events))
+	evs := make([]eventWrapper[event.Any], len(events))
 	for i := range events {
 		evs[i] = createWrappedEvent[event.Any](events[i])
 	}
@@ -137,7 +137,7 @@ func FlushUncommitedEvents[TID ID, E event.Any, R Root[TID, E]](
 	root R,
 ) UncommitedEvents[E] {
 	flushedUncommited := root.flushUncommitedEvents()
-	uncommitted := make([]Event[E], len(flushedUncommited))
+	uncommitted := make([]eventWrapper[E], len(flushedUncommited))
 
 	for i, evt := range flushedUncommited {
 		concrete, ok := AnyToConcrete[E](evt)

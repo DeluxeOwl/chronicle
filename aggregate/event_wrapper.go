@@ -8,48 +8,48 @@ import (
 	"github.com/DeluxeOwl/chronicle/serde"
 )
 
-func AnyToConcrete[E event.Any](event Event[event.Any]) (Event[E], bool) {
+func AnyToConcrete[E event.Any](event eventWrapper[event.Any]) (eventWrapper[E], bool) {
 	concrete, ok := event.Unwrap().(E)
 	if !ok {
-		var empty Event[E]
+		var empty eventWrapper[E]
 		return empty, false
 	}
 
-	return Event[E]{
-		wrappedEvent: concrete,
+	return eventWrapper[E]{
+		event: concrete,
 	}, true
 }
 
-type Event[E event.Any] struct {
-	wrappedEvent E
+type eventWrapper[E event.Any] struct {
+	event E
 }
 
-func createWrappedEvent[E event.Any](event E) Event[E] {
-	return Event[E]{
-		wrappedEvent: event,
+func createWrappedEvent[E event.Any](event E) eventWrapper[E] {
+	return eventWrapper[E]{
+		event: event,
 	}
 }
 
-func (ge *Event[T]) Unwrap() T {
-	return ge.wrappedEvent
+func (w *eventWrapper[T]) Unwrap() T {
+	return w.event
 }
 
-func (ge *Event[T]) EventName() string {
-	return ge.wrappedEvent.EventName()
+func (w *eventWrapper[T]) EventName() string {
+	return w.event.EventName()
 }
 
-func (ge *Event[T]) ToRaw(serializer serde.BinarySerializer) (event.Raw, error) {
-	bytes, err := serializer.SerializeBinary(ge.Unwrap())
+func (w *eventWrapper[T]) ToRaw(serializer serde.BinarySerializer) (event.Raw, error) {
+	bytes, err := serializer.SerializeBinary(w.Unwrap())
 	if err != nil {
 		return event.Raw{}, fmt.Errorf("convert event to raw event: marshal event: %w", err)
 	}
 
-	return event.NewRaw(ge.EventName(), bytes), nil
+	return event.NewRaw(w.EventName(), bytes), nil
 }
 
 type (
-	UncommitedEvents[E event.Any] []Event[E]
-	CommitedEvents[E event.Any]   []Event[E]
+	UncommitedEvents[E event.Any] []eventWrapper[E]
+	CommitedEvents[E event.Any]   []eventWrapper[E]
 )
 
 func (uncommitted UncommitedEvents[E]) ToRaw(serializer serde.BinarySerializer) ([]event.Raw, error) {
