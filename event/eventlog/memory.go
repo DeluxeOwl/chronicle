@@ -53,10 +53,7 @@ func (store *Memory) AppendEvents(ctx context.Context, id event.LogID, expected 
 	if exp, ok := expected.(version.CheckExact); ok {
 		expectedVersion := version.Version(exp)
 		if actualLogVersion != expectedVersion {
-			return 0, fmt.Errorf("append events: %w", version.ConflictError{
-				Expected: expectedVersion,
-				Actual:   actualLogVersion,
-			})
+			return 0, fmt.Errorf("append events: %w", version.NewConflictError(expectedVersion, actualLogVersion))
 		}
 	}
 

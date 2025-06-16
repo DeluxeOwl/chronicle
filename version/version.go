@@ -23,15 +23,22 @@ type CheckExact Version
 
 func (CheckExact) isVersionCheck() {}
 
+func NewConflictError(expected Version, actual Version) *ConflictError {
+	return &ConflictError{
+		expected: expected,
+		actual:   actual,
+	}
+}
+
 type ConflictError struct {
-	Expected Version
-	Actual   Version
+	expected Version
+	actual   Version
 }
 
 func (err ConflictError) Error() string {
 	return fmt.Sprintf(
 		"version conflict error: expected log version: %d, actual: %d",
-		err.Expected,
-		err.Actual,
+		err.expected,
+		err.actual,
 	)
 }
