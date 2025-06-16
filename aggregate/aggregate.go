@@ -35,7 +35,7 @@ type (
 		event.ConstructorProvider[E]
 
 		// Base implements these, so you *have* to embed Base.
-		flushUncommitedEvents() event.UncommitedEvents
+		flushUncommitedEvents() event.FlushedUncommitedEvents
 		setVersion(version.Version)
 		recordThat(anyEventApplier, ...event.Event) error
 	}
@@ -132,7 +132,7 @@ func LoadFromRecords[TID ID, E event.Any](
 
 func FlushUncommitedEvents[TID ID, E event.Any, R Root[TID, E]](
 	root R,
-) event.UncommitedEvents {
+) event.FlushedUncommitedEvents {
 	return root.flushUncommitedEvents()
 }
 

@@ -11,13 +11,13 @@ type Base struct {
 	version version.Version
 
 	//nolint:unused // False positive.
-	uncommitedEvents event.UncommitedEvents
+	uncommitedEvents event.FlushedUncommitedEvents
 }
 
 func (br *Base) Version() version.Version { return br.version }
 
 //nolint:unused // False positive.
-func (br *Base) flushUncommitedEvents() event.UncommitedEvents {
+func (br *Base) flushUncommitedEvents() event.FlushedUncommitedEvents {
 	flushed := br.uncommitedEvents
 	br.uncommitedEvents = nil
 

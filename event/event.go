@@ -36,11 +36,11 @@ func (ge *Event) ToRaw(serde Serializer) (Raw, error) {
 }
 
 type (
-	UncommitedEvents []Event
-	CommitedEvents   []Event
+	FlushedUncommitedEvents []Event
+	CommitedEvents          []Event
 )
 
-func (events UncommitedEvents) ToRaw(serializer Serializer) ([]Raw, error) {
+func (events FlushedUncommitedEvents) ToRaw(serializer Serializer) ([]Raw, error) {
 	rawEvents := make([]Raw, len(events))
 	for i := range events {
 		raw, err := events[i].ToRaw(serializer)
