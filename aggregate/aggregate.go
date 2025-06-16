@@ -67,13 +67,13 @@ func (a *anyApplier[TID, E]) Apply(evt event.Any) error {
 }
 
 func RecordEvent[TID ID, E event.Any](root Root[TID, E], e E) error {
-	return root.recordThat(asAnyApplier(root), newEvent[event.Any](e))
+	return root.recordThat(asAnyApplier(root), createWrappedEvent[event.Any](e))
 }
 
 func RecordEvents[TID ID, E event.Any](root Root[TID, E], events ...E) error {
 	evs := make([]Event[event.Any], len(events))
 	for i := range events {
-		evs[i] = newEvent[event.Any](events[i])
+		evs[i] = createWrappedEvent[event.Any](events[i])
 	}
 
 	return root.recordThat(asAnyApplier(root), evs...)

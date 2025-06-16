@@ -24,7 +24,7 @@ type Event[E event.Any] struct {
 	wrappedEvent E
 }
 
-func newEvent[E event.Any](event E) Event[E] {
+func createWrappedEvent[E event.Any](event E) Event[E] {
 	return Event[E]{
 		wrappedEvent: event,
 	}
