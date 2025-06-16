@@ -8,57 +8,30 @@ import (
 	"github.com/DeluxeOwl/chronicle/serde"
 )
 
-func AnyToConcrete[E event.Any](event eventWrapper[event.Any]) (eventWrapper[E], bool) {
-	concrete, ok := event.Unwrap().(E)
+func AnyToConcrete[E event.Any](event event.Any) (E, bool) {
+	concrete, ok := event.(E)
 	if !ok {
-		var empty eventWrapper[E]
+		var empty E
 		return empty, false
 	}
 
-	return eventWrapper[E]{
-		event: concrete,
-	}, true
-}
-
-type eventWrapper[E event.Any] struct {
-	event E
-}
-
-func createWrappedEvent[E event.Any](event E) eventWrapper[E] {
-	return eventWrapper[E]{
-		event: event,
-	}
-}
-
-func (w *eventWrapper[T]) Unwrap() T {
-	return w.event
-}
-
-func (w *eventWrapper[T]) EventName() string {
-	return w.event.EventName()
-}
-
-func (w *eventWrapper[T]) ToRaw(serializer serde.BinarySerializer) (event.Raw, error) {
-	bytes, err := serializer.SerializeBinary(w.Unwrap())
-	if err != nil {
-		return event.Raw{}, fmt.Errorf("convert event to raw event: marshal event: %w", err)
-	}
-
-	return event.NewRaw(w.EventName(), bytes), nil
+	return concrete, true
 }
 
 type (
-	UncommitedEvents[E event.Any] []eventWrapper[E]
-	CommitedEvents[E event.Any]   []eventWrapper[E]
+	UncommitedEvents[E event.Any] []E
+	CommitedEvents[E event.Any]   []E
 )
 
 func (uncommitted UncommitedEvents[E]) ToRaw(serializer serde.BinarySerializer) ([]event.Raw, error) {
 	rawEvents := make([]event.Raw, len(uncommitted))
-	for i := range uncommitted {
-		raw, err := uncommitted[i].ToRaw(serializer)
+	for i, evt := range uncommitted {
+		bytes, err := serializer.SerializeBinary(evt)
 		if err != nil {
 			return nil, fmt.Errorf("convert events: %w", err)
 		}
+
+		raw := event.NewRaw(evt.EventName(), bytes)
 
 		rawEvents[i] = raw
 	}
@@ -69,7 +42,7 @@ func (uncommitted UncommitedEvents[E]) ToRaw(serializer serde.BinarySerializer) 
 func (committed CommitedEvents[E]) All() iter.Seq[E] {
 	return func(yield func(E) bool) {
 		for _, evt := range committed {
-			if !yield(evt.Unwrap()) {
+			if !yield(evt) {
 				return
 			}
 		}
