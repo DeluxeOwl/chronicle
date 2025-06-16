@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 
 	"github.com/DeluxeOwl/chronicle/event"
 	"github.com/DeluxeOwl/chronicle/serde"
@@ -133,6 +134,10 @@ func LoadFromRecords[TID ID, E event.Any](
 	return nil
 }
 
+type (
+	UncommitedEvents[E event.Any] []E
+)
+
 func FlushUncommitedEvents[TID ID, E event.Any, R Root[TID, E]](
 	root R,
 ) UncommitedEvents[E] {
@@ -140,7 +145,7 @@ func FlushUncommitedEvents[TID ID, E event.Any, R Root[TID, E]](
 	uncommitted := make([]E, len(flushedUncommited))
 
 	for i, evt := range flushedUncommited {
-		concrete, ok := AnyToConcrete[E](evt)
+		concrete, ok := event.AnyToConcrete[E](evt)
 		if !ok {
 			assert.Never("any to concrete")
 		}
@@ -149,6 +154,32 @@ func FlushUncommitedEvents[TID ID, E event.Any, R Root[TID, E]](
 	}
 
 	return uncommitted
+}
+
+func (uncommitted UncommitedEvents[E]) ToRaw(serializer serde.BinarySerializer) ([]event.Raw, error) {
+	rawEvents := make([]event.Raw, len(uncommitted))
+	for i, evt := range uncommitted {
+		bytes, err := serializer.SerializeBinary(evt)
+		if err != nil {
+			return nil, fmt.Errorf("convert events: %w", err)
+		}
+
+		rawEvents[i] = event.NewRaw(evt.EventName(), bytes)
+	}
+
+	return rawEvents, nil
+}
+
+type CommitedEvents[E event.Any] []E
+
+func (committed CommitedEvents[E]) All() iter.Seq[E] {
+	return func(yield func(E) bool) {
+		for _, evt := range committed {
+			if !yield(evt) {
+				return
+			}
+		}
+	}
 }
 
 // CommitEvents takes a root aggregate, flushes its uncommitted events, and appends them
