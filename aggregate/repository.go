@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/DeluxeOwl/chronicle/event"
+	"github.com/DeluxeOwl/chronicle/serde"
 
 	"github.com/DeluxeOwl/chronicle/version"
 )
@@ -25,7 +26,7 @@ type Repository[TID ID, E event.Any, R Root[TID, E]] interface {
 
 type ESRepo[TID ID, E event.Any, R Root[TID, E]] struct {
 	registry   event.Registry[E]
-	serde      event.Serializer
+	serde      serde.BinarySerde
 	eventlog   event.Log
 	createRoot func() R
 
@@ -43,7 +44,7 @@ func NewESRepo[TID ID, E event.Any, R Root[TID, E]](
 		eventlog:           eventLog,
 		createRoot:         createRoot,
 		registry:           event.NewRegistry[E](),
-		serde:              event.NewJSONSerializer(),
+		serde:              serde.NewJSONBinary(),
 		shouldRegisterRoot: true,
 	}
 
@@ -84,7 +85,7 @@ func (repo *ESRepo[TID, E, R]) Save(ctx context.Context, root R) (version.Versio
 	return newVersion, commitedEvents, nil
 }
 
-func (esr *ESRepo[TID, E, R]) setSerializer(s event.Serializer) {
+func (esr *ESRepo[TID, E, R]) setSerializer(s serde.BinarySerde) {
 	esr.serde = s
 }
 
@@ -98,14 +99,14 @@ func (esr *ESRepo[TID, E, R]) setAnyRegistry(anyRegistry event.Registry[event.An
 
 // Note: we do it this way because otherwise go can't infer the type.
 type esRepoConfigurator interface {
-	setSerializer(s event.Serializer)
+	setSerializer(s serde.BinarySerde)
 	setShouldRegisterRoot(b bool)
 	setAnyRegistry(anyRegistry event.Registry[event.Any])
 }
 
 type ESRepoOption func(esRepoConfigurator)
 
-func EventSerializer(serializer event.Serializer) ESRepoOption {
+func EventSerializer(serializer serde.BinarySerde) ESRepoOption {
 	return func(c esRepoConfigurator) {
 		c.setSerializer(serializer)
 	}

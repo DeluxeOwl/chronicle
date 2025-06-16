@@ -3,6 +3,8 @@ package event
 import (
 	"fmt"
 	"iter"
+
+	"github.com/DeluxeOwl/chronicle/serde"
 )
 
 type Any interface {
@@ -39,8 +41,8 @@ func (ge *Event[T]) EventName() string {
 	return ge.wrappedEvent.EventName()
 }
 
-func (ge *Event[T]) ToRaw(serde Serializer) (Raw, error) {
-	bytes, err := serde.MarshalEvent(ge.Unwrap())
+func (ge *Event[T]) ToRaw(serializer serde.BinarySerializer) (Raw, error) {
+	bytes, err := serializer.SerializeBinary(ge.Unwrap())
 	if err != nil {
 		return Raw{}, fmt.Errorf("convert event to raw event: marshal event: %w", err)
 	}
@@ -53,7 +55,7 @@ type (
 	CommitedEvents[E Any]   []Event[E]
 )
 
-func (uncommitted UncommitedEvents[E]) ToRaw(serializer Serializer) ([]Raw, error) {
+func (uncommitted UncommitedEvents[E]) ToRaw(serializer serde.BinarySerializer) ([]Raw, error) {
 	rawEvents := make([]Raw, len(uncommitted))
 	for i := range uncommitted {
 		raw, err := uncommitted[i].ToRaw(serializer)
@@ -67,10 +69,10 @@ func (uncommitted UncommitedEvents[E]) ToRaw(serializer Serializer) ([]Raw, erro
 	return rawEvents, nil
 }
 
-func (committed CommitedEvents[E]) All() iter.Seq[Event[E]] {
-	return func(yield func(Event[E]) bool) {
+func (committed CommitedEvents[E]) All() iter.Seq[E] {
+	return func(yield func(E) bool) {
 		for _, evt := range committed {
-			if !yield(evt) {
+			if !yield(evt.Unwrap()) {
 				return
 			}
 		}

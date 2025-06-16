@@ -7,17 +7,22 @@ type BinarySerializer interface {
 }
 
 type BinaryDeserializer interface {
-	DeserializeBinary(data []byte) (any, error)
+	DeserializeBinary(data []byte, v any) error
 }
 
 type BinarySerde interface {
-	SerializeBinary(v any) ([]byte, error)
-	DeserializeBinary(data []byte) (any, error)
+	BinarySerializer
+	BinaryDeserializer
 }
 
 type (
 	SerializeBinaryFunc   = func(v any) ([]byte, error)
-	DeserializeBinaryFunc = func(data []byte) (any, error)
+	DeserializeBinaryFunc = func(data []byte, v any) error
+)
+
+var (
+	_ BinarySerde = (*GenericBinary)(nil)
+	_ BinarySerde = (*JSONBinary)(nil)
 )
 
 type GenericBinary struct {
@@ -36,8 +41,8 @@ func (gb *GenericBinary) SerializeBinary(v any) ([]byte, error) {
 	return gb.serializeBinary(v)
 }
 
-func (gb *GenericBinary) DeserializeBinary(data []byte) (any, error) {
-	return gb.deserializeBinary(data)
+func (gb *GenericBinary) DeserializeBinary(data []byte, v any) error {
+	return gb.deserializeBinary(data, v)
 }
 
 type JSONBinary struct{}
@@ -50,8 +55,6 @@ func (jb *JSONBinary) SerializeBinary(v any) ([]byte, error) {
 	return json.Marshal(v)
 }
 
-func (jb *JSONBinary) DeserializeBinary(data []byte) (any, error) {
-	var v any
-	err := json.Unmarshal(data, v)
-	return v, err
+func (jb *JSONBinary) DeserializeBinary(data []byte, v any) error {
+	return json.Unmarshal(data, v)
 }

@@ -29,7 +29,7 @@ func TestPlayground(t *testing.T) {
 		aggregate.SnapStrategyFor[*person.Person]().EveryNEvents(10),
 		aggregate.SnapAnyEventRegistry(registry),
 	)
-	// You could also do: aggregate.SnapshotStrategyFor[*person.Person]().Custom(person.CustomSnapshot),
+	// You could also do: aggregate.SnapStrategyFor[*person.Person]().Custom(person.CustomSnapshot),
 	// Person is a snapshotter
 
 	require.NoError(t, err)

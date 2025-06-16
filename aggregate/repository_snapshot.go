@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/DeluxeOwl/chronicle/event"
+	"github.com/DeluxeOwl/chronicle/serde"
 	"github.com/DeluxeOwl/chronicle/version"
 )
 
@@ -32,7 +33,7 @@ func NewESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID
 			eventlog:           eventlog,
 			createRoot:         createRoot,
 			registry:           event.NewRegistry[E](),
-			serde:              event.NewJSONSerializer(),
+			serde:              serde.NewJSONBinary(),
 			shouldRegisterRoot: true,
 		},
 		returnSnapshotErr: func(err error) error { return nil },
@@ -107,7 +108,7 @@ func (esr *ESRepoWithSnapshots[TID, E, R, TS]) Save(ctx context.Context, root R)
 	return newVersion, committedEvents, nil
 }
 
-func (esr *ESRepoWithSnapshots[TID, E, R, TS]) setSerializer(s event.Serializer) {
+func (esr *ESRepoWithSnapshots[TID, E, R, TS]) setSerializer(s serde.BinarySerde) {
 	esr.internal.serde = s
 }
 
@@ -124,7 +125,7 @@ func (esr *ESRepoWithSnapshots[TID, E, R, TS]) setAnyRegistry(anyRegistry event.
 }
 
 type esRepoWithSnapshotsConfigurator interface {
-	setSerializer(s event.Serializer)
+	setSerializer(s serde.BinarySerde)
 	setShouldRegisterRoot(b bool)
 	setReturnSnapshotErr(ReturnSnapshotErrFunc)
 	setAnyRegistry(anyRegistry event.Registry[event.Any])
@@ -132,7 +133,7 @@ type esRepoWithSnapshotsConfigurator interface {
 
 type ESRepoWithSnapshotsOption func(esRepoWithSnapshotsConfigurator)
 
-func SnapEventSerializer(serializer event.Serializer) ESRepoWithSnapshotsOption {
+func SnapEventSerializer(serializer serde.BinarySerde) ESRepoWithSnapshotsOption {
 	return func(c esRepoWithSnapshotsConfigurator) {
 		c.setSerializer(serializer)
 	}

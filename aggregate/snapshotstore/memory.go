@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/DeluxeOwl/chronicle/aggregate"
+	"github.com/DeluxeOwl/chronicle/serde"
 )
 
 var _ aggregate.SnapshotStore[aggregate.ID, aggregate.Snapshot[aggregate.ID]] = (*MemoryStore[aggregate.ID, aggregate.Snapshot[aggregate.ID]])(nil)
@@ -14,12 +15,12 @@ type MemoryStore[TID aggregate.ID, TS aggregate.Snapshot[TID]] struct {
 	mu             sync.RWMutex
 	snapshots      map[string][]byte
 	createSnapshot func() TS
-	serde          aggregate.SnapshotSerializer
+	serde          serde.BinarySerde
 }
 
 type MemoryStoreOption[TID aggregate.ID, TS aggregate.Snapshot[TID]] func(*MemoryStore[TID, TS])
 
-func WithSerializer[TID aggregate.ID, TS aggregate.Snapshot[TID]](s aggregate.SnapshotSerializer) MemoryStoreOption[TID, TS] {
+func WithSerializer[TID aggregate.ID, TS aggregate.Snapshot[TID]](s serde.BinarySerde) MemoryStoreOption[TID, TS] {
 	return func(store *MemoryStore[TID, TS]) {
 		store.serde = s
 	}
@@ -30,7 +31,7 @@ func NewMemoryStore[TID aggregate.ID, TS aggregate.Snapshot[TID]](createSnapshot
 		mu:             sync.RWMutex{},
 		snapshots:      make(map[string][]byte),
 		createSnapshot: createSnapshot,
-		serde:          aggregate.NewJSONSnapshotSerializer(),
+		serde:          serde.NewJSONBinary(),
 	}
 
 	for _, opt := range opts {
@@ -48,7 +49,7 @@ func (s *MemoryStore[TID, TS]) SaveSnapshot(ctx context.Context, snapshot TS) er
 
 	id := snapshot.ID().String()
 
-	data, err := s.serde.MarshalSnapshot(snapshot)
+	data, err := s.serde.SerializeBinary(snapshot)
 	if err != nil {
 		return fmt.Errorf("save snapshot: marshal: %w", err)
 	}
@@ -79,7 +80,7 @@ func (s *MemoryStore[TID, TS]) GetSnapshot(ctx context.Context, aggregateID TID)
 	}
 
 	snapshot := s.createSnapshot()
-	if err := s.serde.UnmarshalSnapshot(data, snapshot); err != nil {
+	if err := s.serde.DeserializeBinary(data, snapshot); err != nil {
 		return empty, false, fmt.Errorf("get snapshot: unmarshal: %w", err)
 	}
 

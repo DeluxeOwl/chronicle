@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/DeluxeOwl/chronicle/event"
+	"github.com/DeluxeOwl/chronicle/serde"
 
 	"github.com/DeluxeOwl/chronicle/internal/assert"
 
@@ -83,14 +84,14 @@ func ReadAndLoadFromStore[TID ID, E event.Any](
 	root Root[TID, E],
 	store event.Log,
 	registry event.Registry[E],
-	serde event.Serializer,
+	deserializer serde.BinaryDeserializer,
 	id TID,
 	selector version.Selector,
 ) error {
 	logID := event.LogID(id.String())
 	recordedEvents := store.ReadEvents(ctx, logID, selector)
 
-	if err := LoadFromRecords(root, registry, serde, recordedEvents); err != nil {
+	if err := LoadFromRecords(root, registry, deserializer, recordedEvents); err != nil {
 		return fmt.Errorf("read and load from store: %w", err)
 	}
 
@@ -104,7 +105,7 @@ func ReadAndLoadFromStore[TID ID, E event.Any](
 func LoadFromRecords[TID ID, E event.Any](
 	root Root[TID, E],
 	registry event.Registry[E],
-	serde event.Serializer,
+	deserializer serde.BinaryDeserializer,
 	records event.Records,
 ) error {
 	for record, err := range records {
@@ -118,7 +119,7 @@ func LoadFromRecords[TID ID, E event.Any](
 		}
 
 		evt := fact()
-		if err := serde.UnmarshalEvent(record.Data(), evt); err != nil {
+		if err := deserializer.DeserializeBinary(record.Data(), evt); err != nil {
 			return fmt.Errorf("load from records: unmarshal record data: %w", err)
 		}
 
@@ -156,7 +157,7 @@ func FlushUncommitedEvents[TID ID, E event.Any, R Root[TID, E]](
 func CommitEvents[TID ID, E event.Any, R Root[TID, E]](
 	ctx context.Context,
 	store event.Log,
-	serializer event.Serializer,
+	serializer serde.BinarySerializer,
 	root R,
 ) (version.Version, event.CommitedEvents[E], error) {
 	uncommitedEvents := FlushUncommitedEvents(root)
