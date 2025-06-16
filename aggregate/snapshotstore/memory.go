@@ -12,10 +12,10 @@ import (
 var _ aggregate.SnapshotStore[aggregate.ID, aggregate.Snapshot[aggregate.ID]] = (*MemoryStore[aggregate.ID, aggregate.Snapshot[aggregate.ID]])(nil)
 
 type MemoryStore[TID aggregate.ID, TS aggregate.Snapshot[TID]] struct {
-	mu          sync.RWMutex
-	snapshots   map[string][]byte
-	newSnapshot func() TS
-	serde       aggregate.SnapshotSerializer
+	mu             sync.RWMutex
+	snapshots      map[string][]byte
+	createSnapshot func() TS
+	serde          aggregate.SnapshotSerializer
 }
 
 type MemoryStoreOption[TID aggregate.ID, TS aggregate.Snapshot[TID]] func(*MemoryStore[TID, TS])
@@ -26,12 +26,12 @@ func WithSerializer[TID aggregate.ID, TS aggregate.Snapshot[TID]](s aggregate.Sn
 	}
 }
 
-func NewMemoryStore[TID aggregate.ID, TS aggregate.Snapshot[TID]](newSnapshot func() TS, opts ...MemoryStoreOption[TID, TS]) *MemoryStore[TID, TS] {
+func NewMemoryStore[TID aggregate.ID, TS aggregate.Snapshot[TID]](createSnapshot func() TS, opts ...MemoryStoreOption[TID, TS]) *MemoryStore[TID, TS] {
 	store := &MemoryStore[TID, TS]{
-		mu:          sync.RWMutex{},
-		snapshots:   make(map[string][]byte),
-		newSnapshot: newSnapshot,
-		serde:       aggregate.NewJSONSnapshotSerializer(),
+		mu:             sync.RWMutex{},
+		snapshots:      make(map[string][]byte),
+		createSnapshot: createSnapshot,
+		serde:          aggregate.NewJSONSnapshotSerializer(),
 	}
 
 	for _, opt := range opts {
@@ -77,7 +77,7 @@ func (s *MemoryStore[TID, TS]) GetSnapshot(ctx context.Context, aggregateID TID)
 		return typeutils.Zero[TS](), false, nil
 	}
 
-	snapshot := s.newSnapshot()
+	snapshot := s.createSnapshot()
 	if err := s.serde.UnmarshalSnapshot(data, snapshot); err != nil {
 		return typeutils.Zero[TS](), false, fmt.Errorf("get snapshot: unmarshal: %w", err)
 	}

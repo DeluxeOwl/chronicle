@@ -24,10 +24,10 @@ type Repository[TID ID, E event.Any, R Root[TID, E]] interface {
 }
 
 type ESRepo[TID ID, E event.Any, R Root[TID, E]] struct {
-	registry event.Registry[E]
-	serde    event.Serializer
-	store    event.Log
-	newRoot  func() R
+	registry   event.Registry[E]
+	serde      event.Serializer
+	eventlog   event.Log
+	createRoot func() R
 
 	shouldRegisterRoot bool
 }
@@ -36,12 +36,12 @@ type ESRepo[TID ID, E event.Any, R Root[TID, E]] struct {
 // It also performs the side effect of registering the root aggregate into the registry (use the option to not do that if you wish).
 func NewESRepo[TID ID, E event.Any, R Root[TID, E]](
 	eventLog event.Log,
-	newRoot func() R,
+	createRoot func() R,
 	opts ...ESRepoOption,
 ) (*ESRepo[TID, E, R], error) {
 	esr := &ESRepo[TID, E, R]{
-		store:              eventLog,
-		newRoot:            newRoot,
+		eventlog:           eventLog,
+		createRoot:         createRoot,
 		registry:           event.NewRegistry[E](),
 		serde:              event.NewJSONSerializer(),
 		shouldRegisterRoot: true,
@@ -52,7 +52,7 @@ func NewESRepo[TID ID, E event.Any, R Root[TID, E]](
 	}
 
 	if esr.shouldRegisterRoot {
-		err := esr.registry.RegisterRoot(newRoot())
+		err := esr.registry.RegisterRoot(createRoot())
 		if err != nil {
 			return nil, fmt.Errorf("new aggregate repository: %w", err)
 		}
@@ -66,9 +66,9 @@ func (repo *ESRepo[TID, E, R]) Get(ctx context.Context, id TID) (R, error) {
 }
 
 func (repo *ESRepo[TID, E, R]) GetVersion(ctx context.Context, id TID, selector version.Selector) (R, error) {
-	root := repo.newRoot()
+	root := repo.createRoot()
 
-	if err := ReadAndLoadFromStore(ctx, root, repo.store, repo.registry, repo.serde, id, selector); err != nil {
+	if err := ReadAndLoadFromStore(ctx, root, repo.eventlog, repo.registry, repo.serde, id, selector); err != nil {
 		return typeutils.Zero[R](), fmt.Errorf("repo get: %w", err)
 	}
 
@@ -76,7 +76,7 @@ func (repo *ESRepo[TID, E, R]) GetVersion(ctx context.Context, id TID, selector 
 }
 
 func (repo *ESRepo[TID, E, R]) Save(ctx context.Context, root R) (version.Version, event.CommitedEvents[E], error) {
-	newVersion, commitedEvents, err := CommitEvents(ctx, repo.store, repo.serde, root)
+	newVersion, commitedEvents, err := CommitEvents(ctx, repo.eventlog, repo.serde, root)
 	if err != nil {
 		return newVersion, commitedEvents, fmt.Errorf("repo save: %w", err)
 	}
@@ -104,7 +104,7 @@ type esRepoConfigurator interface {
 
 type ESRepoOption func(esRepoConfigurator)
 
-func Serializer(serializer event.Serializer) ESRepoOption {
+func EventSerializer(serializer event.Serializer) ESRepoOption {
 	return func(c esRepoConfigurator) {
 		c.setSerializer(serializer)
 	}
@@ -116,7 +116,7 @@ func DontRegisterRoot() ESRepoOption {
 	}
 }
 
-func AnyRegistry(anyRegistry event.Registry[event.Any]) ESRepoOption {
+func AnyEventRegistry(anyRegistry event.Registry[event.Any]) ESRepoOption {
 	return func(c esRepoConfigurator) {
 		c.setAnyRegistry(anyRegistry)
 	}

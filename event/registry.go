@@ -42,21 +42,21 @@ type Registry[E Any] interface {
 	NewEventer[E]
 }
 
-var _ Registry[Any] = (*eventRegistry[Any])(nil)
+var _ Registry[Any] = (*EventRegistry[Any])(nil)
 
-type eventRegistry[E Any] struct {
+type EventRegistry[E Any] struct {
 	eventFuncs map[string]NewFunc[E]
 	registryMu sync.RWMutex
 }
 
-func NewRegistry[E Any]() *eventRegistry[E] {
-	return &eventRegistry[E]{
+func NewRegistry[E Any]() *EventRegistry[E] {
+	return &EventRegistry[E]{
 		eventFuncs: make(map[string]NewFunc[E]),
 		registryMu: sync.RWMutex{},
 	}
 }
 
-func (r *eventRegistry[E]) RegisterRoot(root ConstructorProvider[E]) error {
+func (r *EventRegistry[E]) RegisterRoot(root ConstructorProvider[E]) error {
 	r.registryMu.Lock()
 	defer r.registryMu.Unlock()
 
@@ -74,7 +74,7 @@ func (r *eventRegistry[E]) RegisterRoot(root ConstructorProvider[E]) error {
 	return nil
 }
 
-func (r *eventRegistry[E]) NewEventFactory(eventName string) (NewFunc[E], bool) {
+func (r *EventRegistry[E]) NewEventFactory(eventName string) (NewFunc[E], bool) {
 	r.registryMu.RLock()
 	defer r.registryMu.RUnlock()
 

@@ -5,8 +5,6 @@ import (
 
 	"github.com/DeluxeOwl/chronicle"
 	"github.com/DeluxeOwl/chronicle/aggregate"
-	"github.com/DeluxeOwl/chronicle/aggregate/snapshotstore"
-	"github.com/DeluxeOwl/chronicle/event"
 	"github.com/DeluxeOwl/chronicle/internal/examples/person"
 	"github.com/stretchr/testify/require"
 )
@@ -19,21 +17,20 @@ func TestPlayground(t *testing.T) {
 
 	require.NoError(t, err)
 
-	mem := chronicle.NewEventLogMemory()
-
-	snapshotStore := snapshotstore.NewMemoryStore(person.NewSnapshot)
-
-	registry := event.NewRegistry[event.Any]()
+	memlog := chronicle.NewEventLogMemory()
+	snapstore := chronicle.NewSnapshotStoreMemory(person.NewSnapshot)
+	registry := chronicle.NewAnyEventRegistry()
 
 	repo, err := chronicle.NewEventSourcedRepositoryWithSnapshots(
-		mem,
+		memlog,
+		snapstore,
 		person.NewEmpty,
-		snapshotStore,
-		person.NewEmpty(), // Person is a snapshotter.
-		// aggregate.SnapshotStrategyFor[*person.Person]().Custom(person.CustomSnapshot),
-		aggregate.SnapshotStrategyFor[*person.Person]().EveryNEvents(10),
-		aggregate.AnyRegistryS(registry),
+		person.NewEmpty(),
+		aggregate.SnapStrategyFor[*person.Person]().EveryNEvents(10),
+		aggregate.SnapAnyEventRegistry(registry),
 	)
+	// You could also do: aggregate.SnapshotStrategyFor[*person.Person]().Custom(person.CustomSnapshot),
+	// Person is a snapshotter
 
 	require.NoError(t, err)
 
@@ -65,7 +62,7 @@ func TestPlayground(t *testing.T) {
 	event4 := wasBornFactory()
 	require.NotSame(t, event3, event4)
 
-	_, found, err := snapshotStore.GetSnapshot(ctx, johnID)
+	_, found, err := snapstore.GetSnapshot(ctx, johnID)
 	require.NoError(t, err)
 	require.True(t, found)
 }
