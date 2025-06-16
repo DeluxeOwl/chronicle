@@ -6,7 +6,6 @@ import (
 	"sync"
 
 	"github.com/DeluxeOwl/chronicle/aggregate"
-	"github.com/DeluxeOwl/chronicle/internal/typeutils"
 )
 
 var _ aggregate.SnapshotStore[aggregate.ID, aggregate.Snapshot[aggregate.ID]] = (*MemoryStore[aggregate.ID, aggregate.Snapshot[aggregate.ID]])(nil)
@@ -63,8 +62,10 @@ func (s *MemoryStore[TID, TS]) SaveSnapshot(ctx context.Context, snapshot TS) er
 
 // GetSnapshot retrieves a snapshot and deserializes it using the configured serde.
 func (s *MemoryStore[TID, TS]) GetSnapshot(ctx context.Context, aggregateID TID) (TS, bool, error) {
+	var empty TS
+
 	if err := ctx.Err(); err != nil {
-		return typeutils.Zero[TS](), false, err
+		return empty, false, err
 	}
 
 	id := aggregateID.String()
@@ -74,12 +75,12 @@ func (s *MemoryStore[TID, TS]) GetSnapshot(ctx context.Context, aggregateID TID)
 	s.mu.RUnlock()
 
 	if !ok {
-		return typeutils.Zero[TS](), false, nil
+		return empty, false, nil
 	}
 
 	snapshot := s.createSnapshot()
 	if err := s.serde.UnmarshalSnapshot(data, snapshot); err != nil {
-		return typeutils.Zero[TS](), false, fmt.Errorf("get snapshot: unmarshal: %w", err)
+		return empty, false, fmt.Errorf("get snapshot: unmarshal: %w", err)
 	}
 
 	return snapshot, true, nil

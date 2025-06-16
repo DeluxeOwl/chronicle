@@ -6,8 +6,8 @@ import (
 	"fmt"
 
 	"github.com/DeluxeOwl/chronicle/event"
+
 	"github.com/DeluxeOwl/chronicle/internal/assert"
-	"github.com/DeluxeOwl/chronicle/internal/typeutils"
 
 	"github.com/DeluxeOwl/chronicle/version"
 )
@@ -33,7 +33,7 @@ type (
 	Root[TID ID, E event.Any] interface {
 		Aggregate[TID, E]
 		Versioner
-		event.ConstructorProvider[E]
+		event.EventFuncCreator[E]
 
 		// Base implements these, so you *have* to embed Base.
 		flushUncommitedEvents() flushedUncommitedEvents
@@ -55,9 +55,10 @@ func asAnyApplier[TID ID, E event.Any](root Root[TID, E]) *anyApplier[TID, E] {
 func (a *anyApplier[TID, E]) Apply(evt event.Any) error {
 	anyEvt, ok := evt.(E)
 	if !ok {
+		var empty E
 		return fmt.Errorf(
 			"data integrity error: loaded event of type %T but aggregate expects type %T",
-			evt, typeutils.Zero[E](),
+			evt, empty,
 		)
 	}
 
@@ -111,17 +112,17 @@ func LoadFromRecords[TID ID, E event.Any](
 			return fmt.Errorf("load from records: %w", err)
 		}
 
-		fact, ok := registry.NewEventFactory(record.EventName())
+		fact, ok := registry.GetFunc(record.EventName())
 		if !ok {
 			return fmt.Errorf("load from records: factory not registered for event %q", record.EventName())
 		}
 
-		anyEvt := fact()
-		if err := serde.UnmarshalEvent(record.Data(), anyEvt); err != nil {
+		evt := fact()
+		if err := serde.UnmarshalEvent(record.Data(), evt); err != nil {
 			return fmt.Errorf("load from records: unmarshal record data: %w", err)
 		}
 
-		if err := asAnyApplier(root).Apply(anyEvt); err != nil {
+		if err := root.Apply(evt); err != nil {
 			return fmt.Errorf("load from records: root apply: %w", err)
 		}
 
@@ -161,7 +162,7 @@ func CommitEvents[TID ID, E event.Any, R Root[TID, E]](
 	uncommitedEvents := FlushUncommitedEvents(root)
 
 	if len(uncommitedEvents) == 0 {
-		return root.Version(), typeutils.Zero[event.CommitedEvents[E]](), nil // Nothing to save
+		return version.Zero, nil, nil // Nothing to save
 	}
 
 	logID := event.LogID(root.ID().String())
@@ -173,12 +174,12 @@ func CommitEvents[TID ID, E event.Any, R Root[TID, E]](
 
 	rawEvents, err := uncommitedEvents.ToRaw(serializer)
 	if err != nil {
-		return root.Version(), typeutils.Zero[event.CommitedEvents[E]](), fmt.Errorf("aggregate commit: events to raw: %w", err)
+		return version.Zero, nil, fmt.Errorf("aggregate commit: events to raw: %w", err)
 	}
 
 	newVersion, err := store.AppendEvents(ctx, logID, expectedVersion, rawEvents)
 	if err != nil {
-		return root.Version(), typeutils.Zero[event.CommitedEvents[E]](), fmt.Errorf("aggregate commit: append events: %w", err)
+		return version.Zero, nil, fmt.Errorf("aggregate commit: append events: %w", err)
 	}
 
 	// These events now become committed

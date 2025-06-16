@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/DeluxeOwl/chronicle/event"
-	"github.com/DeluxeOwl/chronicle/internal/typeutils"
 	"github.com/DeluxeOwl/chronicle/version"
 )
 
@@ -47,7 +46,7 @@ func NewESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID
 	}
 
 	if esr.internal.shouldRegisterRoot {
-		err := esr.internal.registry.RegisterRoot(createRoot())
+		err := esr.internal.registry.RegisterEvents(createRoot())
 		if err != nil {
 			return nil, fmt.Errorf("new aggregate repository: %w", err)
 		}
@@ -57,9 +56,11 @@ func NewESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID
 }
 
 func (esr *ESRepoWithSnapshots[TID, E, R, TS]) Get(ctx context.Context, id TID) (R, error) {
+	var empty R
+
 	root, found, err := LoadFromSnapshot(ctx, esr.snapstore, esr.snapshotter, id)
 	if err != nil {
-		return typeutils.Zero[R](), fmt.Errorf("snapshot repo get: could not retrieve snapshot: %w", err)
+		return empty, fmt.Errorf("snapshot repo get: could not retrieve snapshot: %w", err)
 	}
 
 	if !found {
@@ -75,7 +76,7 @@ func (esr *ESRepoWithSnapshots[TID, E, R, TS]) Get(ctx context.Context, id TID) 
 		version.Selector{
 			From: root.Version() + 1,
 		}); err != nil {
-		return typeutils.Zero[R](), fmt.Errorf("snapshot repo get: failed to load events after snapshot: %w", err)
+		return empty, fmt.Errorf("snapshot repo get: failed to load events after snapshot: %w", err)
 	}
 
 	return root, nil

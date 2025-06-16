@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/DeluxeOwl/chronicle/event"
-	"github.com/DeluxeOwl/chronicle/internal/typeutils"
+
 	"github.com/DeluxeOwl/chronicle/version"
 )
 
@@ -52,7 +52,7 @@ func NewESRepo[TID ID, E event.Any, R Root[TID, E]](
 	}
 
 	if esr.shouldRegisterRoot {
-		err := esr.registry.RegisterRoot(createRoot())
+		err := esr.registry.RegisterEvents(createRoot())
 		if err != nil {
 			return nil, fmt.Errorf("new aggregate repository: %w", err)
 		}
@@ -69,7 +69,8 @@ func (repo *ESRepo[TID, E, R]) GetVersion(ctx context.Context, id TID, selector 
 	root := repo.createRoot()
 
 	if err := ReadAndLoadFromStore(ctx, root, repo.eventlog, repo.registry, repo.serde, id, selector); err != nil {
-		return typeutils.Zero[R](), fmt.Errorf("repo get: %w", err)
+		var empty R
+		return empty, fmt.Errorf("repo get: %w", err)
 	}
 
 	return root, nil

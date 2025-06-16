@@ -48,7 +48,7 @@ func TestPlayground(t *testing.T) {
 	require.Equal(t, "john", ps.Name)
 	require.Equal(t, 44, ps.Age)
 
-	agedOneFactory, ok := registry.NewEventFactory("person/aged-one-year")
+	agedOneFactory, ok := registry.GetFunc("person/aged-one-year")
 	require.True(t, ok)
 	event1 := agedOneFactory()
 	event2 := agedOneFactory()
@@ -56,7 +56,7 @@ func TestPlayground(t *testing.T) {
 	// This is because of the zero sized struct
 	require.Same(t, event1, event2)
 
-	wasBornFactory, ok := registry.NewEventFactory("person/was-born")
+	wasBornFactory, ok := registry.GetFunc("person/was-born")
 	require.True(t, ok)
 	event3 := wasBornFactory()
 	event4 := wasBornFactory()

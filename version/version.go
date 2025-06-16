@@ -4,6 +4,8 @@ import "fmt"
 
 type Version uint64
 
+var Zero Version = 0
+
 //nolint:gochecknoglobals // It's a helper.
 var SelectFromBeginning = Selector{From: 0}
 

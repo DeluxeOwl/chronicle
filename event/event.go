@@ -3,8 +3,6 @@ package event
 import (
 	"fmt"
 	"iter"
-
-	"github.com/DeluxeOwl/chronicle/internal/typeutils"
 )
 
 type Any interface {
@@ -14,7 +12,8 @@ type Any interface {
 func AnyToConcrete[E Any](event Event[Any]) (Event[E], bool) {
 	concrete, ok := event.Unwrap().(E)
 	if !ok {
-		return typeutils.Zero[Event[E]](), false
+		var empty Event[E]
+		return empty, false
 	}
 
 	return Event[E]{
