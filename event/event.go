@@ -32,7 +32,7 @@ func New(event Any) Event[Any] {
 	}
 }
 
-func (ge *Event[T]) Unwrap() Any {
+func (ge *Event[T]) Unwrap() T {
 	return ge.wrappedEvent
 }
 
@@ -46,7 +46,7 @@ func (ge *Event[T]) ToRaw(serde Serializer) (Raw, error) {
 		return Raw{}, fmt.Errorf("convert event to raw event: marshal event: %w", err)
 	}
 
-	return *NewRaw(ge.EventName(), bytes), nil
+	return NewRaw(ge.EventName(), bytes), nil
 }
 
 type (

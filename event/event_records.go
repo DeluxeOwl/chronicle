@@ -43,8 +43,8 @@ type Raw struct {
 	name string
 }
 
-func NewRaw(name string, data RawData) *Raw {
-	return &Raw{
+func NewRaw(name string, data RawData) Raw {
+	return Raw{
 		name: name,
 		data: data,
 	}
