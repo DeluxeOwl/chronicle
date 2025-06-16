@@ -58,6 +58,7 @@ func (s *onEventsStrategy[TID, E, R]) ShouldSnapshot(_ context.Context, _ R, _, 
 	return false
 }
 
+// TODO: shouldnt use strings
 func (b *strategyBuilder[TID, E, R]) OnEvents(eventNames ...string) *onEventsStrategy[TID, E, R] {
 	eventsToMatch := make(map[string]struct{}, len(eventNames))
 	for _, name := range eventNames {
