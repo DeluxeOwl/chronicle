@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/DeluxeOwl/chronicle/aggregate"
-	"github.com/DeluxeOwl/chronicle/event"
 	"github.com/DeluxeOwl/chronicle/version"
 )
 
@@ -47,7 +46,7 @@ func (p *Person) FromSnapshot(snapshot *PersonSnapshot) *Person {
 	}
 }
 
-func CustomSnapshot(ctx context.Context, root *Person, previousVersion, newVersion version.Version, committedEvents event.CommitedEvents[PersonEvent]) bool {
+func CustomSnapshot(ctx context.Context, root *Person, previousVersion, newVersion version.Version, committedEvents aggregate.CommitedEvents[PersonEvent]) bool {
 	for evt := range committedEvents.All() {
 		//nolint:gochecksumtype // This is exhaustive but we don't need it here.
 		switch evt.(type) {

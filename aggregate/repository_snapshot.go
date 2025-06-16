@@ -85,7 +85,7 @@ func (esr *ESRepoWithSnapshots[TID, E, R, TS]) Get(ctx context.Context, id TID) 
 
 // Save persists the uncommitted events of an aggregate and, if the policy dictates,
 // creates and saves a new snapshot of the aggregate's state.
-func (esr *ESRepoWithSnapshots[TID, E, R, TS]) Save(ctx context.Context, root R) (version.Version, event.CommitedEvents[E], error) {
+func (esr *ESRepoWithSnapshots[TID, E, R, TS]) Save(ctx context.Context, root R) (version.Version, CommitedEvents[E], error) {
 	// First, commit events to the event log. This is the source of truth.
 	newVersion, committedEvents, err := esr.internal.Save(ctx, root)
 	if err != nil {

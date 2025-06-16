@@ -39,7 +39,7 @@ type (
 		// Base implements these, so you *have* to embed Base.
 		flushUncommitedEvents() flushedUncommitedEvents
 		setVersion(version.Version)
-		recordThat(anyEventApplier, ...event.Event[event.Any]) error
+		recordThat(anyEventApplier, ...Event[event.Any]) error
 	}
 )
 
@@ -67,13 +67,13 @@ func (a *anyApplier[TID, E]) Apply(evt event.Any) error {
 }
 
 func RecordEvent[TID ID, E event.Any](root Root[TID, E], e E) error {
-	return root.recordThat(asAnyApplier(root), event.New(e))
+	return root.recordThat(asAnyApplier(root), newEvent[event.Any](e))
 }
 
 func RecordEvents[TID ID, E event.Any](root Root[TID, E], events ...E) error {
-	evs := make([]event.Event[event.Any], len(events))
+	evs := make([]Event[event.Any], len(events))
 	for i := range events {
-		evs[i] = event.New(events[i])
+		evs[i] = newEvent[event.Any](events[i])
 	}
 
 	return root.recordThat(asAnyApplier(root), evs...)
@@ -135,12 +135,12 @@ func LoadFromRecords[TID ID, E event.Any](
 
 func FlushUncommitedEvents[TID ID, E event.Any, R Root[TID, E]](
 	root R,
-) event.UncommitedEvents[E] {
+) UncommitedEvents[E] {
 	flushedUncommited := root.flushUncommitedEvents()
-	uncommitted := make([]event.Event[E], len(flushedUncommited))
+	uncommitted := make([]Event[E], len(flushedUncommited))
 
 	for i, evt := range flushedUncommited {
-		concrete, ok := event.AnyToConcrete[E](evt)
+		concrete, ok := AnyToConcrete[E](evt)
 		if !ok {
 			assert.Never("any to concrete")
 		}
@@ -159,7 +159,7 @@ func CommitEvents[TID ID, E event.Any, R Root[TID, E]](
 	store event.Log,
 	serializer serde.BinarySerializer,
 	root R,
-) (version.Version, event.CommitedEvents[E], error) {
+) (version.Version, CommitedEvents[E], error) {
 	uncommitedEvents := FlushUncommitedEvents(root)
 
 	if len(uncommitedEvents) == 0 {
@@ -184,5 +184,5 @@ func CommitEvents[TID ID, E event.Any, R Root[TID, E]](
 	}
 
 	// These events now become committed
-	return newVersion, event.CommitedEvents[E](uncommitedEvents), nil
+	return newVersion, CommitedEvents[E](uncommitedEvents), nil
 }
