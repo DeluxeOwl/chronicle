@@ -36,14 +36,12 @@ func (re RawEvents) ToRecords(logID LogID, startingVersion version.Version) []*R
 	return records
 }
 
-type RawData = []byte
-
 type Raw struct {
-	data RawData
+	data []byte
 	name string
 }
 
-func NewRaw(name string, data RawData) Raw {
+func NewRaw(name string, data []byte) Raw {
 	return Raw{
 		name: name,
 		data: data,
@@ -54,7 +52,7 @@ func (raw *Raw) EventName() string {
 	return raw.name
 }
 
-func (raw *Raw) Data() RawData {
+func (raw *Raw) Data() []byte {
 	return raw.data
 }
 
@@ -69,7 +67,7 @@ type Record struct {
 	version version.Version
 }
 
-func NewRecord(version version.Version, logID LogID, name string, data RawData) *Record {
+func NewRecord(version version.Version, logID LogID, name string, data []byte) *Record {
 	return &Record{
 		version: version,
 		logID:   logID,
@@ -84,7 +82,7 @@ func (re *Record) EventName() string {
 	return re.raw.EventName()
 }
 
-func (re *Record) Data() RawData {
+func (re *Record) Data() []byte {
 	return re.raw.Data()
 }
 
