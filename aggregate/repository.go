@@ -91,10 +91,15 @@ func (esr *ESRepo[TID, E, R]) setShouldRegisterRoot(b bool) {
 	esr.shouldRegisterRoot = b
 }
 
+func (esr *ESRepo[TID, E, R]) setAnyRegistry(anyRegistry event.Registry[event.Any]) {
+	esr.registry = event.NewConcreteRegistryFromAny[E](anyRegistry)
+}
+
 // Note: we do it this way because otherwise go can't infer the type.
 type esRepoConfigurator interface {
 	setSerializer(s event.Serializer)
 	setShouldRegisterRoot(b bool)
+	setAnyRegistry(anyRegistry event.Registry[event.Any])
 }
 
 type ESRepoOption func(esRepoConfigurator)
@@ -108,5 +113,11 @@ func Serializer(serializer event.Serializer) ESRepoOption {
 func DontRegisterRoot() ESRepoOption {
 	return func(c esRepoConfigurator) {
 		c.setShouldRegisterRoot(false)
+	}
+}
+
+func AnyRegistry(anyRegistry event.Registry[event.Any]) ESRepoOption {
+	return func(c esRepoConfigurator) {
+		c.setAnyRegistry(anyRegistry)
 	}
 }

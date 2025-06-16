@@ -118,10 +118,15 @@ func (esr *ESRepoWithSnapshots[TID, E, R, TS]) setOnSnapshotError(fn OnSnapshotE
 	esr.onSnapshotError = fn
 }
 
+func (esr *ESRepoWithSnapshots[TID, E, R, TS]) setAnyRegistry(anyRegistry event.Registry[event.Any]) {
+	esr.internal.registry = event.NewConcreteRegistryFromAny[E](anyRegistry)
+}
+
 type esRepoWithSnapshotsConfigurator interface {
 	setSerializer(s event.Serializer)
 	setShouldRegisterRoot(b bool)
 	setOnSnapshotError(OnSnapshotErrorFunc)
+	setAnyRegistry(anyRegistry event.Registry[event.Any])
 }
 
 type ESRepoWithSnapshotsOption func(esRepoWithSnapshotsConfigurator)
@@ -141,5 +146,11 @@ func DontRegisterRootS() ESRepoWithSnapshotsOption {
 func OnSnapshotErrorS(fn OnSnapshotErrorFunc) ESRepoWithSnapshotsOption {
 	return func(c esRepoWithSnapshotsConfigurator) {
 		c.setOnSnapshotError(fn)
+	}
+}
+
+func AnyRegistryS(anyRegistry event.Registry[event.Any]) ESRepoWithSnapshotsOption {
+	return func(c esRepoWithSnapshotsConfigurator) {
+		c.setAnyRegistry(anyRegistry)
 	}
 }
