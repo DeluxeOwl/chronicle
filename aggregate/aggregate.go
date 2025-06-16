@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/DeluxeOwl/chronicle/event"
+	"github.com/DeluxeOwl/chronicle/internal/assert"
 	"github.com/DeluxeOwl/chronicle/internal/typeutils"
 
 	"github.com/DeluxeOwl/chronicle/version"
@@ -35,9 +36,9 @@ type (
 		event.ConstructorProvider[E]
 
 		// Base implements these, so you *have* to embed Base.
-		flushUncommitedEvents() event.FlushedUncommitedEvents
+		flushUncommitedEvents() flushedUncommitedEvents
 		setVersion(version.Version)
-		recordThat(anyEventApplier, ...event.Event) error
+		recordThat(anyEventApplier, ...event.Event[event.Any]) error
 	}
 )
 
@@ -68,7 +69,7 @@ func RecordEvent[TID ID, E event.Any](root Root[TID, E], e E) error {
 }
 
 func RecordEvents[TID ID, E event.Any](root Root[TID, E], events ...E) error {
-	evs := make([]event.Event, len(events))
+	evs := make([]event.Event[event.Any], len(events))
 	for i := range events {
 		evs[i] = event.New(events[i])
 	}
@@ -132,8 +133,20 @@ func LoadFromRecords[TID ID, E event.Any](
 
 func FlushUncommitedEvents[TID ID, E event.Any, R Root[TID, E]](
 	root R,
-) event.FlushedUncommitedEvents {
-	return root.flushUncommitedEvents()
+) event.UncommitedEvents[E] {
+	flushedUncommited := root.flushUncommitedEvents()
+	uncommitted := make([]event.Event[E], len(flushedUncommited))
+
+	for i, evt := range flushedUncommited {
+		concrete, ok := event.AnyToConcrete[E](evt)
+		if !ok {
+			assert.Never("any to concrete")
+		}
+
+		uncommitted[i] = concrete
+	}
+
+	return uncommitted
 }
 
 // CommitEvents takes a root aggregate, flushes its uncommitted events, and appends them
@@ -144,11 +157,11 @@ func CommitEvents[TID ID, E event.Any, R Root[TID, E]](
 	store event.Log,
 	serializer event.Serializer,
 	root R,
-) (version.Version, event.CommitedEvents, error) {
+) (version.Version, event.CommitedEvents[E], error) {
 	uncommitedEvents := FlushUncommitedEvents(root)
 
 	if len(uncommitedEvents) == 0 {
-		return root.Version(), event.CommitedEvents{}, nil // Nothing to save
+		return root.Version(), typeutils.Zero[event.CommitedEvents[E]](), nil // Nothing to save
 	}
 
 	logID := event.LogID(root.ID().String())
@@ -160,14 +173,14 @@ func CommitEvents[TID ID, E event.Any, R Root[TID, E]](
 
 	rawEvents, err := uncommitedEvents.ToRaw(serializer)
 	if err != nil {
-		return root.Version(), event.CommitedEvents{}, fmt.Errorf("aggregate commit: events to raw: %w", err)
+		return root.Version(), typeutils.Zero[event.CommitedEvents[E]](), fmt.Errorf("aggregate commit: events to raw: %w", err)
 	}
 
 	newVersion, err := store.AppendEvents(ctx, logID, expectedVersion, rawEvents)
 	if err != nil {
-		return root.Version(), event.CommitedEvents{}, fmt.Errorf("aggregate commit: append events: %w", err)
+		return root.Version(), typeutils.Zero[event.CommitedEvents[E]](), fmt.Errorf("aggregate commit: append events: %w", err)
 	}
 
 	// These events now become committed
-	return newVersion, event.CommitedEvents(uncommitedEvents), nil
+	return newVersion, event.CommitedEvents[E](uncommitedEvents), nil
 }

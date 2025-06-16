@@ -9,3 +9,7 @@ func That(truth bool, format string, a ...any) {
 		log.Fatalf(format, a...)
 	}
 }
+
+func Never(format string, a ...any) {
+	That(false, format, a...)
+}

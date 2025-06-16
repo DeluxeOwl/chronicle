@@ -18,7 +18,7 @@ type SnapshotStrategy[TID ID, E event.Any, R Root[TID, E]] interface {
 		// The new version of the aggregate *after* the events were committed.
 		newVersion version.Version,
 		// The events that were just committed in this Save operation.
-		committedEvents event.CommitedEvents,
+		committedEvents event.CommitedEvents[E],
 	) bool
 }
 
@@ -32,7 +32,7 @@ type everyNEventsStrategy[TID ID, E event.Any, R Root[TID, E]] struct {
 	N uint64
 }
 
-func (s *everyNEventsStrategy[TID, E, R]) ShouldSnapshot(_ context.Context, _ R, previousVersion, newVersion version.Version, _ event.CommitedEvents) bool {
+func (s *everyNEventsStrategy[TID, E, R]) ShouldSnapshot(_ context.Context, _ R, previousVersion, newVersion version.Version, _ event.CommitedEvents[E]) bool {
 	if s.N == 0 {
 		return false
 	}
@@ -48,7 +48,7 @@ type onEventsStrategy[TID ID, E event.Any, R Root[TID, E]] struct {
 	eventsToMatch map[string]struct{}
 }
 
-func (s *onEventsStrategy[TID, E, R]) ShouldSnapshot(_ context.Context, _ R, _, _ version.Version, committedEvents event.CommitedEvents) bool {
+func (s *onEventsStrategy[TID, E, R]) ShouldSnapshot(_ context.Context, _ R, _, _ version.Version, committedEvents event.CommitedEvents[E]) bool {
 	for _, committedEvent := range committedEvents {
 		if _, ok := s.eventsToMatch[committedEvent.EventName()]; ok {
 			return true
@@ -75,11 +75,11 @@ type customStrategy[TID ID, E event.Any, R Root[TID, E]] struct {
 		root R,
 		previousVersion version.Version,
 		newVersion version.Version,
-		committedEvents event.CommitedEvents,
+		committedEvents event.CommitedEvents[E],
 	) bool
 }
 
-func (s *customStrategy[TID, E, R]) ShouldSnapshot(ctx context.Context, root R, previousVersion, newVersion version.Version, committedEvents event.CommitedEvents) bool {
+func (s *customStrategy[TID, E, R]) ShouldSnapshot(ctx context.Context, root R, previousVersion, newVersion version.Version, committedEvents event.CommitedEvents[E]) bool {
 	if s.shouldSnapshot == nil {
 		return false
 	}
@@ -92,7 +92,7 @@ func (b *strategyBuilder[TID, E, R]) Custom(shouldSnapshot func(
 	root R,
 	previousVersion version.Version,
 	newVersion version.Version,
-	committedEvents event.CommitedEvents,
+	committedEvents event.CommitedEvents[E],
 ) bool,
 ) *customStrategy[TID, E, R] {
 	return &customStrategy[TID, E, R]{
@@ -102,7 +102,7 @@ func (b *strategyBuilder[TID, E, R]) Custom(shouldSnapshot func(
 
 type afterCommit[TID ID, E event.Any, R Root[TID, E]] struct{}
 
-func (s *afterCommit[TID, E, R]) ShouldSnapshot(_ context.Context, _ R, _, _ version.Version, committedEvents event.CommitedEvents) bool {
+func (s *afterCommit[TID, E, R]) ShouldSnapshot(_ context.Context, _ R, _, _ version.Version, committedEvents event.CommitedEvents[E]) bool {
 	return len(committedEvents) > 0
 }
 
@@ -115,7 +115,7 @@ type anyOf[TID ID, E event.Any, R Root[TID, E]] struct {
 	strategies []SnapshotStrategy[TID, E, R]
 }
 
-func (s *anyOf[TID, E, R]) ShouldSnapshot(ctx context.Context, root R, previousVersion, newVersion version.Version, committedEvents event.CommitedEvents) bool {
+func (s *anyOf[TID, E, R]) ShouldSnapshot(ctx context.Context, root R, previousVersion, newVersion version.Version, committedEvents event.CommitedEvents[E]) bool {
 	for _, strategy := range s.strategies {
 		if strategy.ShouldSnapshot(ctx, root, previousVersion, newVersion, committedEvents) {
 			return true
@@ -136,7 +136,7 @@ type allOf[TID ID, E event.Any, R Root[TID, E]] struct {
 	strategies []SnapshotStrategy[TID, E, R]
 }
 
-func (s *allOf[TID, E, R]) ShouldSnapshot(ctx context.Context, root R, previousVersion, newVersion version.Version, committedEvents event.CommitedEvents) bool {
+func (s *allOf[TID, E, R]) ShouldSnapshot(ctx context.Context, root R, previousVersion, newVersion version.Version, committedEvents event.CommitedEvents[E]) bool {
 	for _, strategy := range s.strategies {
 		if !strategy.ShouldSnapshot(ctx, root, previousVersion, newVersion, committedEvents) {
 			return false

@@ -1,6 +1,7 @@
 package person_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/DeluxeOwl/chronicle"
@@ -8,6 +9,7 @@ import (
 	"github.com/DeluxeOwl/chronicle/aggregate/snapshotstore"
 	"github.com/DeluxeOwl/chronicle/event"
 	"github.com/DeluxeOwl/chronicle/internal/examples/person"
+	"github.com/DeluxeOwl/chronicle/version"
 	"github.com/stretchr/testify/require"
 )
 
@@ -30,7 +32,10 @@ func TestPlayground(t *testing.T) {
 		person.NewEmpty,
 		snapshotStore,
 		person.NewEmpty(), // Person is a snapshotter.
-		aggregate.SnapshotStrategyFor[*person.Person]().EveryNEvents(10),
+		aggregate.SnapshotStrategyFor[*person.Person]().Custom(
+			func(ctx context.Context, root *person.Person, previousVersion, newVersion version.Version, committedEvents event.CommitedEvents[person.PersonEvent]) bool {
+				return true
+			}),
 		aggregate.AnyRegistryS(registry),
 	)
 

@@ -75,7 +75,7 @@ func (repo *ESRepo[TID, E, R]) GetVersion(ctx context.Context, id TID, selector 
 	return root, nil
 }
 
-func (repo *ESRepo[TID, E, R]) Save(ctx context.Context, root R) (version.Version, event.CommitedEvents, error) {
+func (repo *ESRepo[TID, E, R]) Save(ctx context.Context, root R) (version.Version, event.CommitedEvents[E], error) {
 	newVersion, commitedEvents, err := CommitEvents(ctx, repo.store, repo.serde, root)
 	if err != nil {
 		return newVersion, commitedEvents, fmt.Errorf("repo save: %w", err)
