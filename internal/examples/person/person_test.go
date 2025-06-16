@@ -6,7 +6,6 @@ import (
 	"github.com/DeluxeOwl/chronicle"
 	"github.com/DeluxeOwl/chronicle/aggregate"
 	"github.com/DeluxeOwl/chronicle/aggregate/snapshotstore"
-	"github.com/DeluxeOwl/chronicle/event"
 	"github.com/DeluxeOwl/chronicle/internal/examples/person"
 	"github.com/stretchr/testify/require"
 )
@@ -20,7 +19,6 @@ func TestPlayground(t *testing.T) {
 	require.NoError(t, err)
 
 	mem := chronicle.NewEventLogMemory()
-	registry := event.NewRegistry()
 
 	snapshotStore := snapshotstore.NewMemoryStore(person.NewSnapshot)
 
@@ -30,7 +28,6 @@ func TestPlayground(t *testing.T) {
 		snapshotStore,
 		person.NewEmpty(), // Person is a snapshotter.
 		aggregate.SnapshotStrategyFor[*person.Person]().EveryNEvents(10),
-		aggregate.RegistryS(registry),
 	)
 
 	require.NoError(t, err)
@@ -49,19 +46,19 @@ func TestPlayground(t *testing.T) {
 	require.Equal(t, "john", ps.Name)
 	require.Equal(t, 44, ps.Age)
 
-	agedOneFactory, ok := registry.NewEventFactory("person/aged-one-year")
-	require.True(t, ok)
-	event1 := agedOneFactory()
-	event2 := agedOneFactory()
+	// agedOneFactory, ok := registry.NewEventFactory("person/aged-one-year")
+	// require.True(t, ok)
+	// event1 := agedOneFactory()
+	// event2 := agedOneFactory()
 
-	// This is because of the zero sized struct
-	require.Same(t, event1, event2)
+	// // This is because of the zero sized struct
+	// require.Same(t, event1, event2)
 
-	wasBornFactory, ok := registry.NewEventFactory("person/was-born")
-	require.True(t, ok)
-	event3 := wasBornFactory()
-	event4 := wasBornFactory()
-	require.NotSame(t, event3, event4)
+	// wasBornFactory, ok := registry.NewEventFactory("person/was-born")
+	// require.True(t, ok)
+	// event3 := wasBornFactory()
+	// event4 := wasBornFactory()
+	// require.NotSame(t, event3, event4)
 
 	_, found, err := snapshotStore.GetSnapshot(ctx, johnID)
 	require.NoError(t, err)

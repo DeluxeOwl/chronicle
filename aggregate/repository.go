@@ -24,7 +24,7 @@ type Repository[TID ID, E event.Any, R Root[TID, E]] interface {
 }
 
 type ESRepo[TID ID, E event.Any, R Root[TID, E]] struct {
-	registry event.Registry
+	registry event.Registry[E]
 	serde    event.Serializer
 	store    event.Log
 	newRoot  func() R
@@ -42,7 +42,7 @@ func NewESRepo[TID ID, E event.Any, R Root[TID, E]](
 	esr := &ESRepo[TID, E, R]{
 		store:              eventLog,
 		newRoot:            newRoot,
-		registry:           event.GlobalRegistry,
+		registry:           event.NewRegistry[E](),
 		serde:              event.NewJSONSerializer(),
 		shouldRegisterRoot: true,
 	}
@@ -83,10 +83,6 @@ func (repo *ESRepo[TID, E, R]) Save(ctx context.Context, root R) (version.Versio
 	return newVersion, commitedEvents, nil
 }
 
-func (esr *ESRepo[TID, E, R]) setRegistry(r event.Registry) {
-	esr.registry = r
-}
-
 func (esr *ESRepo[TID, E, R]) setSerializer(s event.Serializer) {
 	esr.serde = s
 }
@@ -97,18 +93,11 @@ func (esr *ESRepo[TID, E, R]) setShouldRegisterRoot(b bool) {
 
 // Note: we do it this way because otherwise go can't infer the type.
 type esRepoConfigurator interface {
-	setRegistry(r event.Registry)
 	setSerializer(s event.Serializer)
 	setShouldRegisterRoot(b bool)
 }
 
 type ESRepoOption func(esRepoConfigurator)
-
-func Registry(registry event.Registry) ESRepoOption {
-	return func(c esRepoConfigurator) {
-		c.setRegistry(registry)
-	}
-}
 
 func Serializer(serializer event.Serializer) ESRepoOption {
 	return func(c esRepoConfigurator) {

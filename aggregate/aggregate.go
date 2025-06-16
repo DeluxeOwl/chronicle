@@ -32,7 +32,7 @@ type (
 	Root[TID ID, E event.Any] interface {
 		Aggregate[TID, E]
 		Versioner
-		event.ConstructorProvider
+		event.ConstructorProvider[E]
 
 		// Base implements these, so you *have* to embed Base.
 		flushUncommitedEvents() event.UncommitedEvents
@@ -80,7 +80,7 @@ func ReadAndLoadFromStore[TID ID, E event.Any](
 	ctx context.Context,
 	root Root[TID, E],
 	store event.Log,
-	registry event.Registry,
+	registry event.Registry[E],
 	serde event.Serializer,
 	id TID,
 	selector version.Selector,
@@ -101,7 +101,7 @@ func ReadAndLoadFromStore[TID ID, E event.Any](
 
 func LoadFromRecords[TID ID, E event.Any](
 	root Root[TID, E],
-	registry event.Registry,
+	registry event.Registry[E],
 	serde event.Serializer,
 	records event.Records,
 ) error {

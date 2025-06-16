@@ -10,12 +10,10 @@ type PersonEvent interface {
 	isPersonEvent()
 }
 
-func (p *Person) EventConstructors() event.NewFuncs {
-	return event.NewFuncs{
-		event.NewFuncFor[*personWasBorn](),
-		event.NewFuncFor[*personAgedOneYear](),
-		// Or function
-		// func() event.Any { return new(PersonAgedOneYear) },
+func (p *Person) EventConstructors() event.NewFuncs[PersonEvent] {
+	return event.NewFuncs[PersonEvent]{
+		func() PersonEvent { return new(personWasBorn) },
+		func() PersonEvent { return new(personAgedOneYear) },
 	}
 }
 

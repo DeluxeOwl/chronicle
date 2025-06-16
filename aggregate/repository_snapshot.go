@@ -32,7 +32,7 @@ func NewESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID
 		internal: &ESRepo[TID, E, R]{
 			store:              eventLog,
 			newRoot:            newRoot,
-			registry:           event.GlobalRegistry,
+			registry:           event.NewRegistry[E](),
 			serde:              event.NewJSONSerializer(),
 			shouldRegisterRoot: true,
 		},
@@ -106,10 +106,6 @@ func (esr *ESRepoWithSnapshots[TID, E, R, TS]) Save(ctx context.Context, root R)
 	return newVersion, committedEvents, nil
 }
 
-func (esr *ESRepoWithSnapshots[TID, E, R, TS]) setRegistry(r event.Registry) {
-	esr.internal.registry = r
-}
-
 func (esr *ESRepoWithSnapshots[TID, E, R, TS]) setSerializer(s event.Serializer) {
 	esr.internal.serde = s
 }
@@ -123,19 +119,12 @@ func (esr *ESRepoWithSnapshots[TID, E, R, TS]) setOnSnapshotError(fn OnSnapshotE
 }
 
 type esRepoWithSnapshotsConfigurator interface {
-	setRegistry(r event.Registry)
 	setSerializer(s event.Serializer)
 	setShouldRegisterRoot(b bool)
 	setOnSnapshotError(OnSnapshotErrorFunc)
 }
 
 type ESRepoWithSnapshotsOption func(esRepoWithSnapshotsConfigurator)
-
-func RegistryS(registry event.Registry) ESRepoWithSnapshotsOption {
-	return func(c esRepoWithSnapshotsConfigurator) {
-		c.setRegistry(registry)
-	}
-}
 
 func SerializerS(serializer event.Serializer) ESRepoWithSnapshotsOption {
 	return func(c esRepoWithSnapshotsConfigurator) {
