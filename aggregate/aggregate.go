@@ -45,7 +45,7 @@ type anyApplier[TID ID, E event.Any] struct {
 	internalRoot Root[TID, E]
 }
 
-func AsAnyApplier[TID ID, E event.Any](root Root[TID, E]) *anyApplier[TID, E] {
+func asAnyApplier[TID ID, E event.Any](root Root[TID, E]) *anyApplier[TID, E] {
 	return &anyApplier[TID, E]{
 		internalRoot: root,
 	}
@@ -64,7 +64,7 @@ func (a *anyApplier[TID, E]) Apply(evt event.Any) error {
 }
 
 func RecordEvent[TID ID, E event.Any](root Root[TID, E], e E) error {
-	return root.recordThat(AsAnyApplier(root), event.New(e))
+	return root.recordThat(asAnyApplier(root), event.New(e))
 }
 
 func RecordEvents[TID ID, E event.Any](root Root[TID, E], events ...E) error {
@@ -73,7 +73,7 @@ func RecordEvents[TID ID, E event.Any](root Root[TID, E], events ...E) error {
 		evs[i] = event.New(events[i])
 	}
 
-	return root.recordThat(AsAnyApplier(root), evs...)
+	return root.recordThat(asAnyApplier(root), evs...)
 }
 
 func ReadAndLoadFromStore[TID ID, E event.Any](
@@ -120,7 +120,7 @@ func LoadFromRecords[TID ID, E event.Any](
 			return fmt.Errorf("load from records: unmarshal record data: %w", err)
 		}
 
-		if err := AsAnyApplier(root).Apply(anyEvt); err != nil {
+		if err := asAnyApplier(root).Apply(anyEvt); err != nil {
 			return fmt.Errorf("load from records: root apply: %w", err)
 		}
 
