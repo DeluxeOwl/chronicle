@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/DeluxeOwl/chronicle/event"
+	"github.com/DeluxeOwl/chronicle/internal/typeutils"
 
 	"github.com/DeluxeOwl/chronicle/version"
 )
@@ -23,10 +24,6 @@ type Aggregate[TID ID, E event.Any] interface {
 	IDer[TID]
 }
 
-type anyAggregate interface {
-	Apply(event.Any) error
-}
-
 type Versioner interface {
 	Version() version.Version
 }
@@ -40,46 +37,43 @@ type (
 		// Base implements these, so you *have* to embed Base.
 		flushUncommitedEvents() event.UncommitedEvents
 		setVersion(version.Version)
-		recordThat(anyAggregate, ...event.Event) error
+		recordThat(anyEventApplier, ...event.Event) error
 	}
 )
 
-type anyRoot[TID ID, E event.Any] struct {
+type anyApplier[TID ID, E event.Any] struct {
 	internalRoot Root[TID, E]
 }
 
-func (a *anyRoot[TID, E]) Apply(evt event.Any) error {
+func AsAnyApplier[TID ID, E event.Any](root Root[TID, E]) *anyApplier[TID, E] {
+	return &anyApplier[TID, E]{
+		internalRoot: root,
+	}
+}
+
+func (a *anyApplier[TID, E]) Apply(evt event.Any) error {
 	anyEvt, ok := evt.(E)
 	if !ok {
-		return &DataIntegrityError[E]{Event: evt}
+		return fmt.Errorf(
+			"data integrity error: loaded event of type %T but aggregate expects type %T",
+			evt, typeutils.Zero[E](),
+		)
 	}
 
 	return a.internalRoot.Apply(anyEvt)
 }
 
-func (a *anyRoot[TID, E]) ID() TID {
-	return a.internalRoot.ID()
+func RecordEvent[TID ID, E event.Any](root Root[TID, E], e E) error {
+	return root.recordThat(AsAnyApplier(root), event.New(e))
 }
 
-func RecordEvent[TID ID, E event.Any](root Root[TID, E], e event.Any) error {
-	r := &anyRoot[TID, E]{
-		internalRoot: root,
-	}
-
-	return root.recordThat(r, event.New(e))
-}
-
-func RecordEvents[TID ID, E event.Any](root Root[TID, E], events ...event.Any) error {
-	r := &anyRoot[TID, E]{
-		internalRoot: root,
-	}
-
+func RecordEvents[TID ID, E event.Any](root Root[TID, E], events ...E) error {
 	evs := make([]event.Event, len(events))
 	for i := range events {
 		evs[i] = event.New(events[i])
 	}
 
-	return root.recordThat(r, evs...)
+	return root.recordThat(AsAnyApplier(root), evs...)
 }
 
 func ReadAndLoadFromStore[TID ID, E event.Any](
@@ -121,17 +115,12 @@ func LoadFromRecords[TID ID, E event.Any](
 			return fmt.Errorf("load from records: factory not registered for event %q", record.EventName())
 		}
 
-		evt := fact()
-		if err := serde.UnmarshalEvent(record.Data(), evt); err != nil {
+		anyEvt := fact()
+		if err := serde.UnmarshalEvent(record.Data(), anyEvt); err != nil {
 			return fmt.Errorf("load from records: unmarshal record data: %w", err)
 		}
 
-		anyEvt, ok := evt.(E)
-		if !ok {
-			return fmt.Errorf("load from records: %w", &DataIntegrityError[E]{Event: evt})
-		}
-
-		if err := root.Apply(anyEvt); err != nil {
+		if err := AsAnyApplier(root).Apply(anyEvt); err != nil {
 			return fmt.Errorf("load from records: root apply: %w", err)
 		}
 

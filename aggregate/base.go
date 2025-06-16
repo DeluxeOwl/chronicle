@@ -29,8 +29,12 @@ func (br *Base) setVersion(v version.Version) {
 	br.version = v
 }
 
+type anyEventApplier interface {
+	Apply(event.Any) error
+}
+
 //nolint:unused // False positive.
-func (br *Base) recordThat(aggregate anyAggregate, events ...event.Event) error {
+func (br *Base) recordThat(aggregate anyEventApplier, events ...event.Event) error {
 	for _, event := range events {
 		anyEvent := event.Unwrap()
 
