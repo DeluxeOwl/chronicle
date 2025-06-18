@@ -19,6 +19,9 @@ type Appender interface {
 	AppendEvents(ctx context.Context, id LogID, expected version.Check, events RawEvents) (version.Version, error)
 }
 
+// TODO: Should this take generic type params?
+// Imo someone should use a repo
+// But what if I want a postgres that saves a Person specifically, and then convert that to this interface that's more "generic"?
 type Log interface {
 	Reader
 	Appender
