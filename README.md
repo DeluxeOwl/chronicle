@@ -21,3 +21,4 @@
 - ask ai to find repeating patterns, discrepancies, suggestions etc.
   - and document
 - investigate type sets
+- linter for duplicate event names
