@@ -5,7 +5,8 @@
     "gopls@latest",
     "golangci-lint@latest",
     "go-task@latest",
-    "golines@latest"
+    "golines@latest",
+    "commitlint-rs@latest"
   ],
   "shell": {
     "init_hook": [

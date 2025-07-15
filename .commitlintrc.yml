@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=
+rules:
+  description-empty:
+    level: error
+  subject-empty:
+    level: error
+  type-empty:
+    level: error
+  type-format:
+    level: error
+    format: ^[a-z].*$
+  description-format:
+    level: error
+    format: ^[a-z].*$
