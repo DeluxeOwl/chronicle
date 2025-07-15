@@ -83,7 +83,13 @@ func TestRawEvents_ToRecords(t *testing.T) {
 				want := tc.wantRecords[i]
 				require.Equal(t, want.Version(), got.Version(), "Version mismatch at index %d", i)
 				require.Equal(t, want.LogID(), got.LogID(), "LogID mismatch at index %d", i)
-				require.Equal(t, want.EventName(), got.EventName(), "EventName mismatch at index %d", i)
+				require.Equal(
+					t,
+					want.EventName(),
+					got.EventName(),
+					"EventName mismatch at index %d",
+					i,
+				)
 				require.Equal(t, want.Data(), got.Data(), "Data mismatch at index %d", i)
 			}
 		})
