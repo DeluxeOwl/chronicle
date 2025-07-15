@@ -82,7 +82,8 @@ func (r *EventRegistry[E]) GetFunc(eventName string) (FuncFor[E], bool) {
 }
 
 type concreteRegistry[E Any] struct {
-	anyRegistry Registry[Any]
+	anyRegistry       Registry[Any]
+	concreteFactories map[string]func() E
 }
 
 // This is useful if you want a shared registry in a bigger system
@@ -90,7 +91,8 @@ type concreteRegistry[E Any] struct {
 
 func NewConcreteRegistryFromAny[E Any](anyRegistry Registry[Any]) Registry[E] {
 	return &concreteRegistry[E]{
-		anyRegistry: anyRegistry,
+		anyRegistry:       anyRegistry,
+		concreteFactories: map[string]func() E{},
 	}
 }
 
@@ -119,20 +121,23 @@ func (r *concreteRegistry[E]) GetFunc(eventName string) (FuncFor[E], bool) {
 		return nil, false
 	}
 
-	// TODO: can we cache this
-	concreteFactory := func() E {
-		anyInstance := anyFactory()
+	if concreteFactory, exists := r.concreteFactories[eventName]; exists {
+		return concreteFactory, true
+	}
 
+	// Create and cache new factory
+	newFactory := func() E {
+		anyInstance := anyFactory()
 		concreteInstance, ok := anyInstance.(E)
 		if !ok {
 			var empty E
 			assert.Never("type assertion failed: event type %T from registry is not assignable to target type %T", anyInstance, empty)
 		}
-
 		return concreteInstance
 	}
 
-	return concreteFactory, true
+	r.concreteFactories[eventName] = newFactory
+	return newFactory, true
 }
 
 // constructorProviderAdapter adapts a EventFuncCreator[E] to a EventFuncCreator[Any].
