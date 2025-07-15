@@ -6,7 +6,7 @@ import (
 
 //sumtype:decl
 type PersonEvent interface {
-	EventName() string // TODO: change this to event.Any
+	event.Any
 	isPersonEvent()
 }
 

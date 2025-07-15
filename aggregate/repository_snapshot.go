@@ -10,11 +10,9 @@ import (
 )
 
 type ESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]] struct {
-	internal    *ESRepo[TID, E, R]
-	snapstore   SnapshotStore[TID, TS]
-	snapshotter Snapshotter[TID, E, R, TS]
-
-	// TODO: rename this
+	internal          *ESRepo[TID, E, R]
+	snapstore         SnapshotStore[TID, TS]
+	snapshotter       Snapshotter[TID, E, R, TS]
 	returnSnapshotErr ReturnSnapshotErrFunc
 	snapshotStrategy  SnapshotStrategy[TID, E, R]
 }
