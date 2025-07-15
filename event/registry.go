@@ -119,6 +119,7 @@ func (r *concreteRegistry[E]) GetFunc(eventName string) (FuncFor[E], bool) {
 		return nil, false
 	}
 
+	// TODO: can we cache this
 	concreteFactory := func() E {
 		anyInstance := anyFactory()
 
