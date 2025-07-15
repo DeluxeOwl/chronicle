@@ -12,8 +12,6 @@ type Snapshot[TID ID] interface {
 	Versioner
 }
 
-// TODO: Should this return an error as well?
-// Careful in person, you don't want to use the constructor.
 type Snapshotter[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]] interface {
 	ToSnapshot(R) TS
 	FromSnapshot(TS) R
