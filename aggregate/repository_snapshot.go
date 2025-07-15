@@ -14,6 +14,7 @@ type ESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]] 
 	snapstore   SnapshotStore[TID, TS]
 	snapshotter Snapshotter[TID, E, R, TS]
 
+	// TODO: rename this
 	returnSnapshotErr ReturnSnapshotErrFunc
 	snapshotStrategy  SnapshotStrategy[TID, E, R]
 }
@@ -99,8 +100,13 @@ func (esr *ESRepoWithSnapshots[TID, E, R, TS]) Save(ctx context.Context, root R)
 	previousVersion := newVersion - version.Version(len(committedEvents))
 
 	if esr.snapshotStrategy.ShouldSnapshot(ctx, root, previousVersion, newVersion, committedEvents) {
-		snapshot := esr.snapshotter.ToSnapshot(root)
-		if err := esr.snapstore.SaveSnapshot(ctx, snapshot); err != nil {
+		snapshot, err := esr.snapshotter.ToSnapshot(root)
+		if err != nil {
+			return newVersion, committedEvents, fmt.Errorf("snapshot repo save: convert to snapshot: %w", err)
+		}
+
+		err = esr.snapstore.SaveSnapshot(ctx, snapshot)
+		if err != nil {
 			return newVersion, committedEvents, esr.returnSnapshotErr(err)
 		}
 	}

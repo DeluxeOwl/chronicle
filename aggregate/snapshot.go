@@ -13,8 +13,8 @@ type Snapshot[TID ID] interface {
 }
 
 type Snapshotter[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]] interface {
-	ToSnapshot(R) TS
-	FromSnapshot(TS) R
+	ToSnapshot(R) (TS, error)
+	FromSnapshot(TS) (R, error)
 }
 
 type SnapshotStore[TID ID, TS Snapshot[TID]] interface {
@@ -41,7 +41,10 @@ func LoadFromSnapshot[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]](
 		return empty, false, nil
 	}
 
-	root := snapshotter.FromSnapshot(snap)
+	root, err := snapshotter.FromSnapshot(snap)
+	if err != nil {
+		return empty, found, fmt.Errorf("load from snapshot: convert from snapshot: %w", err)
+	}
 	root.setVersion(snap.Version())
 
 	return root, true, nil

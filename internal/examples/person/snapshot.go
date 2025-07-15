@@ -28,22 +28,22 @@ func (ps *PersonSnapshot) ID() PersonID {
 	return ps.SnapshotID
 }
 
-func (p *Person) ToSnapshot(person *Person) *PersonSnapshot {
+func (p *Person) ToSnapshot(person *Person) (*PersonSnapshot, error) {
 	return &PersonSnapshot{
 		// Important: store the version
 		SnapshotVersion: person.Version(),
 		SnapshotID:      person.id,
 		Name:            person.name,
 		Age:             person.age,
-	}
+	}, nil
 }
 
-func (p *Person) FromSnapshot(snapshot *PersonSnapshot) *Person {
+func (p *Person) FromSnapshot(snapshot *PersonSnapshot) (*Person, error) {
 	return &Person{
 		id:   snapshot.SnapshotID,
 		name: snapshot.Name,
 		age:  snapshot.Age,
-	}
+	}, nil
 }
 
 func CustomSnapshot(ctx context.Context, root *Person, previousVersion, newVersion version.Version, committedEvents aggregate.CommitedEvents[PersonEvent]) bool {
