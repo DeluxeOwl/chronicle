@@ -1,10 +1,9 @@
 version: "3"
 
 tasks:
-  check:
+  lint:
     cmds:
-      - golangci-lint run .
-      - golangci-lint fmt .
-  deadcode:
-    cmds:
-      - go run golang.org/x/tools/cmd/deadcode@latest ./..
+      - go run github.com/alecthomas/go-check-sumtype/cmd/go-check-sumtype@latest -default-signifies-exhaustive=false -include-shared-interfaces ./...
+      - golangci-lint run --fix .
+      - golines --no-reformat-tags -w .
+      - golangci-lint run

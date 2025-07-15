@@ -30,7 +30,10 @@ type GenericBinary struct {
 	deserializeBinary DeserializeBinaryFunc
 }
 
-func NewGenericBinary(serialize SerializeBinaryFunc, deserialize DeserializeBinaryFunc) *GenericBinary {
+func NewGenericBinary(
+	serialize SerializeBinaryFunc,
+	deserialize DeserializeBinaryFunc,
+) *GenericBinary {
 	return &GenericBinary{
 		serializeBinary:   serialize,
 		deserializeBinary: deserialize,

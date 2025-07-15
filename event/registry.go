@@ -131,7 +131,11 @@ func (r *concreteRegistry[E]) GetFunc(eventName string) (FuncFor[E], bool) {
 		concreteInstance, ok := anyInstance.(E)
 		if !ok {
 			var empty E
-			assert.Never("type assertion failed: event type %T from registry is not assignable to target type %T", anyInstance, empty)
+			assert.Never(
+				"type assertion failed: event type %T from registry is not assignable to target type %T",
+				anyInstance,
+				empty,
+			)
 		}
 		return concreteInstance
 	}

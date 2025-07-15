@@ -9,7 +9,9 @@ import (
 	"github.com/DeluxeOwl/chronicle/serde"
 )
 
-var _ aggregate.SnapshotStore[aggregate.ID, aggregate.Snapshot[aggregate.ID]] = (*MemoryStore[aggregate.ID, aggregate.Snapshot[aggregate.ID]])(nil)
+var _ aggregate.SnapshotStore[aggregate.ID, aggregate.Snapshot[aggregate.ID]] = (*MemoryStore[aggregate.ID, aggregate.Snapshot[aggregate.ID]])(
+	nil,
+)
 
 type MemoryStore[TID aggregate.ID, TS aggregate.Snapshot[TID]] struct {
 	mu             sync.RWMutex
@@ -20,13 +22,18 @@ type MemoryStore[TID aggregate.ID, TS aggregate.Snapshot[TID]] struct {
 
 type MemoryStoreOption[TID aggregate.ID, TS aggregate.Snapshot[TID]] func(*MemoryStore[TID, TS])
 
-func WithSerializer[TID aggregate.ID, TS aggregate.Snapshot[TID]](s serde.BinarySerde) MemoryStoreOption[TID, TS] {
+func WithSerializer[TID aggregate.ID, TS aggregate.Snapshot[TID]](
+	s serde.BinarySerde,
+) MemoryStoreOption[TID, TS] {
 	return func(store *MemoryStore[TID, TS]) {
 		store.serde = s
 	}
 }
 
-func NewMemoryStore[TID aggregate.ID, TS aggregate.Snapshot[TID]](createSnapshot func() TS, opts ...MemoryStoreOption[TID, TS]) *MemoryStore[TID, TS] {
+func NewMemoryStore[TID aggregate.ID, TS aggregate.Snapshot[TID]](
+	createSnapshot func() TS,
+	opts ...MemoryStoreOption[TID, TS],
+) *MemoryStore[TID, TS] {
 	store := &MemoryStore[TID, TS]{
 		mu:             sync.RWMutex{},
 		snapshots:      make(map[string][]byte),

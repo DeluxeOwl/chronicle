@@ -66,7 +66,11 @@ func (repo *ESRepo[TID, E, R]) Get(ctx context.Context, id TID) (R, error) {
 	return repo.GetVersion(ctx, id, version.SelectFromBeginning)
 }
 
-func (repo *ESRepo[TID, E, R]) GetVersion(ctx context.Context, id TID, selector version.Selector) (R, error) {
+func (repo *ESRepo[TID, E, R]) GetVersion(
+	ctx context.Context,
+	id TID,
+	selector version.Selector,
+) (R, error) {
 	root := repo.createRoot()
 
 	if err := ReadAndLoadFromStore(ctx, root, repo.eventlog, repo.registry, repo.serde, id, selector); err != nil {
@@ -77,7 +81,10 @@ func (repo *ESRepo[TID, E, R]) GetVersion(ctx context.Context, id TID, selector 
 	return root, nil
 }
 
-func (repo *ESRepo[TID, E, R]) Save(ctx context.Context, root R) (version.Version, CommitedEvents[E], error) {
+func (repo *ESRepo[TID, E, R]) Save(
+	ctx context.Context,
+	root R,
+) (version.Version, CommitedEvents[E], error) {
 	newVersion, commitedEvents, err := CommitEvents(ctx, repo.eventlog, repo.serde, root)
 	if err != nil {
 		return newVersion, commitedEvents, fmt.Errorf("repo save: %w", err)

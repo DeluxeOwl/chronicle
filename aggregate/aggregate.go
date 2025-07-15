@@ -116,7 +116,10 @@ func LoadFromRecords[TID ID, E event.Any](
 
 		fact, ok := registry.GetFunc(record.EventName())
 		if !ok {
-			return fmt.Errorf("load from records: factory not registered for event %q", record.EventName())
+			return fmt.Errorf(
+				"load from records: factory not registered for event %q",
+				record.EventName(),
+			)
 		}
 
 		evt := fact()
@@ -156,7 +159,9 @@ func FlushUncommitedEvents[TID ID, E event.Any, R Root[TID, E]](
 	return uncommitted
 }
 
-func (uncommitted UncommitedEvents[E]) ToRaw(serializer serde.BinarySerializer) ([]event.Raw, error) {
+func (uncommitted UncommitedEvents[E]) ToRaw(
+	serializer serde.BinarySerializer,
+) ([]event.Raw, error) {
 	rawEvents := make([]event.Raw, len(uncommitted))
 	for i, evt := range uncommitted {
 		bytes, err := serializer.SerializeBinary(evt)

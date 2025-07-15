@@ -86,7 +86,10 @@ func (esr *ESRepoWithSnapshots[TID, E, R, TS]) Get(ctx context.Context, id TID) 
 
 // Save persists the uncommitted events of an aggregate and, if the policy dictates,
 // creates and saves a new snapshot of the aggregate's state.
-func (esr *ESRepoWithSnapshots[TID, E, R, TS]) Save(ctx context.Context, root R) (version.Version, CommitedEvents[E], error) {
+func (esr *ESRepoWithSnapshots[TID, E, R, TS]) Save(
+	ctx context.Context,
+	root R,
+) (version.Version, CommitedEvents[E], error) {
 	// First, commit events to the event log. This is the source of truth.
 	newVersion, committedEvents, err := esr.internal.Save(ctx, root)
 	if err != nil {
@@ -99,10 +102,19 @@ func (esr *ESRepoWithSnapshots[TID, E, R, TS]) Save(ctx context.Context, root R)
 
 	previousVersion := newVersion - version.Version(len(committedEvents))
 
-	if esr.snapshotStrategy.ShouldSnapshot(ctx, root, previousVersion, newVersion, committedEvents) {
+	if esr.snapshotStrategy.ShouldSnapshot(
+		ctx,
+		root,
+		previousVersion,
+		newVersion,
+		committedEvents,
+	) {
 		snapshot, err := esr.snapshotter.ToSnapshot(root)
 		if err != nil {
-			return newVersion, committedEvents, fmt.Errorf("snapshot repo save: convert to snapshot: %w", err)
+			return newVersion, committedEvents, fmt.Errorf(
+				"snapshot repo save: convert to snapshot: %w",
+				err,
+			)
 		}
 
 		err = esr.snapstore.SaveSnapshot(ctx, snapshot)
@@ -126,7 +138,9 @@ func (esr *ESRepoWithSnapshots[TID, E, R, TS]) setReturnSnapshotErr(fn ReturnSna
 	esr.returnSnapshotErr = fn
 }
 
-func (esr *ESRepoWithSnapshots[TID, E, R, TS]) setAnyRegistry(anyRegistry event.Registry[event.Any]) {
+func (esr *ESRepoWithSnapshots[TID, E, R, TS]) setAnyRegistry(
+	anyRegistry event.Registry[event.Any],
+) {
 	esr.internal.registry = event.NewConcreteRegistryFromAny[E](anyRegistry)
 }
 

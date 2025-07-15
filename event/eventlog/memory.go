@@ -33,7 +33,12 @@ func NewMemory() *Memory {
 	}
 }
 
-func (store *Memory) AppendEvents(ctx context.Context, id event.LogID, expected version.Check, events event.RawEvents) (version.Version, error) {
+func (store *Memory) AppendEvents(
+	ctx context.Context,
+	id event.LogID,
+	expected version.Check,
+	events event.RawEvents,
+) (version.Version, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -53,7 +58,10 @@ func (store *Memory) AppendEvents(ctx context.Context, id event.LogID, expected 
 	if exp, ok := expected.(version.CheckExact); ok {
 		expectedVersion := version.Version(exp)
 		if actualLogVersion != expectedVersion {
-			return 0, fmt.Errorf("append events: %w", version.NewConflictError(expectedVersion, actualLogVersion))
+			return 0, fmt.Errorf(
+				"append events: %w",
+				version.NewConflictError(expectedVersion, actualLogVersion),
+			)
 		}
 	}
 
@@ -92,7 +100,11 @@ func (store *Memory) memoryRecordToRecord(memRecord *memStoreRecord) *event.Reco
 	return event.NewRecord(memRecord.Version, memRecord.LogID, memRecord.EventName, memRecord.Data)
 }
 
-func (store *Memory) ReadEvents(ctx context.Context, id event.LogID, selector version.Selector) event.Records {
+func (store *Memory) ReadEvents(
+	ctx context.Context,
+	id event.LogID,
+	selector version.Selector,
+) event.Records {
 	return func(yield func(*event.Record, error) bool) {
 		store.mu.RLock()
 		defer store.mu.RUnlock()

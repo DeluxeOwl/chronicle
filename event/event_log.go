@@ -16,7 +16,12 @@ type Reader interface {
 }
 
 type Appender interface {
-	AppendEvents(ctx context.Context, id LogID, expected version.Check, events RawEvents) (version.Version, error)
+	AppendEvents(
+		ctx context.Context,
+		id LogID,
+		expected version.Check,
+		events RawEvents,
+	) (version.Version, error)
 }
 
 type Log interface {

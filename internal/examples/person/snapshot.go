@@ -46,12 +46,19 @@ func (p *Person) FromSnapshot(snapshot *PersonSnapshot) (*Person, error) {
 	}, nil
 }
 
-func CustomSnapshot(ctx context.Context, root *Person, previousVersion, newVersion version.Version, committedEvents aggregate.CommitedEvents[PersonEvent]) bool {
+func CustomSnapshot(
+	ctx context.Context,
+	root *Person,
+	previousVersion, newVersion version.Version,
+	committedEvents aggregate.CommitedEvents[PersonEvent],
+) bool {
 	for evt := range committedEvents.All() {
-		//nolint:gochecksumtype // This is exhaustive but we don't need it here.
+		// This is exhaustive.
 		switch evt.(type) {
 		case *personAgedOneYear:
 			return true
+		case *personWasBorn:
+			continue
 		default:
 			continue
 		}
