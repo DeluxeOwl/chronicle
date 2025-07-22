@@ -22,3 +22,4 @@
   - and document
 - investigate type sets
 - linter for duplicate event names
+- check differential dataflow https://github.com/electric-sql/d2ts
