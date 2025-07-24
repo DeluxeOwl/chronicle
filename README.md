@@ -23,3 +23,5 @@
 - investigate type sets
 - linter for duplicate event names
 - check differential dataflow https://github.com/electric-sql/d2ts
+
+http://localhost:3000/c/f2ec7839-d04c-45ca-ba49-37b7589f4d25
