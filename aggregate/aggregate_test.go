@@ -314,3 +314,52 @@ func Test_CommitEvents(t *testing.T) {
 		require.EqualValues(t, p.ID(), records[1].LogID())
 	})
 }
+
+func Test_ReadAndLoadFromStore(t *testing.T) {
+	serializer := serde.NewJSONBinary()
+	t.Run("not found", func(t *testing.T) {
+		memlog := chronicle.NewEventLogMemory()
+		registry := chronicle.NewEventRegistry[PersonEvent]()
+
+		err := aggregate.ReadAndLoadFromStore(
+			t.Context(),
+			NewEmpty(),
+			event.Log(memlog),
+			registry,
+			serde.BinaryDeserializer(serializer),
+			PersonID("john"),
+			version.SelectFromBeginning,
+		)
+		require.ErrorContains(t, err, "root not found")
+	})
+
+	t.Run("load", func(t *testing.T) {
+		p := createPerson(t)
+		p.Age()
+
+		// personWasBornName := new(personWasBorn).EventName()
+		// personAgedName := new(personAgedOneYear).EventName()
+
+		memstore := chronicle.NewEventLogMemory()
+		registry := chronicle.NewEventRegistry[PersonEvent]()
+		err := registry.RegisterEvents(p)
+		require.NoError(t, err)
+
+		_, _, err = aggregate.CommitEvents(t.Context(), memstore, serializer, p)
+		require.NoError(t, err)
+
+		emptyRoot := NewEmpty()
+		err = aggregate.ReadAndLoadFromStore(
+			t.Context(),
+			emptyRoot,
+			event.Log(memstore),
+			registry,
+			serde.BinaryDeserializer(serializer),
+			p.ID(),
+			version.SelectFromBeginning,
+		)
+		require.NoError(t, err)
+		require.EqualValues(t, 2, emptyRoot.Version())
+		require.Equal(t, 1, emptyRoot.age)
+	})
+}
