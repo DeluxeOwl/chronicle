@@ -9,6 +9,7 @@ import (
 	"github.com/DeluxeOwl/chronicle"
 	"github.com/DeluxeOwl/chronicle/aggregate"
 	"github.com/DeluxeOwl/chronicle/event"
+	"github.com/DeluxeOwl/chronicle/serde"
 
 	"github.com/DeluxeOwl/chronicle/version"
 	"github.com/stretchr/testify/require"
@@ -258,12 +259,18 @@ func Test_RecordEvent(t *testing.T) {
 func Test_FlushUncommitedEvents(t *testing.T) {
 	p := createPerson(t)
 	p.Age()
-	p.Age()
 
 	uncommitted := aggregate.FlushUncommitedEvents(p)
-	require.Len(t, uncommitted, 3)
+	require.Len(t, uncommitted, 2)
 
-	require.Equal(t, uncommitted[0].EventName(), new(personWasBorn).EventName())
-	require.Equal(t, uncommitted[1].EventName(), new(personAgedOneYear).EventName())
-	require.Equal(t, uncommitted[2].EventName(), new(personAgedOneYear).EventName())
+	personWasBornName := new(personWasBorn).EventName()
+	personAgedName := new(personAgedOneYear).EventName()
+
+	require.Equal(t, uncommitted[0].EventName(), personWasBornName)
+	require.Equal(t, uncommitted[1].EventName(), personAgedName)
+
+	raw, err := uncommitted.ToRaw(serde.NewJSONBinary())
+	require.NoError(t, err)
+	require.Equal(t, raw[0].EventName(), personWasBornName)
+	require.Equal(t, raw[1].EventName(), personAgedName)
 }
