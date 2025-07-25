@@ -55,6 +55,10 @@ func asAnyApplier[TID ID, E event.Any](root Root[TID, E]) *anyApplier[TID, E] {
 }
 
 func (a *anyApplier[TID, E]) Apply(evt event.Any) error {
+	if evt == nil {
+		return errors.New("nil event")
+	}
+
 	anyEvt, ok := evt.(E)
 	if !ok {
 		var empty E

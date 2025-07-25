@@ -169,6 +169,7 @@ func createPerson(t *testing.T) *Person {
 	t.Helper()
 	p, err := New(PersonID("some-id"), "john")
 	require.NoError(t, err)
+	require.EqualValues(t, 1, p.Version())
 	return p
 }
 
@@ -231,17 +232,25 @@ func Test_Person(t *testing.T) {
 func Test_RecordEvent(t *testing.T) {
 	t.Run("record single event", func(t *testing.T) {
 		p := createPerson(t)
-		require.EqualValues(t, 1, p.Version())
-
-		aggregate.RecordEvent(p, PersonEvent(&personWasBorn{}))
+		err := aggregate.RecordEvent(p, PersonEvent(&personWasBorn{}))
+		require.NoError(t, err)
 		require.EqualValues(t, 2, p.Version())
 	})
 
 	t.Run("record multiple events", func(t *testing.T) {
 		p := createPerson(t)
-		require.EqualValues(t, 1, p.Version())
-
-		aggregate.RecordEvents(p, PersonEvent(&personWasBorn{}), PersonEvent(&personWasBorn{}))
+		err := aggregate.RecordEvents(
+			p,
+			PersonEvent(&personWasBorn{}),
+			PersonEvent(&personWasBorn{}),
+		)
+		require.NoError(t, err)
 		require.EqualValues(t, 3, p.Version())
+	})
+
+	t.Run("record nil event", func(t *testing.T) {
+		p := createPerson(t)
+		err := aggregate.RecordEvent(p, PersonEvent(nil))
+		require.ErrorContains(t, err, "nil event")
 	})
 }
