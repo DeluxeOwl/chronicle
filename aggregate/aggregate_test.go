@@ -274,3 +274,43 @@ func Test_FlushUncommitedEvents(t *testing.T) {
 	require.Equal(t, raw[0].EventName(), personWasBornName)
 	require.Equal(t, raw[1].EventName(), personAgedName)
 }
+
+func Test_CommitEvents(t *testing.T) {
+	serializer := serde.NewJSONBinary()
+	t.Run("without events", func(t *testing.T) {
+		memstore := chronicle.NewEventLogMemory()
+		p := NewEmpty()
+
+		v, events, err := aggregate.CommitEvents(t.Context(), memstore, serializer, p)
+		require.EqualValues(t, 0, v)
+		require.Nil(t, events)
+		require.NoError(t, err)
+	})
+
+	t.Run("with events", func(t *testing.T) {
+		memstore := chronicle.NewEventLogMemory()
+		p := createPerson(t)
+		p.Age()
+
+		personWasBornName := new(personWasBorn).EventName()
+		personAgedName := new(personAgedOneYear).EventName()
+
+		v, events, err := aggregate.CommitEvents(t.Context(), memstore, serializer, p)
+		require.EqualValues(t, 2, v)
+		require.Len(t, events, 2)
+		require.NoError(t, err)
+
+		records, err := memstore.
+			ReadEvents(t.Context(), event.LogID(p.ID()), version.SelectFromBeginning).
+			Collect()
+
+		require.NoError(t, err)
+		require.Len(t, records, 2)
+
+		require.Equal(t, personWasBornName, records[0].EventName())
+		require.Equal(t, personAgedName, records[1].EventName())
+
+		require.EqualValues(t, p.ID(), records[0].LogID())
+		require.EqualValues(t, p.ID(), records[1].LogID())
+	})
+}
