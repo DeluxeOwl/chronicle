@@ -254,3 +254,16 @@ func Test_RecordEvent(t *testing.T) {
 		require.ErrorContains(t, err, "nil event")
 	})
 }
+
+func Test_FlushUncommitedEvents(t *testing.T) {
+	p := createPerson(t)
+	p.Age()
+	p.Age()
+
+	uncommitted := aggregate.FlushUncommitedEvents(p)
+	require.Len(t, uncommitted, 3)
+
+	require.Equal(t, uncommitted[0].EventName(), new(personWasBorn).EventName())
+	require.Equal(t, uncommitted[1].EventName(), new(personAgedOneYear).EventName())
+	require.Equal(t, uncommitted[2].EventName(), new(personAgedOneYear).EventName())
+}
