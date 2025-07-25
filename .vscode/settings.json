@@ -5,6 +5,9 @@
         // "*.go": "$(capture)_*.go", // I can't decide
         "*.go": "",
     },
+    "files.readonlyInclude": {
+        "**/*mock_test.go": true,
+    },
     "yaml.schemas": {
         "https://taskfile.dev/schema.json": [
             "**/Taskfile.yml"

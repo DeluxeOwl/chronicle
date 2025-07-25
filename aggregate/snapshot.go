@@ -7,6 +7,8 @@ import (
 	"github.com/DeluxeOwl/chronicle/event"
 )
 
+//go:generate go run github.com/matryer/moq@latest -pkg aggregate_test -skip-ensure -rm -out snapshot_mock_test.go . SnapshotStore
+
 type Snapshot[TID ID] interface {
 	IDer[TID]
 	Versioner

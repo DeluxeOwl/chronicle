@@ -10,6 +10,8 @@ import (
 	"github.com/DeluxeOwl/chronicle/version"
 )
 
+//go:generate go run github.com/matryer/moq@latest -pkg aggregate_test -skip-ensure -rm -out repository_mock_test.go . Repository
+
 type Getter[TID ID, E event.Any, R Root[TID, E]] interface {
 	Get(ctx context.Context, id TID) (R, error)
 	GetVersion(ctx context.Context, id ID, selector version.Selector) (R, error)

@@ -165,13 +165,17 @@ func CustomSnapshot(
 	return false
 }
 
-func Test_PersonE2E(t *testing.T) {
+func createPerson(t *testing.T) *Person {
+	t.Helper()
+	p, err := New(PersonID("some-id"), "john")
+	require.NoError(t, err)
+	return p
+}
+
+func Test_Person(t *testing.T) {
 	ctx := t.Context()
 
-	johnID := PersonID("some-id")
-	p, err := New(johnID, "john")
-
-	require.NoError(t, err)
+	p := createPerson(t)
 
 	memlog := chronicle.NewEventLogMemory()
 	snapstore := chronicle.NewSnapshotStoreMemory(NewSnapshot)
@@ -197,7 +201,7 @@ func Test_PersonE2E(t *testing.T) {
 	_, _, err = repo.Save(ctx, p)
 	require.NoError(t, err)
 
-	newp, err := repo.Get(ctx, johnID)
+	newp, err := repo.Get(ctx, p.ID())
 	require.NoError(t, err)
 
 	ps, err := newp.ToSnapshot(newp)
@@ -219,7 +223,25 @@ func Test_PersonE2E(t *testing.T) {
 	event4 := wasBornFactory()
 	require.NotSame(t, event3, event4)
 
-	_, found, err := snapstore.GetSnapshot(ctx, johnID)
+	_, found, err := snapstore.GetSnapshot(ctx, p.ID())
 	require.NoError(t, err)
 	require.True(t, found)
+}
+
+func Test_RecordEvent(t *testing.T) {
+	t.Run("record single event", func(t *testing.T) {
+		p := createPerson(t)
+		require.EqualValues(t, 1, p.Version())
+
+		aggregate.RecordEvent(p, PersonEvent(&personWasBorn{}))
+		require.EqualValues(t, 2, p.Version())
+	})
+
+	t.Run("record multiple events", func(t *testing.T) {
+		p := createPerson(t)
+		require.EqualValues(t, 1, p.Version())
+
+		aggregate.RecordEvents(p, PersonEvent(&personWasBorn{}), PersonEvent(&personWasBorn{}))
+		require.EqualValues(t, 3, p.Version())
+	})
 }
