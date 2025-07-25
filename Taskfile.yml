@@ -7,3 +7,6 @@ tasks:
       - golangci-lint run --fix .
       - golines --no-reformat-tags -w .
       - golangci-lint run
+  gen:
+    cmds:
+      - go generate ./...
