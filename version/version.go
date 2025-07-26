@@ -24,6 +24,12 @@ func (CheckAny) isVersionCheck() {}
 type CheckExact Version
 
 func (CheckExact) isVersionCheck() {}
+func (expected CheckExact) CheckExact(actualVersion Version) error {
+	if actualVersion != Version(expected) {
+		return NewConflictError(Version(expected), actualVersion)
+	}
+	return nil
+}
 
 func NewConflictError(expected Version, actual Version) *ConflictError {
 	return &ConflictError{

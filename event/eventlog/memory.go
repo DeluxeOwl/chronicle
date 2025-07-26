@@ -56,11 +56,10 @@ func (store *Memory) AppendEvents(
 	actualLogVersion := store.logVersions[id] // Defaults to 0 if id is not in map
 
 	if exp, ok := expected.(version.CheckExact); ok {
-		expectedVersion := version.Version(exp)
-		if actualLogVersion != expectedVersion {
+		if err := exp.CheckExact(actualLogVersion); err != nil {
 			return 0, fmt.Errorf(
 				"append events: %w",
-				version.NewConflictError(expectedVersion, actualLogVersion),
+				err,
 			)
 		}
 	}
