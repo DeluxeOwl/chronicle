@@ -337,9 +337,6 @@ func Test_ReadAndLoadFromStore(t *testing.T) {
 		p := createPerson(t)
 		p.Age()
 
-		// personWasBornName := new(personWasBorn).EventName()
-		// personAgedName := new(personAgedOneYear).EventName()
-
 		memstore := chronicle.NewEventLogMemory()
 		registry := chronicle.NewEventRegistry[PersonEvent]()
 		err := registry.RegisterEvents(p)
@@ -362,4 +359,30 @@ func Test_ReadAndLoadFromStore(t *testing.T) {
 		require.EqualValues(t, 2, emptyRoot.Version())
 		require.Equal(t, 1, emptyRoot.age)
 	})
+}
+
+func Test_LoadFromRecords(t *testing.T) {
+	p := createPerson(t)
+	p.Age()
+
+	serializer := serde.NewJSONBinary()
+	memstore := chronicle.NewEventLogMemory()
+	registry := chronicle.NewEventRegistry[PersonEvent]()
+
+	err := registry.RegisterEvents(p)
+	require.NoError(t, err)
+
+	v, events, err := aggregate.CommitEvents(t.Context(), memstore, serializer, p)
+	require.EqualValues(t, 2, v)
+	require.Len(t, events, 2)
+	require.NoError(t, err)
+
+	records := memstore.
+		ReadEvents(t.Context(), event.LogID(p.ID()), version.SelectFromBeginning)
+
+	emptyPerson := NewEmpty()
+	err = aggregate.LoadFromRecords(emptyPerson, registry, serializer, records)
+	require.NoError(t, err)
+
+	require.Equal(t, emptyPerson, p)
 }
