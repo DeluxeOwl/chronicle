@@ -139,7 +139,7 @@ func Test_AppendEvents_ContextCancellation(t *testing.T) {
 	_, err := store.AppendEvents(ctx, logID, version.CheckAny{}, rawEvents)
 
 	require.Error(t, err)
-	require.Equal(t, context.Canceled, err)
+	require.ErrorContains(t, err, context.Canceled.Error())
 }
 
 // Test_Concurrency tests that the memory store can be safely used by multiple

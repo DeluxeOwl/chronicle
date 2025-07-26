@@ -40,7 +40,7 @@ func (store *Memory) AppendEvents(
 	events event.RawEvents,
 ) (version.Version, error) {
 	if err := ctx.Err(); err != nil {
-		return 0, err
+		return 0, fmt.Errorf("append events: %w", err)
 	}
 
 	if len(events) == 0 {
