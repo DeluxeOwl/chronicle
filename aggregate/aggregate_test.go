@@ -386,3 +386,69 @@ func Test_LoadFromRecords(t *testing.T) {
 
 	require.Equal(t, emptyPerson, p)
 }
+
+func Test_SnapshotRepo(t *testing.T) {
+	t.Run("should snapshot every 10 events", func(t *testing.T) {
+		ctx := t.Context()
+		p := createPerson(t)
+
+		memlog := chronicle.NewEventLogMemory()
+
+		var lastSnapshot *PersonSnapshot
+		snapstore := &SnapshotStoreMock[PersonID, *PersonSnapshot]{
+			SaveSnapshotFunc: func(ctx context.Context, snapshot *PersonSnapshot) error {
+				lastSnapshot = snapshot
+				return nil
+			},
+		}
+
+		registry := chronicle.NewAnyEventRegistry()
+		repo, err := chronicle.NewEventSourcedRepositoryWithSnapshots(
+			memlog,
+			snapstore,
+			NewEmpty,
+			NewEmpty(),
+			aggregate.SnapStrategyFor[*Person]().EveryNEvents(10),
+			aggregate.SnapAnyEventRegistry(registry),
+		)
+		require.NoError(t, err)
+
+		p.Age()
+
+		// Shouldn't be called
+		_, _, err = repo.Save(ctx, p)
+		require.NoError(t, err)
+		require.Empty(t, snapstore.calls.SaveSnapshot)
+		require.Nil(t, lastSnapshot)
+
+		for range 10 {
+			p.Age()
+		}
+		_, _, err = repo.Save(ctx, p)
+		require.NoError(t, err)
+
+		p.Age()
+		_, _, err = repo.Save(ctx, p)
+		require.NoError(t, err)
+
+		// Should be called once
+		require.Len(t, snapstore.calls.SaveSnapshot, 1)
+
+		// Now, we add 9 more, it should be called once again
+		for range 9 {
+			p.Age()
+		}
+		_, _, err = repo.Save(ctx, p)
+		require.NoError(t, err)
+		require.Len(t, snapstore.calls.SaveSnapshot, 2)
+
+		// And now it should be called 3 times
+		for range 119 {
+			p.Age()
+		}
+		_, _, err = repo.Save(ctx, p)
+		require.NoError(t, err)
+		require.Len(t, snapstore.calls.SaveSnapshot, 3)
+		require.Equal(t, 140, lastSnapshot.Age)
+	})
+}
