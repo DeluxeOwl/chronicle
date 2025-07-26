@@ -26,9 +26,9 @@ func collectRecords(t *testing.T, records event.Records) []*event.Record {
 	return collected
 }
 
-// TestMemory_AppendAndReadEvents_Successful tests the happy path of appending events
+// Test_AppendAndReadEvents_Successful tests the happy path of appending events
 // and reading them back, ensuring versioning is handled correctly across multiple appends.
-func TestMemory_AppendAndReadEvents_Successful(t *testing.T) {
+func Test_AppendAndReadEvents_Successful(t *testing.T) {
 	store := eventlog.NewMemory()
 	logID := event.LogID("stream-1")
 	ctx := t.Context()
@@ -62,9 +62,9 @@ func TestMemory_AppendAndReadEvents_Successful(t *testing.T) {
 	require.Equal(t, "event-c", allEvents[2].EventName())
 }
 
-// TestMemory_AppendEvents_VersionConflict ensures that the store correctly detects
+// Test_AppendEvents_VersionConflict ensures that the store correctly detects
 // and reports a version conflict (transactional guarantee).
-func TestMemory_AppendEvents_VersionConflict(t *testing.T) {
+func Test_AppendEvents_VersionConflict(t *testing.T) {
 	store := eventlog.NewMemory()
 	logID := event.LogID("stream-conflict")
 	ctx := t.Context()
@@ -97,9 +97,9 @@ func TestMemory_AppendEvents_VersionConflict(t *testing.T) {
 	require.Len(t, records, 1)
 }
 
-// TestMemory_ReadEvents_WithSelector tests reading a specific slice of events
+// Test_ReadEvents_WithSelector tests reading a specific slice of events
 // from the log using a version selector.
-func TestMemory_ReadEvents_WithSelector(t *testing.T) {
+func Test_ReadEvents_WithSelector(t *testing.T) {
 	store := eventlog.NewMemory()
 	logID := event.LogID("stream-selector")
 	ctx := t.Context()
@@ -126,9 +126,9 @@ func TestMemory_ReadEvents_WithSelector(t *testing.T) {
 	require.Equal(t, "event-5", records[2].EventName())
 }
 
-// TestMemory_AppendEvents_ContextCancellation verifies that AppendEvents respects
+// Test_AppendEvents_ContextCancellation verifies that AppendEvents respects
 // context cancellation and aborts the operation.
-func TestMemory_AppendEvents_ContextCancellation(t *testing.T) {
+func Test_AppendEvents_ContextCancellation(t *testing.T) {
 	store := eventlog.NewMemory()
 	logID := event.LogID("stream-cancel")
 	ctx, cancel := context.WithCancel(t.Context())
@@ -142,9 +142,9 @@ func TestMemory_AppendEvents_ContextCancellation(t *testing.T) {
 	require.Equal(t, context.Canceled, err)
 }
 
-// TestMemory_Concurrency tests that the memory store can be safely used by multiple
+// Test_Concurrency tests that the memory store can be safely used by multiple
 // goroutines concurrently, appending to the same log without data loss.
-func TestMemory_Concurrency(t *testing.T) {
+func Test_Concurrency(t *testing.T) {
 	store := eventlog.NewMemory()
 	logID := event.LogID("stream-concurrent")
 	ctx := t.Context()
