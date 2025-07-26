@@ -451,4 +451,107 @@ func Test_SnapshotRepo(t *testing.T) {
 		require.Len(t, snapstore.calls.SaveSnapshot, 3)
 		require.Equal(t, 140, lastSnapshot.Age)
 	})
+
+	t.Run("should ignore snapshot error", func(t *testing.T) {
+		ctx := t.Context()
+		p := createPerson(t)
+
+		memlog := chronicle.NewEventLogMemory()
+
+		snapstore := &SnapshotStoreMock[PersonID, *PersonSnapshot]{
+			SaveSnapshotFunc: func(ctx context.Context, snapshot *PersonSnapshot) error {
+				return errors.New("snapshot error")
+			},
+		}
+
+		registry := chronicle.NewAnyEventRegistry()
+		repo, err := chronicle.NewEventSourcedRepositoryWithSnapshots(
+			memlog,
+			snapstore,
+			NewEmpty,
+			NewEmpty(),
+			aggregate.SnapStrategyFor[*Person]().AfterCommit(),
+			aggregate.SnapAnyEventRegistry(registry),
+		)
+		require.NoError(t, err)
+
+		for range 44 {
+			p.Age()
+		}
+		_, _, err = repo.Save(ctx, p)
+		require.NoError(t, err)
+		require.Len(t, snapstore.calls.SaveSnapshot, 1)
+	})
+
+	t.Run("should ignore snapshot error when user returns nil", func(t *testing.T) {
+		ctx := t.Context()
+		p := createPerson(t)
+
+		memlog := chronicle.NewEventLogMemory()
+
+		snapstore := &SnapshotStoreMock[PersonID, *PersonSnapshot]{
+			SaveSnapshotFunc: func(ctx context.Context, snapshot *PersonSnapshot) error {
+				return errors.New("snapshot error")
+			},
+		}
+
+		registry := chronicle.NewAnyEventRegistry()
+		repo, err := chronicle.NewEventSourcedRepositoryWithSnapshots(
+			memlog,
+			snapstore,
+			NewEmpty,
+			NewEmpty(),
+			aggregate.SnapStrategyFor[*Person]().AfterCommit(),
+			aggregate.SnapAnyEventRegistry(registry),
+			aggregate.SnapReturnError(func(err error) error {
+				// Received a non-nil error, but return nil anyway.
+				require.ErrorContains(t, err, "snapshot error")
+				require.Error(t, err)
+				return nil
+			}),
+		)
+		require.NoError(t, err)
+
+		for range 44 {
+			p.Age()
+		}
+		_, _, err = repo.Save(ctx, p)
+		require.NoError(t, err)
+		require.Len(t, snapstore.calls.SaveSnapshot, 1)
+	})
+
+	t.Run("should return error on snapshot error", func(t *testing.T) {
+		ctx := t.Context()
+		p := createPerson(t)
+
+		memlog := chronicle.NewEventLogMemory()
+
+		snapstore := &SnapshotStoreMock[PersonID, *PersonSnapshot]{
+			SaveSnapshotFunc: func(ctx context.Context, snapshot *PersonSnapshot) error {
+				return errors.New("snapshot error")
+			},
+		}
+
+		registry := chronicle.NewAnyEventRegistry()
+		repo, err := chronicle.NewEventSourcedRepositoryWithSnapshots(
+			memlog,
+			snapstore,
+			NewEmpty,
+			NewEmpty(),
+			aggregate.SnapStrategyFor[*Person]().AfterCommit(),
+			aggregate.SnapAnyEventRegistry(registry),
+			aggregate.SnapReturnError(func(err error) error {
+				return fmt.Errorf("user customized message %w", err)
+			}),
+		)
+		require.NoError(t, err)
+
+		for range 44 {
+			p.Age()
+		}
+		_, _, err = repo.Save(ctx, p)
+		require.Error(t, err)
+		require.ErrorContains(t, err, "user customized message")
+		require.Len(t, snapstore.calls.SaveSnapshot, 1)
+	})
 }

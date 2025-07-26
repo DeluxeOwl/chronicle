@@ -10,7 +10,6 @@ import (
 )
 
 func TestRecord_Getters(t *testing.T) {
-	t.Parallel()
 	logID := event.LogID("log-123")
 	ver := version.Version(42)
 	eventName := "test-event"
@@ -25,8 +24,6 @@ func TestRecord_Getters(t *testing.T) {
 }
 
 func TestRawEvents_ToRecords(t *testing.T) {
-	t.Parallel()
-
 	testCases := []struct {
 		name            string
 		rawEvents       event.RawEvents
@@ -69,7 +66,6 @@ func TestRawEvents_ToRecords(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
 			gotRecords := tc.rawEvents.ToRecords(tc.logID, tc.startingVersion)
 
 			if len(tc.wantRecords) == 0 {
@@ -97,10 +93,7 @@ func TestRawEvents_ToRecords(t *testing.T) {
 }
 
 func TestRawEvents_All(t *testing.T) {
-	t.Parallel()
-
 	t.Run("should iterate over all items", func(t *testing.T) {
-		t.Parallel()
 		rawEvents := event.RawEvents{
 			event.NewRaw("event-1", []byte("data-1")),
 			event.NewRaw("event-2", []byte("data-2")),
@@ -115,7 +108,6 @@ func TestRawEvents_All(t *testing.T) {
 	})
 
 	t.Run("should stop iteration when yield returns false", func(t *testing.T) {
-		t.Parallel()
 		rawEvents := event.RawEvents{
 			event.NewRaw("event-1", []byte("data-1")),
 			event.NewRaw("event-2", []byte("data-2")),
@@ -132,7 +124,6 @@ func TestRawEvents_All(t *testing.T) {
 	})
 
 	t.Run("should handle an empty slice", func(t *testing.T) {
-		t.Parallel()
 		var rawEvents event.RawEvents
 		var count int
 		for range rawEvents.All() {

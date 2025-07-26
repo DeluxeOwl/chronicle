@@ -53,7 +53,6 @@ func (c *testEventCreator[E]) EventFuncs() event.FuncsFor[E] {
 }
 
 func TestEventRegistry_RegisterAndGet(t *testing.T) {
-	t.Parallel()
 	r := event.NewRegistry[FooEvent]()
 	creator := &testEventCreator[FooEvent]{
 		funcs: event.FuncsFor[FooEvent]{
@@ -79,7 +78,6 @@ func TestEventRegistry_RegisterAndGet(t *testing.T) {
 }
 
 func TestEventRegistry_RegisterDuplicate(t *testing.T) {
-	t.Parallel()
 	r := event.NewRegistry[FooEvent]()
 	creator := &testEventCreator[FooEvent]{
 		funcs: event.FuncsFor[FooEvent]{
@@ -98,7 +96,6 @@ func TestEventRegistry_RegisterDuplicate(t *testing.T) {
 }
 
 func TestEventRegistry_GetNonExistent(t *testing.T) {
-	t.Parallel()
 	r := event.NewRegistry[FooEvent]()
 
 	fn, ok := r.GetFunc("non-existent-event")
@@ -107,7 +104,6 @@ func TestEventRegistry_GetNonExistent(t *testing.T) {
 }
 
 func TestEventRegistry_Concurrency(t *testing.T) {
-	t.Parallel()
 	r := event.NewRegistry[event.Any]()
 	var wg sync.WaitGroup
 	eventCount := 100
@@ -141,7 +137,6 @@ func TestEventRegistry_Concurrency(t *testing.T) {
 }
 
 func TestConcreteRegistry_RegisterAndGet(t *testing.T) {
-	t.Parallel()
 	anyRegistry := event.NewRegistry[event.Any]()
 	concreteReg := event.NewConcreteRegistryFromAny[FooEvent](anyRegistry)
 
@@ -173,7 +168,6 @@ func TestConcreteRegistry_RegisterAndGet(t *testing.T) {
 }
 
 func TestConcreteRegistry_DuplicateEventRegistration(t *testing.T) {
-	t.Parallel()
 	anyRegistry := event.NewRegistry[event.Any]()
 
 	// Registry for FooEvent interface
@@ -199,7 +193,6 @@ func TestConcreteRegistry_DuplicateEventRegistration(t *testing.T) {
 }
 
 func TestConcreteRegistry_GetFuncCachesFactory(t *testing.T) {
-	t.Parallel()
 	anyRegistry := event.NewRegistry[event.Any]()
 	concreteReg := event.NewConcreteRegistryFromAny[FooEvent](anyRegistry)
 
@@ -224,7 +217,6 @@ func TestConcreteRegistry_GetFuncCachesFactory(t *testing.T) {
 }
 
 func TestConcreteRegistry_GetFuncPanicsOnTypeMismatch(t *testing.T) {
-	t.Parallel()
 	anyRegistry := event.NewRegistry[event.Any]()
 
 	// Manually register a "rogue" event into the anyRegistry that does not conform to TestEvent

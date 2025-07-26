@@ -8,7 +8,6 @@ import (
 )
 
 func TestEvent_AnyToConcrete(t *testing.T) {
-	t.Parallel()
 	e := new(fooEventAlpha)
 	concrete, ok := event.AnyToConcrete[FooEvent](e)
 	require.True(t, ok)

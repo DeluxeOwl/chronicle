@@ -17,7 +17,8 @@ type ESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]] 
 	snapshotStrategy  SnapshotStrategy[TID, E, R]
 }
 
-type ReturnSnapshotErrFunc = func(error) error
+// Note: this is a function, in case the user wants to customize the behavior of returning an error.
+type ReturnSnapshotErrFunc = func(err error) error
 
 func NewESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]](
 	eventlog event.Log,
@@ -100,25 +101,31 @@ func (esr *ESRepoWithSnapshots[TID, E, R, TS]) Save(
 
 	previousVersion := newVersion - version.Version(len(committedEvents))
 
-	if esr.snapshotStrategy.ShouldSnapshot(
+	if !esr.snapshotStrategy.ShouldSnapshot(
 		ctx,
 		root,
 		previousVersion,
 		newVersion,
 		committedEvents,
 	) {
-		snapshot, err := esr.snapshotter.ToSnapshot(root)
-		if err != nil {
-			return newVersion, committedEvents, fmt.Errorf(
-				"snapshot repo save: convert to snapshot: %w",
-				err,
-			)
-		}
+		return newVersion, committedEvents, nil
+	}
 
-		err = esr.snapstore.SaveSnapshot(ctx, snapshot)
-		if err != nil {
-			return newVersion, committedEvents, esr.returnSnapshotErr(err)
+	snapshot, err := esr.snapshotter.ToSnapshot(root)
+	if err != nil {
+		return newVersion, committedEvents, fmt.Errorf(
+			"snapshot repo save: convert to snapshot: %w",
+			err,
+		)
+	}
+
+	err = esr.snapstore.SaveSnapshot(ctx, snapshot)
+	if err != nil && esr.returnSnapshotErr != nil {
+		var snapshotErr error
+		if snapshotErr = esr.returnSnapshotErr(err); snapshotErr != nil {
+			snapshotErr = fmt.Errorf("snapshot repo save: save snapshot: %w", snapshotErr)
 		}
+		return newVersion, committedEvents, snapshotErr
 	}
 
 	return newVersion, committedEvents, nil

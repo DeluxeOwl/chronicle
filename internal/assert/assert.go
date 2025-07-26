@@ -1,12 +1,12 @@
 package assert
 
 import (
-	"log"
+	"fmt"
 )
 
 func That(truth bool, format string, a ...any) {
 	if !truth {
-		log.Fatalf(format, a...)
+		panic(fmt.Sprintf(format, a...))
 	}
 }
 
