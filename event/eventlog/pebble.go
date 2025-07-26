@@ -1,6 +1,7 @@
 package eventlog
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -77,7 +78,7 @@ func (p *Pebble) AppendEvents(
 	defer batch.Close()
 	eventRecords := events.ToRecords(id, actualLogVersion)
 	for _, record := range eventRecords {
-		key := eventKeyFor(record)
+		key := eventKeyFor(record.LogID(), record.Version())
 		value, err := json.Marshal(pebbleEventData{
 			Data:      record.Data(),
 			EventName: record.EventName(),
@@ -110,7 +111,87 @@ func (p *Pebble) ReadEvents(
 	id event.LogID,
 	selector version.Selector,
 ) event.Records {
-	panic("unimplemented")
+	return func(yield func(*event.Record, error) bool) {
+		startKey := eventKeyFor(id, selector.From)
+		prefix := eventKeyPrefixFor(id)
+
+		// Use an iterator with an upper bound to only scan keys for the given log ID.
+		//nolint:exhaustruct // Unnecessary.
+		iter, err := p.db.NewIter(&pebble.IterOptions{
+			LowerBound: startKey,
+			UpperBound: prefixEndKey(prefix),
+		})
+		if err != nil {
+			yield(nil, fmt.Errorf("read events: create iterator: %w", err))
+			return
+		}
+		defer iter.Close()
+
+		for iter.First(); iter.Valid(); iter.Next() {
+			if err := ctx.Err(); err != nil {
+				yield(nil, err)
+				return
+			}
+
+			// Key contains logID and version
+			_, eventVersion, err := parseEventKey(iter.Key())
+			if err != nil {
+				yield(nil, fmt.Errorf("read events: could not parse event key: %w", err))
+				return
+			}
+
+			// Value contains event name and data
+			var data pebbleEventData
+			if err := json.Unmarshal(iter.Value(), &data); err != nil {
+				yield(nil, fmt.Errorf("read events: could not unmarshal event data: %w", err))
+				return
+			}
+
+			record := event.NewRecord(eventVersion, id, data.EventName, data.Data)
+
+			if !yield(record, nil) {
+				return
+			}
+		}
+		if err := iter.Error(); err != nil {
+			yield(nil, fmt.Errorf("read events: iterator error: %w", err))
+		}
+	}
+}
+
+// parseEventKey extracts the log ID and version from an event key.
+// This version is robust against Log IDs that contain '/'.
+func parseEventKey(key []byte) (event.LogID, version.Version, error) {
+	// Key structure: e/{logID}/[8-byte-version]
+	if !bytes.HasPrefix(key, eventKeyPrefix) {
+		return "", 0, fmt.Errorf("invalid event key prefix: %q", key)
+	}
+	if len(key) < len(eventKeyPrefix)+1+8 { // prefix + min 1 char ID + / + 8 byte version
+		return "", 0, fmt.Errorf("invalid event key length: %q", key)
+	}
+
+	// Version is the last 8 bytes
+	versionBytes := key[len(key)-8:]
+	eventVersion := version.Version(binary.BigEndian.Uint64(versionBytes))
+
+	// LogID is between the prefix and the final slash before the version
+	logIDBytes := key[len(eventKeyPrefix) : len(key)-9] // -9 = -8 for version, -1 for slash
+	logID := event.LogID(logIDBytes)
+
+	return logID, eventVersion, nil
+}
+
+// prefixEndKey returns the key that immediately follows all keys with the given prefix.
+func prefixEndKey(prefix []byte) []byte {
+	end := make([]byte, len(prefix))
+	copy(end, prefix)
+	for i := len(end) - 1; i >= 0; i-- {
+		end[i]++
+		if end[i] != 0 {
+			return end[:i+1]
+		}
+	}
+	return nil
 }
 
 func (p *Pebble) getLogVersion(key []byte) (version.Version, error) {
@@ -130,17 +211,21 @@ func versionKeyFor(id event.LogID) []byte {
 	return append(versionKeyPrefix, []byte(id)...)
 }
 
+func eventKeyPrefixFor(id event.LogID) []byte {
+	return append(eventKeyPrefix, []byte(id+"/")...)
+}
+
 const (
 	uint64sizeBytes = 8
 	slashSizeBytes  = 1
 )
 
-func eventKeyFor(record *event.Record) []byte {
-	idBytes := []byte(record.LogID())
+func eventKeyFor(id event.LogID, version version.Version) []byte {
+	idBytes := []byte(id)
 	key := make([]byte, 0, len(eventKeyPrefix)+len(idBytes)+slashSizeBytes+uint64sizeBytes)
 	key = append(key, eventKeyPrefix...)
 	key = append(key, idBytes...)
 	key = append(key, '/')
-	key = binary.BigEndian.AppendUint64(key, uint64(record.Version()))
+	key = binary.BigEndian.AppendUint64(key, uint64(version))
 	return key
 }
