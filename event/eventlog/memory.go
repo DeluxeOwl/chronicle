@@ -40,7 +40,7 @@ func (store *Memory) AppendEvents(
 	events event.RawEvents,
 ) (version.Version, error) {
 	if err := ctx.Err(); err != nil {
-		return 0, fmt.Errorf("append events: %w", err)
+		return version.Zero, fmt.Errorf("append events: %w", err)
 	}
 
 	if len(events) == 0 {
@@ -57,7 +57,7 @@ func (store *Memory) AppendEvents(
 
 	if exp, ok := expected.(version.CheckExact); ok {
 		if err := exp.CheckExact(actualLogVersion); err != nil {
-			return 0, fmt.Errorf(
+			return version.Zero, fmt.Errorf(
 				"append events: %w",
 				err,
 			)
