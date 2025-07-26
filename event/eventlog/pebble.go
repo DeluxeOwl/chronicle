@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/DeluxeOwl/chronicle/event"
 	"github.com/DeluxeOwl/chronicle/version"
@@ -28,6 +29,7 @@ type pebbleEventData struct {
 
 type Pebble struct {
 	db *pebble.DB
+	mu sync.Mutex
 }
 
 func NewPebble(dirname string, opts *pebble.Options) (*Pebble, error) {
@@ -38,12 +40,14 @@ func NewPebble(dirname string, opts *pebble.Options) (*Pebble, error) {
 
 	return &Pebble{
 		db: db,
+		mu: sync.Mutex{},
 	}, nil
 }
 
 func NewPebbleWithDB(db *pebble.DB) *Pebble {
 	return &Pebble{
 		db: db,
+		mu: sync.Mutex{},
 	}
 }
 
@@ -53,6 +57,9 @@ func (p *Pebble) AppendEvents(
 	expected version.Check,
 	events event.RawEvents,
 ) (version.Version, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	if err := ctx.Err(); err != nil {
 		return version.Zero, fmt.Errorf("append events: %w", err)
 	}
