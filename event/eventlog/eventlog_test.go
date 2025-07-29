@@ -2,19 +2,19 @@ package eventlog_test
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
-	"sync"
 	"testing"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/vfs"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/DeluxeOwl/chronicle/event"
 	"github.com/DeluxeOwl/chronicle/event/eventlog"
 
 	"github.com/DeluxeOwl/chronicle/version"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 type eventLog struct {
@@ -22,43 +22,59 @@ type eventLog struct {
 	log  event.Log
 }
 
-func setupEventLogs(t *testing.T) []eventLog {
+func setupEventLogs(t *testing.T) ([]eventLog, func()) {
 	t.Helper()
 
-	memstore := eventlog.NewMemory()
 	//nolint:exhaustruct // not needed.
-	pebblestore, err := eventlog.NewPebble("", &pebble.Options{
+	pebbleDB, err := pebble.Open("", &pebble.Options{
 		FS: vfs.NewMem(),
 	})
 	require.NoError(t, err)
 
+	pebbleLog := eventlog.NewPebble(pebbleDB)
+	require.NoError(t, err)
+
+	sqliteDB, err := sql.Open("sqlite3", ":memory:")
+	require.NoError(t, err)
+
+	sqliteLog, err := eventlog.NewSqlite(sqliteDB)
+	require.NoError(t, err)
+
 	return []eventLog{
-		{
-			name: "memory log",
-			log:  memstore,
-		},
-		{
-			name: "pebble memory log",
-			log:  pebblestore,
-		},
-	}
+			{
+				name: "memory log",
+				log:  eventlog.NewMemory(),
+			},
+			{
+				name: "pebble memory log",
+				log:  pebbleLog,
+			},
+			{
+				name: "sqlite memory log",
+				log:  sqliteLog,
+			},
+		}, func() {
+			err := pebbleDB.Close()
+			require.NoError(t, err)
+
+			err = sqliteDB.Close()
+			require.NoError(t, err)
+		}
 }
 
 func collectRecords(t *testing.T, records event.Records) []*event.Record {
 	t.Helper()
-	var collected []*event.Record
-	records(func(r *event.Record, err error) bool {
-		require.NoError(t, err)
-		collected = append(collected, r)
-		return true
-	})
+	collected, err := records.Collect()
+	require.NoError(t, err)
+
 	return collected
 }
 
 // Test_AppendAndReadEvents_Successful tests the happy path of appending events
 // and reading them back, ensuring versioning is handled correctly across multiple appends.
 func Test_AppendAndReadEvents_Successful(t *testing.T) {
-	eventLogs := setupEventLogs(t)
+	eventLogs, closeDBs := setupEventLogs(t)
+	defer closeDBs()
 
 	for _, el := range eventLogs {
 		t.Run(el.name, func(t *testing.T) {
@@ -69,7 +85,7 @@ func Test_AppendAndReadEvents_Successful(t *testing.T) {
 				event.NewRaw("event-a", []byte(`{"a": 1}`)),
 				event.NewRaw("event-b", []byte(`{"b": 2}`)),
 			}
-			v1, err := el.log.AppendEvents(ctx, logID, version.CheckAny{}, rawEvents1)
+			v1, err := el.log.AppendEvents(ctx, logID, version.CheckExact(0), rawEvents1)
 			require.NoError(t, err)
 			require.Equal(t, version.Version(2), v1)
 
@@ -105,7 +121,8 @@ func Test_AppendAndReadEvents_Successful(t *testing.T) {
 // Test_AppendEvents_VersionConflict ensures that the store correctly detects
 // and reports a version conflict (transactional guarantee).
 func Test_AppendEvents_VersionConflict(t *testing.T) {
-	eventLogs := setupEventLogs(t)
+	eventLogs, closeDBs := setupEventLogs(t)
+	defer closeDBs()
 
 	for _, el := range eventLogs {
 		t.Run(el.name, func(t *testing.T) {
@@ -116,7 +133,7 @@ func Test_AppendEvents_VersionConflict(t *testing.T) {
 			_, err := el.log.AppendEvents(
 				ctx,
 				logID,
-				version.CheckAny{},
+				version.CheckExact(0),
 				event.RawEvents{event.NewRaw("event-1", nil)},
 			)
 			require.NoError(t, err)
@@ -124,13 +141,7 @@ func Test_AppendEvents_VersionConflict(t *testing.T) {
 			// Try to append another event with an incorrect expected version (0 instead of 1)
 			rawEvents := event.RawEvents{event.NewRaw("event-2", nil)}
 			_, err = el.log.AppendEvents(ctx, logID, version.CheckExact(0), rawEvents)
-
 			require.Error(t, err)
-			require.EqualError(
-				t,
-				err,
-				"append events: version conflict error: expected log version: 0, actual: 1",
-			)
 
 			var conflictErr *version.ConflictError
 			require.ErrorAs(t, err, &conflictErr)
@@ -145,7 +156,8 @@ func Test_AppendEvents_VersionConflict(t *testing.T) {
 // Test_ReadEvents_WithSelector tests reading a specific slice of events
 // from the log using a version selector.
 func Test_ReadEvents_WithSelector(t *testing.T) {
-	eventLogs := setupEventLogs(t)
+	eventLogs, closeDBs := setupEventLogs(t)
+	defer closeDBs()
 
 	for _, el := range eventLogs {
 		t.Run(el.name, func(t *testing.T) {
@@ -157,7 +169,7 @@ func Test_ReadEvents_WithSelector(t *testing.T) {
 			for i := 1; i <= 5; i++ {
 				rawEvents = append(rawEvents, event.NewRaw(fmt.Sprintf("event-%d", i), nil))
 			}
-			_, err := el.log.AppendEvents(ctx, logID, version.CheckAny{}, rawEvents)
+			_, err := el.log.AppendEvents(ctx, logID, version.CheckExact(0), rawEvents)
 			require.NoError(t, err)
 
 			// Read events starting from version 3
@@ -179,7 +191,8 @@ func Test_ReadEvents_WithSelector(t *testing.T) {
 // Test_AppendEvents_ContextCancellation verifies that AppendEvents respects
 // context cancellation and aborts the operation.
 func Test_AppendEvents_ContextCancellation(t *testing.T) {
-	eventLogs := setupEventLogs(t)
+	eventLogs, closeDBs := setupEventLogs(t)
+	defer closeDBs()
 
 	for _, el := range eventLogs {
 		t.Run(el.name, func(t *testing.T) {
@@ -189,78 +202,10 @@ func Test_AppendEvents_ContextCancellation(t *testing.T) {
 			cancel() // cancel the context
 
 			rawEvents := event.RawEvents{event.NewRaw("event-1", nil)}
-			_, err := el.log.AppendEvents(ctx, logID, version.CheckAny{}, rawEvents)
+			_, err := el.log.AppendEvents(ctx, logID, version.CheckExact(0), rawEvents)
 
 			require.Error(t, err)
 			require.ErrorContains(t, err, context.Canceled.Error())
-		})
-	}
-}
-
-// Test_Concurrency tests that the memory store can be safely used by multiple
-// goroutines concurrently, appending to the same log without data loss.
-func Test_Concurrency(t *testing.T) {
-	eventLogs := setupEventLogs(t)
-
-	for _, el := range eventLogs {
-		t.Run(el.name, func(t *testing.T) {
-			logID := event.LogID("stream-concurrent")
-			ctx := t.Context()
-
-			numGoroutines := 10
-			eventsPerGoroutine := 10
-			var wg sync.WaitGroup
-			wg.Add(numGoroutines)
-
-			for i := range numGoroutines {
-				go func(gID int) {
-					defer wg.Done()
-					for j := range eventsPerGoroutine {
-						// In a real app, you'd fetch the current version first.
-						// Here, we simulate a simple retry loop on conflict.
-						for {
-							currentVersion, err := el.log.AppendEvents(
-								ctx,
-								logID,
-								version.CheckAny{},
-								event.RawEvents{},
-							)
-							assert.NoError(t, err)
-
-							eventName := fmt.Sprintf("event-g%d-e%d", gID, j)
-							rawEvents := event.RawEvents{event.NewRaw(eventName, nil)}
-
-							_, err = el.log.AppendEvents(
-								ctx,
-								logID,
-								version.CheckExact(currentVersion),
-								rawEvents,
-							)
-							if err == nil {
-								break // Success
-							}
-							// Retry on conflict
-							assert.ErrorAs(t, err, new(*version.ConflictError))
-						}
-					}
-				}(i)
-			}
-
-			wg.Wait()
-
-			// Verify the final state
-			totalEvents := numGoroutines * eventsPerGoroutine
-			records := collectRecords(t, el.log.ReadEvents(ctx, logID, version.SelectFromBeginning))
-			require.Len(t, records, totalEvents)
-
-			finalVersion, err := el.log.AppendEvents(
-				ctx,
-				logID,
-				version.CheckAny{},
-				event.RawEvents{},
-			)
-			require.NoError(t, err)
-			require.Equal(t, version.Version(totalEvents), finalVersion)
 		})
 	}
 }

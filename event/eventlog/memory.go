@@ -44,10 +44,7 @@ func (store *Memory) AppendEvents(
 	}
 
 	if len(events) == 0 {
-		store.mu.RLock()
-		actualLogVersion := store.logVersions[id]
-		store.mu.RUnlock()
-		return actualLogVersion, nil
+		return version.Zero, fmt.Errorf("append events: %w", ErrNoEvents)
 	}
 
 	store.mu.Lock()

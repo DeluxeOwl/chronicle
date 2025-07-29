@@ -17,10 +17,6 @@ type Check interface {
 	isVersionCheck()
 }
 
-type CheckAny struct{}
-
-func (CheckAny) isVersionCheck() {}
-
 type CheckExact Version
 
 func (CheckExact) isVersionCheck() {}

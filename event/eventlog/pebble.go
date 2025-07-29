@@ -32,19 +32,7 @@ type Pebble struct {
 	mu sync.Mutex
 }
 
-func NewPebble(dirname string, opts *pebble.Options) (*Pebble, error) {
-	db, err := pebble.Open(dirname, opts)
-	if err != nil {
-		return nil, fmt.Errorf("new pebble: %w", err)
-	}
-
-	return &Pebble{
-		db: db,
-		mu: sync.Mutex{},
-	}, nil
-}
-
-func NewPebbleWithDB(db *pebble.DB) *Pebble {
+func NewPebble(db *pebble.DB) *Pebble {
 	return &Pebble{
 		db: db,
 		mu: sync.Mutex{},
@@ -57,12 +45,16 @@ func (p *Pebble) AppendEvents(
 	expected version.Check,
 	events event.RawEvents,
 ) (version.Version, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	if err := ctx.Err(); err != nil {
 		return version.Zero, fmt.Errorf("append events: %w", err)
 	}
+
+	if len(events) == 0 {
+		return version.Zero, fmt.Errorf("append events: %w", ErrNoEvents)
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
 
 	logIDVersionKey := versionKeyFor(id)
 	actualLogVersion, err := p.getLogVersion(logIDVersionKey)
@@ -74,10 +66,6 @@ func (p *Pebble) AppendEvents(
 		if err := exp.CheckExact(actualLogVersion); err != nil {
 			return version.Zero, fmt.Errorf("append events: %w", err)
 		}
-	}
-
-	if len(events) == 0 {
-		return actualLogVersion, nil
 	}
 
 	// Atomic append
