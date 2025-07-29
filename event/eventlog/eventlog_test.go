@@ -3,11 +3,15 @@ package eventlog_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"os"
+	"sync"
 	"testing"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/vfs"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/DeluxeOwl/chronicle/event"
@@ -34,7 +38,10 @@ func setupEventLogs(t *testing.T) ([]eventLog, func()) {
 	pebbleLog := eventlog.NewPebble(pebbleDB)
 	require.NoError(t, err)
 
-	sqliteDB, err := sql.Open("sqlite3", ":memory:")
+	f, err := os.CreateTemp(t.TempDir(), "sqlite-*.db")
+	require.NoError(t, err)
+
+	sqliteDB, err := sql.Open("sqlite3", f.Name())
 	require.NoError(t, err)
 
 	sqliteLog, err := eventlog.NewSqlite(sqliteDB)
@@ -50,7 +57,7 @@ func setupEventLogs(t *testing.T) ([]eventLog, func()) {
 				log:  pebbleLog,
 			},
 			{
-				name: "sqlite memory log",
+				name: "sqlite log",
 				log:  sqliteLog,
 			},
 		}, func() {
@@ -184,6 +191,91 @@ func Test_ReadEvents_WithSelector(t *testing.T) {
 			require.Equal(t, "event-4", records[1].EventName())
 			require.Equal(t, version.Version(5), records[2].Version())
 			require.Equal(t, "event-5", records[2].EventName())
+		})
+	}
+}
+
+// Test_AppendEvents_Concurrency tests that the event log can handle concurrent
+// append operations from multiple clients, ensuring that all events are written
+// correctly and versioning is maintained without race conditions.
+//
+//nolint:gocognit
+func Test_AppendEvents_Concurrency(t *testing.T) {
+	eventLogs, closeDBs := setupEventLogs(t)
+	defer closeDBs()
+
+	for _, el := range eventLogs {
+		t.Run(el.name, func(t *testing.T) {
+			const (
+				numGoroutines      = 10
+				eventsPerGoroutine = 5
+				totalEvents        = numGoroutines * eventsPerGoroutine
+			)
+
+			logID := event.LogID("concurrent-stream")
+			ctx := t.Context()
+			var wg sync.WaitGroup
+			wg.Add(numGoroutines)
+
+			for i := range numGoroutines {
+				go func(gID int) {
+					defer wg.Done()
+
+					// Each goroutine will try to append its batch of events.
+					// It will retry on version conflicts.
+					rawEvents := event.RawEvents{}
+					for j := range eventsPerGoroutine {
+						eventName := fmt.Sprintf("event-g%d-e%d", gID, j)
+						rawEvents = append(rawEvents, event.NewRaw(eventName, nil))
+					}
+
+					// Start with an initial guess for the version.
+					// On conflict, this will be updated to the actual version from the error.
+					lastKnownVersion := version.Version(0)
+
+					for range 20 { // Limit retries to avoid infinite loops
+						_, err := el.log.AppendEvents(
+							ctx,
+							logID,
+							version.CheckExact(lastKnownVersion),
+							rawEvents,
+						)
+						if err == nil {
+							return // Success
+						}
+
+						var conflictErr *version.ConflictError
+						if errors.As(err, &conflictErr) {
+							// Another goroutine succeeded. Update our version and retry.
+							lastKnownVersion = conflictErr.Actual
+							continue
+						}
+
+						// Any other error is unexpected and should fail the test.
+						assert.NoError(t, err, "unexpected error during concurrent append")
+						return
+					}
+					assert.Fail(t, "goroutine failed to append events after multiple retries")
+				}(i)
+			}
+
+			wg.Wait()
+
+			// Verification
+			records := collectRecords(t, el.log.ReadEvents(ctx, logID, version.SelectFromBeginning))
+			require.Len(t, records, totalEvents, "incorrect number of total events written")
+
+			// Check for sequential versions
+			versions := make(map[version.Version]bool)
+			for _, r := range records {
+				versions[r.Version()] = true
+			}
+			require.Len(t, versions, totalEvents, "duplicate or missing versions found")
+
+			for i := 1; i <= totalEvents; i++ {
+				_, ok := versions[version.Version(i)]
+				require.True(t, ok, "missing version %d", i)
+			}
 		})
 	}
 }

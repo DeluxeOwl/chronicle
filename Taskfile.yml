@@ -13,3 +13,6 @@ tasks:
   test:
     cmds:
       - go test ./...
+  test-no-cache:
+    cmds:
+      - go test -v -count=1 ./...
