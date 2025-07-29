@@ -104,7 +104,7 @@ func (s *Sqlite) AppendEvents(
 		return version.Zero, fmt.Errorf("append events: %w", ErrNoEvents)
 	}
 
-	expectedVersion, ok := expected.(version.CheckExact)
+	exp, ok := expected.(version.CheckExact)
 	if !ok {
 		return version.Zero, fmt.Errorf("append events: %w", ErrUnsupportedCheck)
 	}
@@ -123,7 +123,7 @@ func (s *Sqlite) AppendEvents(
 	}
 	defer stmt.Close()
 
-	eventRecords := events.ToRecords(id, version.Version(expectedVersion))
+	eventRecords := events.ToRecords(id, version.Version(exp))
 
 	for _, record := range eventRecords {
 		_, err := stmt.ExecContext(
@@ -140,7 +140,7 @@ func (s *Sqlite) AppendEvents(
 				actualVersion, parseErr := strconv.ParseUint(parts[1], 10, 64)
 				if parseErr == nil {
 					return version.Zero, version.NewConflictError(
-						version.Version(expectedVersion),
+						version.Version(exp),
 						version.Version(actualVersion),
 					)
 				}
@@ -154,7 +154,7 @@ func (s *Sqlite) AppendEvents(
 		return version.Zero, fmt.Errorf("append events: commit transaction: %w", err)
 	}
 
-	newStreamVersion := version.Version(expectedVersion) + version.Version(len(events))
+	newStreamVersion := version.Version(exp) + version.Version(len(events))
 	return newStreamVersion, nil
 }
 

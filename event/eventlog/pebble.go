@@ -62,10 +62,13 @@ func (p *Pebble) AppendEvents(
 		return version.Zero, fmt.Errorf("append events: %w", err)
 	}
 
-	if exp, ok := expected.(version.CheckExact); ok {
-		if err := exp.CheckExact(actualLogVersion); err != nil {
-			return version.Zero, fmt.Errorf("append events: %w", err)
-		}
+	exp, ok := expected.(version.CheckExact)
+	if !ok {
+		return version.Zero, fmt.Errorf("append events: %w", ErrUnsupportedCheck)
+	}
+
+	if err := exp.CheckExact(actualLogVersion); err != nil {
+		return version.Zero, fmt.Errorf("append events: %w", err)
 	}
 
 	// Atomic append
