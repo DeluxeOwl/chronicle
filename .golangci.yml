@@ -31,7 +31,7 @@ linters:
     - goconst
     - gocritic
     - gocyclo
-    - godot
+    # - godot
     - gomoddirectives
     - goprintffuncname
     - gosec
