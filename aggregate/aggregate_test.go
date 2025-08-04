@@ -180,6 +180,7 @@ func Test_Person(t *testing.T) {
 	p := createPerson(t)
 
 	memlog := chronicle.NewEventLogMemory()
+
 	snapstore := chronicle.NewSnapshotStoreMemory(NewSnapshot)
 	registry := chronicle.NewAnyEventRegistry()
 

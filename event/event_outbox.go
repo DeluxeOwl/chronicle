@@ -17,6 +17,12 @@ type Outbox[T any] interface {
 	Stage(ctx context.Context, tx T, records []*Record) error
 }
 
+type OutboxFunc[T any] func(ctx context.Context, tx T, records []*Record) error
+
+func (fn OutboxFunc[T]) Stage(ctx context.Context, tx T, records []*Record) error {
+	return fn(ctx, tx, records)
+}
+
 type Transactor[T any] interface {
 	WithinTx(ctx context.Context, fn func(ctx context.Context, tx T) error) error
 }
