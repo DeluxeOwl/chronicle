@@ -16,3 +16,6 @@ tasks:
   test-no-cache:
     cmds:
       - go test -v -count=1 ./...
+  copy:
+    cmds:
+      - yek ./**/*.go --ignore-patterns "*_mock*" --ignore-patterns "*_test.go" | pbcopy
