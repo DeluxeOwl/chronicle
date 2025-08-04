@@ -13,7 +13,6 @@ import (
 var _ event.Log = new(Memory)
 
 type Memory struct {
-	outbox      event.Outbox[struct{}]
 	mu          sync.RWMutex
 	events      map[event.LogID][]memStoreRecord
 	logVersions map[event.LogID]version.Version
@@ -26,22 +25,18 @@ type memStoreRecord struct {
 	EventName string          `json:"eventName"`
 }
 
-type MemoryOption func(*Memory)
-
-func MemoryOutbox(outbox event.Outbox[struct{}]) MemoryOption {
-	return func(m *Memory) {
-		m.outbox = outbox
-	}
-}
-
 func NewMemory() *Memory {
 	return &Memory{
-		outbox:      nil,
 		mu:          sync.RWMutex{},
 		events:      map[event.LogID][]memStoreRecord{},
 		logVersions: map[event.LogID]version.Version{},
 	}
 }
+
+// MemTx is a dummy transaction handle for the in-memory store.
+// Its presence in a function signature indicates that the function
+// must be called within the critical section managed by WithinTx.
+type MemTx struct{}
 
 func (mem *Memory) AppendEvents(
 	ctx context.Context,
@@ -49,45 +44,72 @@ func (mem *Memory) AppendEvents(
 	expected version.Check,
 	events event.RawEvents,
 ) (version.Version, error) {
-	if err := ctx.Err(); err != nil {
+	var newVersion version.Version
+
+	err := mem.WithinTx(ctx, func(ctx context.Context, tx MemTx) error {
+		v, _, err := mem.AppendInTx(ctx, tx, id, expected, events)
+		if err != nil {
+			return err
+		}
+		newVersion = v
+		return nil
+	})
+	if err != nil {
 		return version.Zero, fmt.Errorf("append events: %w", err)
+	}
+
+	return newVersion, nil
+}
+
+func (mem *Memory) AppendInTx(
+	ctx context.Context,
+	_ MemTx,
+	id event.LogID,
+	expected version.Check,
+	events event.RawEvents,
+) (version.Version, []*event.Record, error) {
+	if err := ctx.Err(); err != nil {
+		return version.Zero, nil, fmt.Errorf("append in tx: %w", err)
 	}
 
 	if len(events) == 0 {
-		return version.Zero, fmt.Errorf("append events: %w", ErrNoEvents)
+		return version.Zero, nil, fmt.Errorf("append in tx: %w", ErrNoEvents)
 	}
 
-	mem.mu.Lock()
-	defer mem.mu.Unlock()
-
-	actualLogVersion := mem.logVersions[id] // Defaults to 0 if id is not in map
+	// The lock is already held by WithinTx.
+	actualLogVersion := mem.logVersions[id]
 
 	exp, ok := expected.(version.CheckExact)
 	if !ok {
-		return version.Zero, fmt.Errorf("append events: %w", ErrUnsupportedCheck)
+		return version.Zero, nil, fmt.Errorf("append in tx: %w", ErrUnsupportedCheck)
 	}
 
 	if err := exp.CheckExact(actualLogVersion); err != nil {
-		return version.Zero, fmt.Errorf("append events: %w", err)
+		return version.Zero, nil, fmt.Errorf("append in tx: %w", err)
 	}
 
-	// Store events with versions starting from actualLogVersion + 1
-	eventRecords := events.ToRecords(id, actualLogVersion)
-
-	if mem.outbox != nil {
-		if err := mem.outbox.Stage(ctx, struct{}{}, eventRecords); err != nil {
-			return version.Zero, fmt.Errorf("append events: outbox stage: %w", err)
-		}
-	}
-
-	internal := mem.recordsToInternal(eventRecords)
+	records := events.ToRecords(id, actualLogVersion)
+	internal := mem.recordsToInternal(records)
 	mem.events[id] = append(mem.events[id], internal...)
 
-	// Update and store the new version for this specific stream
 	newStreamVersion := actualLogVersion + version.Version(len(events))
 	mem.logVersions[id] = newStreamVersion
 
-	return newStreamVersion, nil
+	return newStreamVersion, records, nil
+}
+
+// WithinTx executes the given function within a mutex-protected critical section,
+// simulating a transaction.
+// Note: This simple implementation does not support rollback on error; changes made
+// to the store before an error occurs within the function will persist.
+func (mem *Memory) WithinTx(
+	ctx context.Context,
+	fn func(ctx context.Context, tx MemTx) error,
+) error {
+	mem.mu.Lock()
+	defer mem.mu.Unlock()
+
+	return fn(ctx, MemTx{})
 }
 
 func (store *Memory) recordsToInternal(records []*event.Record) []memStoreRecord {

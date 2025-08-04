@@ -24,8 +24,6 @@ const conflictErrorPrefix = "_chronicle_version_conflict: "
 type Sqlite struct {
 	db *sql.DB
 
-	outbox event.Outbox[*sql.Tx]
-
 	// Pre-computed query strings for performance and to avoid Sprintf in hot paths.
 	qCreateTable   string
 	qCreateTrigger string
@@ -34,12 +32,6 @@ type Sqlite struct {
 }
 
 type SqliteOption func(*Sqlite)
-
-func SqliteOutbox(outbox event.Outbox[*sql.Tx]) SqliteOption {
-	return func(s *Sqlite) {
-		s.outbox = outbox
-	}
-}
 
 func SqliteTableName(tableName string) SqliteOption {
 	return func(s *Sqlite) {
@@ -104,36 +96,51 @@ func (s *Sqlite) AppendEvents(
 	expected version.Check,
 	events event.RawEvents,
 ) (version.Version, error) {
-	if err := ctx.Err(); err != nil {
+	var newVersion version.Version
+
+	err := s.WithinTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		v, _, err := s.AppendInTx(ctx, tx, id, expected, events)
+		if err != nil {
+			return err
+		}
+		newVersion = v
+		return nil
+	})
+	if err != nil {
 		return version.Zero, fmt.Errorf("append events: %w", err)
+	}
+	return newVersion, nil
+}
+
+func (s *Sqlite) AppendInTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	id event.LogID,
+	expected version.Check,
+	events event.RawEvents,
+) (version.Version, []*event.Record, error) {
+	if err := ctx.Err(); err != nil {
+		return version.Zero, nil, fmt.Errorf("append in tx: %w", err)
 	}
 
 	if len(events) == 0 {
-		return version.Zero, fmt.Errorf("append events: %w", ErrNoEvents)
+		return version.Zero, nil, fmt.Errorf("append in tx: %w", ErrNoEvents)
 	}
 
 	exp, ok := expected.(version.CheckExact)
 	if !ok {
-		return version.Zero, fmt.Errorf("append events: %w", ErrUnsupportedCheck)
+		return version.Zero, nil, fmt.Errorf("append in tx: %w", ErrUnsupportedCheck)
 	}
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return version.Zero, fmt.Errorf("append events: begin transaction: %w", err)
-	}
-
-	//nolint:errcheck // We don't care about the error here.
-	defer tx.Rollback()
 
 	stmt, err := tx.PrepareContext(ctx, s.qInsertEvent)
 	if err != nil {
-		return version.Zero, fmt.Errorf("append events: prepare statement: %w", err)
+		return version.Zero, nil, fmt.Errorf("append in tx: prepare statement: %w", err)
 	}
 	defer stmt.Close()
 
-	eventRecords := events.ToRecords(id, version.Version(exp))
+	records := events.ToRecords(id, version.Version(exp))
 
-	for _, record := range eventRecords {
+	for _, record := range records {
 		_, err := stmt.ExecContext(
 			ctx,
 			record.LogID(),
@@ -147,29 +154,42 @@ func (s *Sqlite) AppendEvents(
 			if len(parts) == 2 {
 				actualVersion, parseErr := strconv.ParseUint(parts[1], 10, 64)
 				if parseErr == nil {
-					return version.Zero, version.NewConflictError(
+					return version.Zero, nil, version.NewConflictError(
 						version.Version(exp),
 						version.Version(actualVersion),
 					)
 				}
 			}
 
-			return version.Zero, fmt.Errorf("append events: transaction failed: %w", err)
+			return version.Zero, nil, fmt.Errorf("append in tx: exec statement: %w", err)
 		}
-	}
-
-	if s.outbox != nil {
-		if err := s.outbox.Stage(ctx, tx, eventRecords); err != nil {
-			return version.Zero, fmt.Errorf("append events: outbox stage: %w", err)
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return version.Zero, fmt.Errorf("append events: commit transaction: %w", err)
 	}
 
 	newStreamVersion := version.Version(exp) + version.Version(len(events))
-	return newStreamVersion, nil
+	return newStreamVersion, records, nil
+}
+
+func (s *Sqlite) WithinTx(
+	ctx context.Context,
+	fn func(ctx context.Context, tx *sql.Tx) error,
+) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("within tx: begin transaction: %w", err)
+	}
+
+	//nolint:errcheck // not needed.
+	defer tx.Rollback()
+
+	if err := fn(ctx, tx); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("within tx: commit transaction: %w", err)
+	}
+
+	return nil
 }
 
 func (s *Sqlite) ReadEvents(

@@ -28,24 +28,14 @@ type pebbleEventData struct {
 }
 
 type Pebble struct {
-	outbox event.Outbox[*pebble.Batch]
-	db     *pebble.DB
-	mu     sync.Mutex
-}
-
-type PebbleOption func(*Pebble)
-
-func PebbleOutbox(outbox event.Outbox[*pebble.Batch]) PebbleOption {
-	return func(p *Pebble) {
-		p.outbox = outbox
-	}
+	db *pebble.DB
+	mu sync.Mutex
 }
 
 func NewPebble(db *pebble.DB) *Pebble {
 	return &Pebble{
-		db:     db,
-		outbox: nil,
-		mu:     sync.Mutex{},
+		db: db,
+		mu: sync.Mutex{},
 	}
 }
 
@@ -55,69 +45,106 @@ func (p *Pebble) AppendEvents(
 	expected version.Check,
 	events event.RawEvents,
 ) (version.Version, error) {
-	if err := ctx.Err(); err != nil {
+	var newVersion version.Version
+
+	err := p.WithinTx(ctx, func(ctx context.Context, batch *pebble.Batch) error {
+		v, _, err := p.AppendInTx(ctx, batch, id, expected, events)
+		if err != nil {
+			return err
+		}
+		newVersion = v
+		return nil
+	})
+	if err != nil {
 		return version.Zero, fmt.Errorf("append events: %w", err)
+	}
+	return newVersion, nil
+}
+
+func (p *Pebble) AppendInTx(
+	ctx context.Context,
+	batch *pebble.Batch,
+	id event.LogID,
+	expected version.Check,
+	events event.RawEvents,
+) (version.Version, []*event.Record, error) {
+	if err := ctx.Err(); err != nil {
+		return version.Zero, nil, fmt.Errorf("append in tx: %w", err)
 	}
 
 	if len(events) == 0 {
-		return version.Zero, fmt.Errorf("append events: %w", ErrNoEvents)
+		return version.Zero, nil, fmt.Errorf("append in tx: %w", ErrNoEvents)
 	}
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
 
 	logIDVersionKey := versionKeyFor(id)
 	actualLogVersion, err := p.getLogVersion(logIDVersionKey)
 	if err != nil {
-		return version.Zero, fmt.Errorf("append events: %w", err)
+		return version.Zero, nil, fmt.Errorf("append in tx: %w", err)
 	}
 
 	exp, ok := expected.(version.CheckExact)
 	if !ok {
-		return version.Zero, fmt.Errorf("append events: %w", ErrUnsupportedCheck)
+		return version.Zero, nil, fmt.Errorf("append in tx: %w", ErrUnsupportedCheck)
 	}
 
 	if err := exp.CheckExact(actualLogVersion); err != nil {
-		return version.Zero, fmt.Errorf("append events: %w", err)
+		return version.Zero, nil, fmt.Errorf("append in tx: %w", err)
 	}
 
-	// Atomic append
-	batch := p.db.NewBatch()
-	defer batch.Close()
-	eventRecords := events.ToRecords(id, actualLogVersion)
-	for _, record := range eventRecords {
+	records := events.ToRecords(id, actualLogVersion)
+	for _, record := range records {
 		key := eventKeyFor(record.LogID(), record.Version())
 		value, err := json.Marshal(pebbleEventData{
 			Data:      record.Data(),
 			EventName: record.EventName(),
 		})
 		if err != nil {
-			return version.Zero, fmt.Errorf("append events: could not marshal event data: %w", err)
+			return version.Zero, nil, fmt.Errorf(
+				"append in tx: could not marshal event data: %w",
+				err,
+			)
 		}
 		if err := batch.Set(key, value, pebble.NoSync); err != nil {
-			return version.Zero, fmt.Errorf("append events: could not add event to batch: %w", err)
+			return version.Zero, nil, fmt.Errorf(
+				"append in tx: could not add event to batch: %w",
+				err,
+			)
 		}
 	}
 	newStreamVersion := actualLogVersion + version.Version(len(events))
 	versionValue := make([]byte, uint64sizeBytes)
 	binary.BigEndian.PutUint64(versionValue, uint64(newStreamVersion))
 
-	if p.outbox != nil {
-		if err := p.outbox.Stage(ctx, batch, eventRecords); err != nil {
-			return version.Zero, fmt.Errorf("append events: outbox stage: %w", err)
-		}
-	}
-
 	if err := batch.Set(logIDVersionKey, versionValue, pebble.NoSync); err != nil {
-		return version.Zero, fmt.Errorf("append events: could not add version to batch: %w", err)
+		return version.Zero, nil, fmt.Errorf(
+			"append in tx: could not add version to batch: %w",
+			err,
+		)
 	}
 
-	// Commit the batch atomically. Use pebble.Sync to guarantee durability.
+	return newStreamVersion, records, nil
+}
+
+func (p *Pebble) WithinTx(
+	ctx context.Context,
+	fn func(ctx context.Context, batch *pebble.Batch) error,
+) error {
+	// The lock ensures that the read-then-write logic of AppendInTx is atomic.
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	batch := p.db.NewBatch()
+	defer batch.Close()
+
+	if err := fn(ctx, batch); err != nil {
+		return err
+	}
+
 	if err := batch.Commit(pebble.Sync); err != nil {
-		return version.Zero, fmt.Errorf("append events: commit batch: %w", err)
+		return fmt.Errorf("within tx: commit batch: %w", err)
 	}
 
-	return newStreamVersion, nil
+	return nil
 }
 
 func (p *Pebble) ReadEvents(
@@ -154,7 +181,6 @@ func (p *Pebble) ReadEvents(
 				return
 			}
 
-			// Value contains event name and data
 			var data pebbleEventData
 			if err := json.Unmarshal(iter.Value(), &data); err != nil {
 				yield(nil, fmt.Errorf("read events: could not unmarshal event data: %w", err))
