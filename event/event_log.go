@@ -8,10 +8,6 @@ import (
 	"github.com/DeluxeOwl/chronicle/version"
 )
 
-type AllReader interface {
-	ReadAllEvents(ctx context.Context, selector version.Selector) Records
-}
-
 type Reader interface {
 	ReadEvents(ctx context.Context, id LogID, selector version.Selector) Records
 }
