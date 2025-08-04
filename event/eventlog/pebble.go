@@ -28,14 +28,24 @@ type pebbleEventData struct {
 }
 
 type Pebble struct {
-	db *pebble.DB
-	mu sync.Mutex
+	outbox event.Outbox[*pebble.Batch]
+	db     *pebble.DB
+	mu     sync.Mutex
+}
+
+type PebbleOption func(*Pebble)
+
+func PebbleOutbox(outbox event.Outbox[*pebble.Batch]) PebbleOption {
+	return func(p *Pebble) {
+		p.outbox = outbox
+	}
 }
 
 func NewPebble(db *pebble.DB) *Pebble {
 	return &Pebble{
-		db: db,
-		mu: sync.Mutex{},
+		db:     db,
+		outbox: nil,
+		mu:     sync.Mutex{},
 	}
 }
 
@@ -82,23 +92,29 @@ func (p *Pebble) AppendEvents(
 			EventName: record.EventName(),
 		})
 		if err != nil {
-			return 0, fmt.Errorf("append events: could not marshal event data: %w", err)
+			return version.Zero, fmt.Errorf("append events: could not marshal event data: %w", err)
 		}
 		if err := batch.Set(key, value, pebble.NoSync); err != nil {
-			return 0, fmt.Errorf("append events: could not add event to batch: %w", err)
+			return version.Zero, fmt.Errorf("append events: could not add event to batch: %w", err)
 		}
 	}
 	newStreamVersion := actualLogVersion + version.Version(len(events))
 	versionValue := make([]byte, uint64sizeBytes)
 	binary.BigEndian.PutUint64(versionValue, uint64(newStreamVersion))
 
+	if p.outbox != nil {
+		if err := p.outbox.Stage(ctx, batch, eventRecords); err != nil {
+			return version.Zero, fmt.Errorf("append events: outbox stage: %w", err)
+		}
+	}
+
 	if err := batch.Set(logIDVersionKey, versionValue, pebble.NoSync); err != nil {
-		return 0, fmt.Errorf("append events: could not add version to batch: %w", err)
+		return version.Zero, fmt.Errorf("append events: could not add version to batch: %w", err)
 	}
 
 	// Commit the batch atomically. Use pebble.Sync to guarantee durability.
 	if err := batch.Commit(pebble.Sync); err != nil {
-		return 0, fmt.Errorf("append events: commit batch: %w", err)
+		return version.Zero, fmt.Errorf("append events: commit batch: %w", err)
 	}
 
 	return newStreamVersion, nil

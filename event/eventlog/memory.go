@@ -13,6 +13,7 @@ import (
 var _ event.Log = new(Memory)
 
 type Memory struct {
+	outbox      event.Outbox[struct{}]
 	mu          sync.RWMutex
 	events      map[event.LogID][]memStoreRecord
 	logVersions map[event.LogID]version.Version
@@ -25,15 +26,24 @@ type memStoreRecord struct {
 	EventName string          `json:"eventName"`
 }
 
+type MemoryOption func(*Memory)
+
+func MemoryOutbox(outbox event.Outbox[struct{}]) MemoryOption {
+	return func(m *Memory) {
+		m.outbox = outbox
+	}
+}
+
 func NewMemory() *Memory {
 	return &Memory{
+		outbox:      nil,
 		mu:          sync.RWMutex{},
 		events:      map[event.LogID][]memStoreRecord{},
 		logVersions: map[event.LogID]version.Version{},
 	}
 }
 
-func (store *Memory) AppendEvents(
+func (mem *Memory) AppendEvents(
 	ctx context.Context,
 	id event.LogID,
 	expected version.Check,
@@ -47,10 +57,10 @@ func (store *Memory) AppendEvents(
 		return version.Zero, fmt.Errorf("append events: %w", ErrNoEvents)
 	}
 
-	store.mu.Lock()
-	defer store.mu.Unlock()
+	mem.mu.Lock()
+	defer mem.mu.Unlock()
 
-	actualLogVersion := store.logVersions[id] // Defaults to 0 if id is not in map
+	actualLogVersion := mem.logVersions[id] // Defaults to 0 if id is not in map
 
 	exp, ok := expected.(version.CheckExact)
 	if !ok {
@@ -64,13 +74,18 @@ func (store *Memory) AppendEvents(
 	// Store events with versions starting from actualLogVersion + 1
 	eventRecords := events.ToRecords(id, actualLogVersion)
 
-	internal := store.recordsToInternal(eventRecords)
+	if mem.outbox != nil {
+		if err := mem.outbox.Stage(ctx, struct{}{}, eventRecords); err != nil {
+			return version.Zero, fmt.Errorf("append events: outbox stage: %w", err)
+		}
+	}
 
-	store.events[id] = append(store.events[id], internal...)
+	internal := mem.recordsToInternal(eventRecords)
+	mem.events[id] = append(mem.events[id], internal...)
 
 	// Update and store the new version for this specific stream
 	newStreamVersion := actualLogVersion + version.Version(len(events))
-	store.logVersions[id] = newStreamVersion
+	mem.logVersions[id] = newStreamVersion
 
 	return newStreamVersion, nil
 }

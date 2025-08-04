@@ -83,6 +83,7 @@ func (repo *ESRepo[TID, E, R]) GetVersion(
 	return root, nil
 }
 
+// TODO: should add retries at this level
 func (repo *ESRepo[TID, E, R]) Save(
 	ctx context.Context,
 	root R,

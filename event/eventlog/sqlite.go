@@ -24,6 +24,8 @@ const conflictErrorPrefix = "_chronicle_version_conflict: "
 type Sqlite struct {
 	db *sql.DB
 
+	outbox event.Outbox[*sql.Tx]
+
 	// Pre-computed query strings for performance and to avoid Sprintf in hot paths.
 	qCreateTable   string
 	qCreateTrigger string
@@ -33,7 +35,13 @@ type Sqlite struct {
 
 type SqliteOption func(*Sqlite)
 
-func WithTableName(tableName string) SqliteOption {
+func SqliteOutbox(outbox event.Outbox[*sql.Tx]) SqliteOption {
+	return func(s *Sqlite) {
+		s.outbox = outbox
+	}
+}
+
+func SqliteTableName(tableName string) SqliteOption {
 	return func(s *Sqlite) {
 		s.qCreateTable = fmt.Sprintf(`
         CREATE TABLE IF NOT EXISTS %s (
@@ -74,7 +82,7 @@ func NewSqlite(db *sql.DB, opts ...SqliteOption) (*Sqlite, error) {
 	sqliteLog := &Sqlite{db: db}
 
 	// Set default queries
-	WithTableName("chronicle_events")(sqliteLog)
+	SqliteTableName("chronicle_events")(sqliteLog)
 
 	for _, o := range opts {
 		o(sqliteLog)
@@ -147,6 +155,12 @@ func (s *Sqlite) AppendEvents(
 			}
 
 			return version.Zero, fmt.Errorf("append events: transaction failed: %w", err)
+		}
+	}
+
+	if s.outbox != nil {
+		if err := s.outbox.Stage(ctx, tx, eventRecords); err != nil {
+			return version.Zero, fmt.Errorf("append events: outbox stage: %w", err)
 		}
 	}
 
