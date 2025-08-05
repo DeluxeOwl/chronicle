@@ -302,7 +302,7 @@ func Test_AppendEvents_ContextCancellation(t *testing.T) {
 	}
 }
 
-func Test_SqliteOutbox(t *testing.T) {
+func Test_SqliteProcessor(t *testing.T) {
 	t.Run("without errors", func(t *testing.T) {
 		f, err := os.CreateTemp(t.TempDir(), "sqlite-*.db")
 		require.NoError(t, err)
@@ -314,13 +314,13 @@ func Test_SqliteOutbox(t *testing.T) {
 		sqliteLog, err := eventlog.NewSqlite(sqliteDB)
 		require.NoError(t, err)
 
-		sqliteOutbox := &OutboxMock[*sql.Tx]{
-			StageFunc: func(ctx context.Context, tx *sql.Tx, records []*event.Record) error {
+		sqliteProcessor := &TransactionalProcessorMock[*sql.Tx]{
+			ProcessRecordsFunc: func(ctx context.Context, tx *sql.Tx, records []*event.Record) error {
 				return nil
 			},
 		}
 
-		log := event.NewLogWithOutbox(sqliteLog, sqliteOutbox)
+		log := event.NewLogWithProcessor(sqliteLog, sqliteProcessor)
 		require.NotNil(t, log)
 
 		rawEvents1 := event.RawEvents{
@@ -336,7 +336,7 @@ func Test_SqliteOutbox(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, version.Version(2), v1)
 
-		require.Len(t, sqliteOutbox.calls.Stage, 1)
+		require.Len(t, sqliteProcessor.calls.ProcessRecords, 1)
 	})
 
 	t.Run("with errors", func(t *testing.T) {
@@ -350,13 +350,13 @@ func Test_SqliteOutbox(t *testing.T) {
 		sqliteLog, err := eventlog.NewSqlite(sqliteDB)
 		require.NoError(t, err)
 
-		sqliteOutbox := &OutboxMock[*sql.Tx]{
-			StageFunc: func(ctx context.Context, tx *sql.Tx, records []*event.Record) error {
-				return errors.New("outbox stage error")
+		sqliteProcessor := &TransactionalProcessorMock[*sql.Tx]{
+			ProcessRecordsFunc: func(ctx context.Context, tx *sql.Tx, records []*event.Record) error {
+				return errors.New("processor stage error")
 			},
 		}
 
-		log := event.NewLogWithOutbox(sqliteLog, sqliteOutbox)
+		log := event.NewLogWithProcessor(sqliteLog, sqliteProcessor)
 		require.NotNil(t, log)
 
 		rawEvents1 := event.RawEvents{
@@ -373,7 +373,7 @@ func Test_SqliteOutbox(t *testing.T) {
 		require.Error(t, err)
 		require.Equal(t, version.Version(0), v1)
 
-		require.Len(t, sqliteOutbox.calls.Stage, 1)
+		require.Len(t, sqliteProcessor.calls.ProcessRecords, 1)
 
 		records, err := log.ReadEvents(t.Context(), event.LogID("123"), version.SelectFromBeginning).
 			Collect()

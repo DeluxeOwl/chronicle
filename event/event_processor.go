@@ -7,16 +7,17 @@ import (
 	"github.com/DeluxeOwl/chronicle/version"
 )
 
-//go:generate go run github.com/matryer/moq@latest -pkg eventlog_test -skip-ensure -rm -out ./eventlog/outbox_mock_test.go . Outbox
+//go:generate go run github.com/matryer/moq@latest -pkg eventlog_test -skip-ensure -rm -out ./eventlog/processor_mock_test.go . TransactionalProcessor
 
-// Outbox defines the contract for staging messages within a transaction.
+// TransactionalProcessor defines the contract for processing messages within a transaction.
 // The user implements this interface for their specific database and schema.
 // T is the transaction handle type, e.g., *sql.Tx or *pebble.Batch.
-type Outbox[T any] interface {
-	// Stage is called by the framework *inside* an active transaction,
+// It can be used as an outbox, or to create projections.
+type TransactionalProcessor[T any] interface {
+	// Process is called by the framework *inside* an active transaction,
 	// just after events have been successfully written to the event log.
 	// It receives the transaction handle and the newly created event records.
-	Stage(ctx context.Context, tx T, records []*Record) error
+	ProcessRecords(ctx context.Context, tx T, records []*Record) error
 }
 
 type Transactor[T any] interface {
@@ -40,33 +41,33 @@ type TransactionalEventLog[T any] interface {
 }
 
 // TransactableLog is an event.Log that orchestrates writes within a transaction
-// and stages messages for an outbox.
+// and processes messages for a transactional processor.
 type TransactableLog[T any] struct {
 	transactor Transactor[T]
 	txLog      TransactionalLog[T]
-	outbox     Outbox[T]
+	processor  TransactionalProcessor[T]
 }
 
-func NewLogWithOutbox[T any](
+func NewLogWithProcessor[T any](
 	log TransactionalEventLog[T],
-	outbox Outbox[T],
+	processor TransactionalProcessor[T],
 ) *TransactableLog[T] {
 	return &TransactableLog[T]{
 		transactor: log,
 		txLog:      log,
-		outbox:     outbox,
+		processor:  processor,
 	}
 }
 
-func NewTransactableLogWithOutbox[T any](
+func NewTransactableLogWithProcessor[T any](
 	transactor Transactor[T],
 	txLog TransactionalLog[T],
-	outbox Outbox[T],
+	processor TransactionalProcessor[T],
 ) *TransactableLog[T] {
 	return &TransactableLog[T]{
 		transactor: transactor,
 		txLog:      txLog,
-		outbox:     outbox,
+		processor:  processor,
 	}
 }
 
@@ -86,10 +87,10 @@ func (l *TransactableLog[T]) AppendEvents(
 		}
 		newVersion = v
 
-		// If an outboxer is configured, call it with the same transaction.
-		if l.outbox != nil {
-			if err := l.outbox.Stage(ctx, tx, records); err != nil {
-				return fmt.Errorf("transactable log: stage outbox: %w", err)
+		// If a processor is configured, call it with the same transaction.
+		if l.processor != nil {
+			if err := l.processor.ProcessRecords(ctx, tx, records); err != nil {
+				return fmt.Errorf("transactable log: process records: %w", err)
 			}
 		}
 
