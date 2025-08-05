@@ -19,7 +19,6 @@ type TransactionalRepository[T any, TID ID, E event.Any, R Root[TID, E]] struct 
 	createRoot func() R
 
 	aggProcessor TransactionalAggregateProcessor[T, TID, E, R]
-	recProcessor event.TransactionalProcessor[T]
 
 	shouldRegisterRoot bool
 }
@@ -30,7 +29,6 @@ func NewTransactionalRepository[TX any, TID ID, E event.Any, R Root[TID, E]](
 	log event.TransactionalEventLog[TX],
 	createRoot func() R,
 	aggProcessor TransactionalAggregateProcessor[TX, TID, E, R],
-	recordProcessor event.TransactionalProcessor[TX],
 	opts ...ESRepoOption,
 ) (*TransactionalRepository[TX, TID, E, R], error) {
 	repo := &TransactionalRepository[TX, TID, E, R]{
@@ -42,7 +40,6 @@ func NewTransactionalRepository[TX any, TID ID, E event.Any, R Root[TID, E]](
 		serde:              serde.NewJSONBinary(),
 		shouldRegisterRoot: true,
 		aggProcessor:       aggProcessor,
-		recProcessor:       recordProcessor,
 	}
 
 	for _, o := range opts {
@@ -62,7 +59,6 @@ func NewTransactionalRepositoryWithTransactor[TX any, TID ID, E event.Any, R Roo
 	txLog event.TransactionalLog[TX],
 	createRoot func() R,
 	aggProcessor TransactionalAggregateProcessor[TX, TID, E, R],
-	recordProcessor event.TransactionalProcessor[TX],
 	opts ...ESRepoOption,
 ) (*TransactionalRepository[TX, TID, E, R], error) {
 	repo := &TransactionalRepository[TX, TID, E, R]{
@@ -74,7 +70,6 @@ func NewTransactionalRepositoryWithTransactor[TX any, TID ID, E event.Any, R Roo
 		serde:              serde.NewJSONBinary(),
 		shouldRegisterRoot: true,
 		aggProcessor:       aggProcessor,
-		recProcessor:       recordProcessor,
 	}
 
 	for _, o := range opts {
@@ -116,7 +111,7 @@ func (repo *TransactionalRepository[T, TID, E, R]) Save(
 		}
 
 		// Append events to the log *within the transaction*
-		v, records, err := repo.txLog.AppendInTx(ctx, tx, logID, expectedVersion, rawEvents)
+		v, _, err := repo.txLog.AppendInTx(ctx, tx, logID, expectedVersion, rawEvents)
 		if err != nil {
 			return fmt.Errorf("transactional repo save: append in tx: %w", err)
 		}
@@ -131,14 +126,7 @@ func (repo *TransactionalRepository[T, TID, E, R]) Save(
 			}
 		}
 
-		// Call the low-level record processor, if configured
-		if repo.recProcessor != nil {
-			if err := repo.recProcessor.ProcessRecords(ctx, tx, records); err != nil {
-				return fmt.Errorf("transactional repo save: record processor: %w", err)
-			}
-		}
-
-		return nil // Returning nil commits the transaction
+		return nil
 	})
 	if err != nil {
 		return version.Zero, nil, err
