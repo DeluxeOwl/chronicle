@@ -45,6 +45,7 @@ func NewTransactionalRepository[TX any, TID ID, E event.Any, R Root[TID, E]](
 	for _, o := range opts {
 		o(repo)
 	}
+
 	if repo.shouldRegisterRoot {
 		if err := repo.registry.RegisterEvents(createRoot()); err != nil {
 			return nil, fmt.Errorf("new transactional repository: %w", err)

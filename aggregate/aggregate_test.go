@@ -9,6 +9,7 @@ import (
 	"github.com/DeluxeOwl/chronicle"
 	"github.com/DeluxeOwl/chronicle/aggregate"
 	"github.com/DeluxeOwl/chronicle/event"
+	"github.com/DeluxeOwl/chronicle/event/eventlog"
 	"github.com/DeluxeOwl/chronicle/serde"
 
 	"github.com/DeluxeOwl/chronicle/version"
@@ -180,6 +181,17 @@ func Test_Person(t *testing.T) {
 	p := createPerson(t)
 
 	memlog := chronicle.NewEventLogMemory()
+
+	_, err := aggregate.NewTransactionalRepository(
+		memlog,
+		NewEmpty,
+		&TransactionalAggregateProcessorMock[eventlog.MemTx, PersonID, PersonEvent, *Person]{
+			ProcessFunc: func(ctx context.Context, tx eventlog.MemTx, root *Person, events aggregate.CommitedEvents[PersonEvent]) error {
+				return nil
+			},
+		},
+	)
+	require.NoError(t, err)
 
 	snapstore := chronicle.NewSnapshotStoreMemory(NewSnapshot)
 	registry := chronicle.NewAnyEventRegistry()
