@@ -184,3 +184,83 @@ func (mock *RepositoryMock[TID, E, R]) SaveCalls() []struct {
 	mock.lockSave.RUnlock()
 	return calls
 }
+
+// TransactionalAggregateProcessorMock is a mock implementation of aggregate.TransactionalAggregateProcessor.
+//
+//	func TestSomethingThatUsesTransactionalAggregateProcessor(t *testing.T) {
+//
+//		// make and configure a mocked aggregate.TransactionalAggregateProcessor
+//		mockedTransactionalAggregateProcessor := &TransactionalAggregateProcessorMock{
+//			ProcessFunc: func(ctx context.Context, tx TX, root R, events aggregate.CommitedEvents[E]) error {
+//				panic("mock out the Process method")
+//			},
+//		}
+//
+//		// use mockedTransactionalAggregateProcessor in code that requires aggregate.TransactionalAggregateProcessor
+//		// and then make assertions.
+//
+//	}
+type TransactionalAggregateProcessorMock[TX any, TID aggregate.ID, E event.Any, R aggregate.Root[TID, E]] struct {
+	// ProcessFunc mocks the Process method.
+	ProcessFunc func(ctx context.Context, tx TX, root R, events aggregate.CommitedEvents[E]) error
+
+	// calls tracks calls to the methods.
+	calls struct {
+		// Process holds details about calls to the Process method.
+		Process []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Tx is the tx argument value.
+			Tx TX
+			// Root is the root argument value.
+			Root R
+			// Events is the events argument value.
+			Events aggregate.CommitedEvents[E]
+		}
+	}
+	lockProcess sync.RWMutex
+}
+
+// Process calls ProcessFunc.
+func (mock *TransactionalAggregateProcessorMock[TX, TID, E, R]) Process(ctx context.Context, tx TX, root R, events aggregate.CommitedEvents[E]) error {
+	if mock.ProcessFunc == nil {
+		panic("TransactionalAggregateProcessorMock.ProcessFunc: method is nil but TransactionalAggregateProcessor.Process was just called")
+	}
+	callInfo := struct {
+		Ctx    context.Context
+		Tx     TX
+		Root   R
+		Events aggregate.CommitedEvents[E]
+	}{
+		Ctx:    ctx,
+		Tx:     tx,
+		Root:   root,
+		Events: events,
+	}
+	mock.lockProcess.Lock()
+	mock.calls.Process = append(mock.calls.Process, callInfo)
+	mock.lockProcess.Unlock()
+	return mock.ProcessFunc(ctx, tx, root, events)
+}
+
+// ProcessCalls gets all the calls that were made to Process.
+// Check the length with:
+//
+//	len(mockedTransactionalAggregateProcessor.ProcessCalls())
+func (mock *TransactionalAggregateProcessorMock[TX, TID, E, R]) ProcessCalls() []struct {
+	Ctx    context.Context
+	Tx     TX
+	Root   R
+	Events aggregate.CommitedEvents[E]
+} {
+	var calls []struct {
+		Ctx    context.Context
+		Tx     TX
+		Root   R
+		Events aggregate.CommitedEvents[E]
+	}
+	mock.lockProcess.RLock()
+	calls = mock.calls.Process
+	mock.lockProcess.RUnlock()
+	return calls
+}

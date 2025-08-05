@@ -15,7 +15,7 @@ import (
 //
 //		// make and configure a mocked event.TransactionalProcessor
 //		mockedTransactionalProcessor := &TransactionalProcessorMock{
-//			ProcessRecordsFunc: func(ctx context.Context, tx T, records []*event.Record) error {
+//			ProcessRecordsFunc: func(ctx context.Context, tx TX, records []*event.Record) error {
 //				panic("mock out the ProcessRecords method")
 //			},
 //		}
@@ -24,9 +24,9 @@ import (
 //		// and then make assertions.
 //
 //	}
-type TransactionalProcessorMock[T any] struct {
+type TransactionalProcessorMock[TX any] struct {
 	// ProcessRecordsFunc mocks the ProcessRecords method.
-	ProcessRecordsFunc func(ctx context.Context, tx T, records []*event.Record) error
+	ProcessRecordsFunc func(ctx context.Context, tx TX, records []*event.Record) error
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -35,7 +35,7 @@ type TransactionalProcessorMock[T any] struct {
 			// Ctx is the ctx argument value.
 			Ctx context.Context
 			// Tx is the tx argument value.
-			Tx T
+			Tx TX
 			// Records is the records argument value.
 			Records []*event.Record
 		}
@@ -44,13 +44,13 @@ type TransactionalProcessorMock[T any] struct {
 }
 
 // ProcessRecords calls ProcessRecordsFunc.
-func (mock *TransactionalProcessorMock[T]) ProcessRecords(ctx context.Context, tx T, records []*event.Record) error {
+func (mock *TransactionalProcessorMock[TX]) ProcessRecords(ctx context.Context, tx TX, records []*event.Record) error {
 	if mock.ProcessRecordsFunc == nil {
 		panic("TransactionalProcessorMock.ProcessRecordsFunc: method is nil but TransactionalProcessor.ProcessRecords was just called")
 	}
 	callInfo := struct {
 		Ctx     context.Context
-		Tx      T
+		Tx      TX
 		Records []*event.Record
 	}{
 		Ctx:     ctx,
@@ -67,14 +67,14 @@ func (mock *TransactionalProcessorMock[T]) ProcessRecords(ctx context.Context, t
 // Check the length with:
 //
 //	len(mockedTransactionalProcessor.ProcessRecordsCalls())
-func (mock *TransactionalProcessorMock[T]) ProcessRecordsCalls() []struct {
+func (mock *TransactionalProcessorMock[TX]) ProcessRecordsCalls() []struct {
 	Ctx     context.Context
-	Tx      T
+	Tx      TX
 	Records []*event.Record
 } {
 	var calls []struct {
 		Ctx     context.Context
-		Tx      T
+		Tx      TX
 		Records []*event.Record
 	}
 	mock.lockProcessRecords.RLock()

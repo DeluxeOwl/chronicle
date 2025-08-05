@@ -13,21 +13,21 @@ import (
 // The user implements this interface for their specific database and schema.
 // T is the transaction handle type, e.g., *sql.Tx or *pebble.Batch.
 // It can be used as an outbox, or to create projections.
-type TransactionalProcessor[T any] interface {
+type TransactionalProcessor[TX any] interface {
 	// Process is called by the framework *inside* an active transaction,
 	// just after events have been successfully written to the event log.
 	// It receives the transaction handle and the newly created event records.
-	ProcessRecords(ctx context.Context, tx T, records []*Record) error
+	ProcessRecords(ctx context.Context, tx TX, records []*Record) error
 }
 
-type Transactor[T any] interface {
-	WithinTx(ctx context.Context, fn func(ctx context.Context, tx T) error) error
+type Transactor[TX any] interface {
+	WithinTx(ctx context.Context, fn func(ctx context.Context, tx TX) error) error
 }
 
-type TransactionalLog[T any] interface {
+type TransactionalLog[TX any] interface {
 	AppendInTx(
 		ctx context.Context,
-		tx T,
+		tx TX,
 		id LogID,
 		expected version.Check,
 		events RawEvents,
@@ -35,43 +35,43 @@ type TransactionalLog[T any] interface {
 	Reader
 }
 
-type TransactionalEventLog[T any] interface {
-	TransactionalLog[T]
-	Transactor[T]
+type TransactionalEventLog[TX any] interface {
+	TransactionalLog[TX]
+	Transactor[TX]
 }
 
 // TransactableLog is an event.Log that orchestrates writes within a transaction
 // and processes messages for a transactional processor.
-type TransactableLog[T any] struct {
-	transactor Transactor[T]
-	txLog      TransactionalLog[T]
-	processor  TransactionalProcessor[T]
+type TransactableLog[TX any] struct {
+	transactor Transactor[TX]
+	txLog      TransactionalLog[TX]
+	processor  TransactionalProcessor[TX]
 }
 
-func NewLogWithProcessor[T any](
-	log TransactionalEventLog[T],
-	processor TransactionalProcessor[T],
-) *TransactableLog[T] {
-	return &TransactableLog[T]{
+func NewLogWithProcessor[TX any](
+	log TransactionalEventLog[TX],
+	processor TransactionalProcessor[TX],
+) *TransactableLog[TX] {
+	return &TransactableLog[TX]{
 		transactor: log,
 		txLog:      log,
 		processor:  processor,
 	}
 }
 
-func NewTransactableLogWithProcessor[T any](
-	transactor Transactor[T],
-	txLog TransactionalLog[T],
-	processor TransactionalProcessor[T],
-) *TransactableLog[T] {
-	return &TransactableLog[T]{
+func NewTransactableLogWithProcessor[TX any](
+	transactor Transactor[TX],
+	txLog TransactionalLog[TX],
+	processor TransactionalProcessor[TX],
+) *TransactableLog[TX] {
+	return &TransactableLog[TX]{
 		transactor: transactor,
 		txLog:      txLog,
 		processor:  processor,
 	}
 }
 
-func (l *TransactableLog[T]) AppendEvents(
+func (l *TransactableLog[TX]) AppendEvents(
 	ctx context.Context,
 	id LogID,
 	expected version.Check,
@@ -79,7 +79,7 @@ func (l *TransactableLog[T]) AppendEvents(
 ) (version.Version, error) {
 	var newVersion version.Version
 
-	err := l.transactor.WithinTx(ctx, func(ctx context.Context, tx T) error {
+	err := l.transactor.WithinTx(ctx, func(ctx context.Context, tx TX) error {
 		// Write the events to the main event store log.
 		v, records, err := l.txLog.AppendInTx(ctx, tx, id, expected, events)
 		if err != nil {
@@ -104,7 +104,7 @@ func (l *TransactableLog[T]) AppendEvents(
 	return newVersion, nil
 }
 
-func (l *TransactableLog[T]) ReadEvents(
+func (l *TransactableLog[TX]) ReadEvents(
 	ctx context.Context,
 	id LogID,
 	selector version.Selector,
