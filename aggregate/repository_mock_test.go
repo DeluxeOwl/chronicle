@@ -23,7 +23,7 @@ import (
 //			GetVersionFunc: func(ctx context.Context, id aggregate.ID, selector version.Selector) (R, error) {
 //				panic("mock out the GetVersion method")
 //			},
-//			SaveFunc: func(ctx context.Context, root R) error {
+//			SaveFunc: func(ctx context.Context, root R) (version.Version, aggregate.CommitedEvents[E], error) {
 //				panic("mock out the Save method")
 //			},
 //		}
@@ -40,7 +40,7 @@ type RepositoryMock[TID aggregate.ID, E event.Any, R aggregate.Root[TID, E]] str
 	GetVersionFunc func(ctx context.Context, id aggregate.ID, selector version.Selector) (R, error)
 
 	// SaveFunc mocks the Save method.
-	SaveFunc func(ctx context.Context, root R) error
+	SaveFunc func(ctx context.Context, root R) (version.Version, aggregate.CommitedEvents[E], error)
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -150,7 +150,7 @@ func (mock *RepositoryMock[TID, E, R]) GetVersionCalls() []struct {
 }
 
 // Save calls SaveFunc.
-func (mock *RepositoryMock[TID, E, R]) Save(ctx context.Context, root R) error {
+func (mock *RepositoryMock[TID, E, R]) Save(ctx context.Context, root R) (version.Version, aggregate.CommitedEvents[E], error) {
 	if mock.SaveFunc == nil {
 		panic("RepositoryMock.SaveFunc: method is nil but Repository.Save was just called")
 	}

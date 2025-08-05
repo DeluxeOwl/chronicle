@@ -18,7 +18,7 @@ type Getter[TID ID, E event.Any, R Root[TID, E]] interface {
 }
 
 type Saver[TID ID, E event.Any, R Root[TID, E]] interface {
-	Save(ctx context.Context, root R) error
+	Save(ctx context.Context, root R) (version.Version, CommitedEvents[E], error)
 }
 
 type Repository[TID ID, E event.Any, R Root[TID, E]] interface {
