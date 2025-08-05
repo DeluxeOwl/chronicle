@@ -10,7 +10,11 @@ import (
 	"github.com/DeluxeOwl/chronicle/version"
 )
 
-var _ event.Log = new(Memory)
+var (
+	_ event.Log                     = new(Memory)
+	_ event.Transactor[MemTx]       = new(Memory)
+	_ event.TransactionalLog[MemTx] = new(Memory)
+)
 
 type Memory struct {
 	mu          sync.RWMutex

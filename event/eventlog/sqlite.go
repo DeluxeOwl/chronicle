@@ -12,7 +12,11 @@ import (
 	"github.com/DeluxeOwl/chronicle/version"
 )
 
-var _ event.Log = new(Sqlite)
+var (
+	_ event.Log                       = new(Sqlite)
+	_ event.Transactor[*sql.Tx]       = new(Sqlite)
+	_ event.TransactionalLog[*sql.Tx] = new(Sqlite)
+)
 
 var (
 	ErrUnsupportedCheck = errors.New("unsupported version check type")
