@@ -15,9 +15,8 @@ import (
 )
 
 var (
-	_ event.Log                             = new(Pebble)
-	_ event.Transactor[*pebble.Batch]       = new(Pebble)
-	_ event.TransactionalLog[*pebble.Batch] = new(Pebble)
+	_ event.Log                                  = new(Pebble)
+	_ event.TransactionalEventLog[*pebble.Batch] = new(Pebble)
 )
 
 var (

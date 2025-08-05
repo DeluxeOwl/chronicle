@@ -13,9 +13,8 @@ import (
 )
 
 var (
-	_ event.Log                       = new(Sqlite)
-	_ event.Transactor[*sql.Tx]       = new(Sqlite)
-	_ event.TransactionalLog[*sql.Tx] = new(Sqlite)
+	_ event.Log                            = new(Sqlite)
+	_ event.TransactionalEventLog[*sql.Tx] = new(Sqlite)
 )
 
 var (

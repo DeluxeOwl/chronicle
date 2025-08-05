@@ -7,6 +7,8 @@ import (
 	"github.com/DeluxeOwl/chronicle/version"
 )
 
+//go:generate go run github.com/matryer/moq@latest -pkg eventlog_test -skip-ensure -rm -out ./eventlog/outbox_mock_test.go . Outbox
+
 // Outbox defines the contract for staging messages within a transaction.
 // The user implements this interface for their specific database and schema.
 // T is the transaction handle type, e.g., *sql.Tx or *pebble.Batch.
@@ -15,12 +17,6 @@ type Outbox[T any] interface {
 	// just after events have been successfully written to the event log.
 	// It receives the transaction handle and the newly created event records.
 	Stage(ctx context.Context, tx T, records []*Record) error
-}
-
-type OutboxFunc[T any] func(ctx context.Context, tx T, records []*Record) error
-
-func (fn OutboxFunc[T]) Stage(ctx context.Context, tx T, records []*Record) error {
-	return fn(ctx, tx, records)
 }
 
 type Transactor[T any] interface {
@@ -38,6 +34,11 @@ type TransactionalLog[T any] interface {
 	Reader
 }
 
+type TransactionalEventLog[T any] interface {
+	TransactionalLog[T]
+	Transactor[T]
+}
+
 // TransactableLog is an event.Log that orchestrates writes within a transaction
 // and stages messages for an outbox.
 type TransactableLog[T any] struct {
@@ -46,7 +47,18 @@ type TransactableLog[T any] struct {
 	outbox     Outbox[T]
 }
 
-func NewTransactableLog[T any](
+func NewLogWithOutbox[T any](
+	log TransactionalEventLog[T],
+	outbox Outbox[T],
+) *TransactableLog[T] {
+	return &TransactableLog[T]{
+		transactor: log,
+		txLog:      log,
+		outbox:     outbox,
+	}
+}
+
+func NewTransactableLogWithOutbox[T any](
 	transactor Transactor[T],
 	txLog TransactionalLog[T],
 	outbox Outbox[T],
@@ -77,15 +89,18 @@ func (l *TransactableLog[T]) AppendEvents(
 		// If an outboxer is configured, call it with the same transaction.
 		if l.outbox != nil {
 			if err := l.outbox.Stage(ctx, tx, records); err != nil {
-				return fmt.Errorf("transactable log: %w", err)
+				return fmt.Errorf("transactable log: stage outbox: %w", err)
 			}
 		}
 
 		// If we get here with no error, the transactor will commit.
 		return nil
 	})
+	if err != nil {
+		return version.Zero, err
+	}
 
-	return newVersion, err
+	return newVersion, nil
 }
 
 func (l *TransactableLog[T]) ReadEvents(

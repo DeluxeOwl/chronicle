@@ -11,9 +11,8 @@ import (
 )
 
 var (
-	_ event.Log                     = new(Memory)
-	_ event.Transactor[MemTx]       = new(Memory)
-	_ event.TransactionalLog[MemTx] = new(Memory)
+	_ event.Log                          = new(Memory)
+	_ event.TransactionalEventLog[MemTx] = new(Memory)
 )
 
 type Memory struct {

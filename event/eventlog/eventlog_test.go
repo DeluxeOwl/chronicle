@@ -301,3 +301,83 @@ func Test_AppendEvents_ContextCancellation(t *testing.T) {
 		})
 	}
 }
+
+func Test_SqliteOutbox(t *testing.T) {
+	t.Run("without errors", func(t *testing.T) {
+		f, err := os.CreateTemp(t.TempDir(), "sqlite-*.db")
+		require.NoError(t, err)
+
+		sqliteDB, err := sql.Open("sqlite3", f.Name())
+		require.NoError(t, err)
+		defer sqliteDB.Close()
+
+		sqliteLog, err := eventlog.NewSqlite(sqliteDB)
+		require.NoError(t, err)
+
+		sqliteOutbox := &OutboxMock[*sql.Tx]{
+			StageFunc: func(ctx context.Context, tx *sql.Tx, records []*event.Record) error {
+				return nil
+			},
+		}
+
+		log := event.NewLogWithOutbox(sqliteLog, sqliteOutbox)
+		require.NotNil(t, log)
+
+		rawEvents1 := event.RawEvents{
+			event.NewRaw("event-a", []byte(`{"a": 1}`)),
+			event.NewRaw("event-b", []byte(`{"b": 2}`)),
+		}
+		v1, err := log.AppendEvents(
+			t.Context(),
+			event.LogID("123"),
+			version.CheckExact(0),
+			rawEvents1,
+		)
+		require.NoError(t, err)
+		require.Equal(t, version.Version(2), v1)
+
+		require.Len(t, sqliteOutbox.calls.Stage, 1)
+	})
+
+	t.Run("with errors", func(t *testing.T) {
+		f, err := os.CreateTemp(t.TempDir(), "sqlite-*.db")
+		require.NoError(t, err)
+
+		sqliteDB, err := sql.Open("sqlite3", f.Name())
+		require.NoError(t, err)
+		defer sqliteDB.Close()
+
+		sqliteLog, err := eventlog.NewSqlite(sqliteDB)
+		require.NoError(t, err)
+
+		sqliteOutbox := &OutboxMock[*sql.Tx]{
+			StageFunc: func(ctx context.Context, tx *sql.Tx, records []*event.Record) error {
+				return errors.New("outbox stage error")
+			},
+		}
+
+		log := event.NewLogWithOutbox(sqliteLog, sqliteOutbox)
+		require.NotNil(t, log)
+
+		rawEvents1 := event.RawEvents{
+			event.NewRaw("event-a", []byte(`{"a": 1}`)),
+			event.NewRaw("event-b", []byte(`{"b": 2}`)),
+		}
+
+		v1, err := log.AppendEvents(
+			t.Context(),
+			event.LogID("123"),
+			version.CheckExact(0),
+			rawEvents1,
+		)
+		require.Error(t, err)
+		require.Equal(t, version.Version(0), v1)
+
+		require.Len(t, sqliteOutbox.calls.Stage, 1)
+
+		records, err := log.ReadEvents(t.Context(), event.LogID("123"), version.SelectFromBeginning).
+			Collect()
+		require.NoError(t, err)
+		require.Empty(t, records)
+	})
+}
