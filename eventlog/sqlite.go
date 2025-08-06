@@ -13,6 +13,7 @@ import (
 )
 
 var (
+	_ event.GlobalReader                   = new(Sqlite)
 	_ event.Log                            = new(Sqlite)
 	_ event.TransactionalEventLog[*sql.Tx] = new(Sqlite)
 )
@@ -32,6 +33,7 @@ type Sqlite struct {
 	qCreateTrigger string
 	qInsertEvent   string
 	qReadEvents    string
+	qReadAllEvents string
 }
 
 type SqliteOption func(*Sqlite)
@@ -39,13 +41,14 @@ type SqliteOption func(*Sqlite)
 func SqliteTableName(tableName string) SqliteOption {
 	return func(s *Sqlite) {
 		s.qCreateTable = fmt.Sprintf(`
-        CREATE TABLE IF NOT EXISTS %s (
-            logID      TEXT    NOT NULL,
-            version    INTEGER NOT NULL,
-            event_name TEXT    NOT NULL,
-            data       BLOB,
-            PRIMARY KEY (logID, version)
-        );`, tableName)
+		CREATE TABLE IF NOT EXISTS %s (
+			global_version INTEGER PRIMARY KEY AUTOINCREMENT,
+			logID          TEXT    NOT NULL,
+			version        INTEGER NOT NULL,
+			event_name     TEXT    NOT NULL,
+			data           BLOB,
+			UNIQUE (logID, version)
+		);`, tableName)
 
 		s.qCreateTrigger = fmt.Sprintf(`
         CREATE TRIGGER IF NOT EXISTS check_event_version
@@ -67,6 +70,10 @@ func SqliteTableName(tableName string) SqliteOption {
 		)
 		s.qReadEvents = fmt.Sprintf(
 			"SELECT version, event_name, data FROM %s WHERE logID = ? AND version >= ? ORDER BY version ASC",
+			tableName,
+		)
+		s.qReadAllEvents = fmt.Sprintf(
+			"SELECT global_version, version, logID, event_name, data FROM %s WHERE global_version >= ? ORDER BY global_version ASC",
 			tableName,
 		)
 	}
@@ -231,6 +238,51 @@ func (s *Sqlite) ReadEvents(
 
 		if err := rows.Err(); err != nil {
 			yield(nil, fmt.Errorf("read events: rows error: %w", err))
+		}
+	}
+}
+
+func (s *Sqlite) ReadAllEvents(
+	ctx context.Context,
+	globalSelector version.Selector,
+) event.GlobalRecords {
+	return func(yield func(*event.GlobalRecord, error) bool) {
+		rows, err := s.db.QueryContext(ctx, s.qReadAllEvents, globalSelector.From)
+		if err != nil {
+			yield(nil, fmt.Errorf("read all events: query context: %w", err))
+			return
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			if err := ctx.Err(); err != nil {
+				yield(nil, err)
+				return
+			}
+
+			var globalVersion, streamVersion uint64
+			var logID, eventName string
+			var data []byte
+
+			if err := rows.Scan(&globalVersion, &streamVersion, &logID, &eventName, &data); err != nil {
+				yield(nil, fmt.Errorf("read all events: scan row: %w", err))
+				return
+			}
+
+			record := event.NewGlobalRecord(
+				version.Version(globalVersion),
+				version.Version(streamVersion),
+				event.LogID(logID),
+				eventName,
+				data,
+			)
+			if !yield(record, nil) {
+				return
+			}
+		}
+
+		if err := rows.Err(); err != nil {
+			yield(nil, fmt.Errorf("read all events: rows error: %w", err))
 		}
 	}
 }
