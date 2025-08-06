@@ -3,6 +3,7 @@ package eventlog
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/DeluxeOwl/chronicle/event"
@@ -11,28 +12,32 @@ import (
 )
 
 var (
+	_ event.GlobalReader                 = new(Memory)
 	_ event.Log                          = new(Memory)
 	_ event.TransactionalEventLog[MemTx] = new(Memory)
 )
 
 type Memory struct {
-	mu          sync.RWMutex
-	events      map[event.LogID][]memStoreRecord
-	logVersions map[event.LogID]version.Version
+	mu            sync.RWMutex
+	events        map[event.LogID][]memStoreRecord
+	logVersions   map[event.LogID]version.Version
+	globalVersion version.Version
 }
 
 type memStoreRecord struct {
-	LogID     event.LogID     `json:"logID"`
-	Version   version.Version `json:"version"`
-	Data      []byte          `json:"data"`
-	EventName string          `json:"eventName"`
+	LogID         event.LogID     `json:"logID"`
+	Version       version.Version `json:"version"`
+	GlobalVersion version.Version `json:"globalVersion"`
+	Data          []byte          `json:"data"`
+	EventName     string          `json:"eventName"`
 }
 
 func NewMemory() *Memory {
 	return &Memory{
-		mu:          sync.RWMutex{},
-		events:      map[event.LogID][]memStoreRecord{},
-		logVersions: map[event.LogID]version.Version{},
+		mu:            sync.RWMutex{},
+		events:        map[event.LogID][]memStoreRecord{},
+		logVersions:   map[event.LogID]version.Version{},
+		globalVersion: version.Zero,
 	}
 }
 
@@ -92,11 +97,12 @@ func (mem *Memory) AppendInTx(
 	}
 
 	records := events.ToRecords(id, actualLogVersion)
-	internal := mem.recordsToInternal(records)
+	internal := mem.recordsToInternal(records, mem.globalVersion)
 	mem.events[id] = append(mem.events[id], internal...)
 
 	newStreamVersion := actualLogVersion + version.Version(len(events))
 	mem.logVersions[id] = newStreamVersion
+	mem.globalVersion += version.Version(len(events))
 
 	return newStreamVersion, records, nil
 }
@@ -115,15 +121,20 @@ func (mem *Memory) WithinTx(
 	return fn(ctx, MemTx{})
 }
 
-func (store *Memory) recordsToInternal(records []*event.Record) []memStoreRecord {
+func (store *Memory) recordsToInternal(
+	records []*event.Record,
+	startingGlobalVersion version.Version,
+) []memStoreRecord {
 	memoryRecords := make([]memStoreRecord, len(records))
 
 	for i, record := range records {
 		memoryRecord := memStoreRecord{
-			LogID:     record.LogID(),
-			Version:   record.Version(),
-			Data:      record.Data(),
-			EventName: record.EventName(),
+			LogID:   record.LogID(),
+			Version: record.Version(),
+			//nolint:gosec // not a problem.
+			GlobalVersion: startingGlobalVersion + version.Version(i) + 1,
+			Data:          record.Data(),
+			EventName:     record.EventName(),
 		}
 
 		memoryRecords[i] = memoryRecord
@@ -162,6 +173,48 @@ func (store *Memory) ReadEvents(
 			if ctxErr != nil && !yield(nil, ctx.Err()) {
 				return
 			}
+
+			if !yield(record, nil) {
+				return
+			}
+		}
+	}
+}
+
+func (mem *Memory) ReadAllEvents(
+	ctx context.Context,
+	globalSelector version.Selector,
+) event.GlobalRecords {
+	return func(yield func(*event.GlobalRecord, error) bool) {
+		mem.mu.RLock()
+		allEvents := make([]memStoreRecord, 0)
+		for _, logEvents := range mem.events {
+			allEvents = append(allEvents, logEvents...)
+		}
+		mem.mu.RUnlock()
+
+		sort.Slice(allEvents, func(i, j int) bool {
+			return allEvents[i].GlobalVersion < allEvents[j].GlobalVersion
+		})
+
+		for _, memRecord := range allEvents {
+			if memRecord.GlobalVersion < globalSelector.From {
+				continue
+			}
+
+			if err := ctx.Err(); err != nil {
+				yield(nil, err)
+				return
+			}
+
+			// When reading all events, the record's version is the global version.
+			record := event.NewGlobalRecord(
+				memRecord.GlobalVersion,
+				memRecord.Version,
+				memRecord.LogID,
+				memRecord.EventName,
+				memRecord.Data,
+			)
 
 			if !yield(record, nil) {
 				return
