@@ -25,6 +25,4 @@
 - check differential dataflow https://github.com/electric-sql/d2ts
 - add repos under chronicle package
 - snapshots + transactional repo
-
-http://localhost:3000/c/f2ec7839-d04c-45ca-ba49-37b7589f4d25
-https://aistudio.google.com/prompts/1a-nzVPO5xj8ueV4T_76XfA9cSFuaxlSs
+- consider cloudevents
