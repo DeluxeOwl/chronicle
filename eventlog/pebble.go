@@ -15,19 +15,31 @@ import (
 )
 
 var (
+	_ event.GlobalReader                         = new(Pebble)
 	_ event.Log                                  = new(Pebble)
 	_ event.TransactionalEventLog[*pebble.Batch] = new(Pebble)
 )
 
 var (
-	eventKeyPrefix   = []byte("e/")
-	versionKeyPrefix = []byte("v/")
+	eventKeyPrefix       = []byte("e/")
+	versionKeyPrefix     = []byte("v/")
+	globalEventKeyPrefix = []byte("ge/")
+	globalVersionKey     = []byte("g_version")
 )
 
 // We don't need to store LogID and Version in the value, as they are already in the key.
 type pebbleEventData struct {
 	Data      []byte `json:"data"`
 	EventName string `json:"eventName"`
+}
+
+// pebbleGlobalEventData stores the data for the global event index.
+// We don't store the global version as it's part of the key.
+type pebbleGlobalEventData struct {
+	LogID     event.LogID     `json:"logID"`
+	Version   version.Version `json:"version"`
+	Data      []byte          `json:"data"`
+	EventName string          `json:"eventName"`
 }
 
 type Pebble struct {
@@ -79,10 +91,15 @@ func (p *Pebble) AppendInTx(
 		return version.Zero, nil, fmt.Errorf("append in tx: %w", ErrNoEvents)
 	}
 
+	// Get current versions.
 	logIDVersionKey := versionKeyFor(id)
 	actualLogVersion, err := p.getLogVersion(logIDVersionKey)
 	if err != nil {
 		return version.Zero, nil, fmt.Errorf("append in tx: %w", err)
+	}
+	globalVersion, err := p.getGlobalVersion()
+	if err != nil {
+		return version.Zero, nil, fmt.Errorf("append in tx: could not get global version: %w", err)
 	}
 
 	exp, ok := expected.(version.CheckExact)
@@ -95,7 +112,8 @@ func (p *Pebble) AppendInTx(
 	}
 
 	records := events.ToRecords(id, actualLogVersion)
-	for _, record := range records {
+	for i, record := range records {
+		// Set event data.
 		key := eventKeyFor(record.LogID(), record.Version())
 		value, err := json.Marshal(pebbleEventData{
 			Data:      record.Data(),
@@ -113,7 +131,31 @@ func (p *Pebble) AppendInTx(
 				err,
 			)
 		}
+
+		//nolint:gosec // not a problem.
+		currentGlobalVersion := globalVersion + version.Version(i) + 1
+		globalKey := globalEventKeyFor(currentGlobalVersion)
+		globalValue, err := json.Marshal(pebbleGlobalEventData{
+			LogID:     record.LogID(),
+			Version:   record.Version(),
+			Data:      record.Data(),
+			EventName: record.EventName(),
+		})
+		if err != nil {
+			return version.Zero, nil, fmt.Errorf(
+				"append in tx: could not marshal global event data: %w",
+				err,
+			)
+		}
+		if err := batch.Set(globalKey, globalValue, pebble.NoSync); err != nil {
+			return version.Zero, nil, fmt.Errorf(
+				"append in tx: could not add global event to batch: %w",
+				err,
+			)
+		}
 	}
+
+	// Update stream version.
 	newStreamVersion := actualLogVersion + version.Version(len(events))
 	versionValue := make([]byte, uint64sizeBytes)
 	binary.BigEndian.PutUint64(versionValue, uint64(newStreamVersion))
@@ -121,6 +163,17 @@ func (p *Pebble) AppendInTx(
 	if err := batch.Set(logIDVersionKey, versionValue, pebble.NoSync); err != nil {
 		return version.Zero, nil, fmt.Errorf(
 			"append in tx: could not add version to batch: %w",
+			err,
+		)
+	}
+
+	// Update global version.
+	newGlobalVersion := globalVersion + version.Version(len(events))
+	globalVersionValue := make([]byte, uint64sizeBytes)
+	binary.BigEndian.PutUint64(globalVersionValue, uint64(newGlobalVersion))
+	if err := batch.Set(globalVersionKey, globalVersionValue, pebble.NoSync); err != nil {
+		return version.Zero, nil, fmt.Errorf(
+			"append in tx: could not add global version to batch: %w",
 			err,
 		)
 	}
@@ -202,6 +255,63 @@ func (p *Pebble) ReadEvents(
 	}
 }
 
+func (p *Pebble) ReadAllEvents(
+	ctx context.Context,
+	globalSelector version.Selector,
+) event.GlobalRecords {
+	return func(yield func(*event.GlobalRecord, error) bool) {
+		startKey := globalEventKeyFor(globalSelector.From)
+
+		//nolint:exhaustruct // Unnecessary.
+		iter, err := p.db.NewIter(&pebble.IterOptions{
+			LowerBound: startKey,
+			UpperBound: prefixEndKey(globalEventKeyPrefix),
+		})
+		if err != nil {
+			yield(nil, fmt.Errorf("read all events: create iterator: %w", err))
+			return
+		}
+		defer iter.Close()
+
+		for iter.First(); iter.Valid(); iter.Next() {
+			if err := ctx.Err(); err != nil {
+				yield(nil, err)
+				return
+			}
+
+			globalVersion, err := parseGlobalEventKey(iter.Key())
+			if err != nil {
+				yield(nil, fmt.Errorf("read all events: could not parse global event key: %w", err))
+				return
+			}
+
+			var data pebbleGlobalEventData
+			if err := json.Unmarshal(iter.Value(), &data); err != nil {
+				yield(
+					nil,
+					fmt.Errorf("read all events: could not unmarshal global event data: %w", err),
+				)
+				return
+			}
+
+			record := event.NewGlobalRecord(
+				globalVersion,
+				data.Version,
+				data.LogID,
+				data.EventName,
+				data.Data,
+			)
+
+			if !yield(record, nil) {
+				return
+			}
+		}
+		if err := iter.Error(); err != nil {
+			yield(nil, fmt.Errorf("read all events: iterator error: %w", err))
+		}
+	}
+}
+
 // parseEventKey extracts the log ID and version from an event key.
 // This version is robust against Log IDs that contain '/'.
 func parseEventKey(key []byte) (event.LogID, version.Version, error) {
@@ -237,6 +347,30 @@ func prefixEndKey(prefix []byte) []byte {
 	return nil
 }
 
+func parseGlobalEventKey(key []byte) (version.Version, error) {
+	if !bytes.HasPrefix(key, globalEventKeyPrefix) {
+		return 0, fmt.Errorf("invalid global event key prefix: %q", key)
+	}
+	if len(key) != len(globalEventKeyPrefix)+uint64sizeBytes {
+		return 0, fmt.Errorf("invalid global event key length: %q", key)
+	}
+	versionBytes := key[len(globalEventKeyPrefix):]
+	return version.Version(binary.BigEndian.Uint64(versionBytes)), nil
+}
+
+func (p *Pebble) getGlobalVersion() (version.Version, error) {
+	value, closer, err := p.db.Get(globalVersionKey)
+	if err != nil {
+		if errors.Is(err, pebble.ErrNotFound) {
+			return version.Zero, nil
+		}
+		return version.Zero, fmt.Errorf("get global version: %w", err)
+	}
+	defer closer.Close()
+
+	return version.Version(binary.BigEndian.Uint64(value)), nil
+}
+
 func (p *Pebble) getLogVersion(key []byte) (version.Version, error) {
 	value, closer, err := p.db.Get(key)
 	if err != nil {
@@ -270,5 +404,12 @@ func eventKeyFor(id event.LogID, version version.Version) []byte {
 	key = append(key, idBytes...)
 	key = append(key, '/')
 	key = binary.BigEndian.AppendUint64(key, uint64(version))
+	return key
+}
+
+func globalEventKeyFor(globalVersion version.Version) []byte {
+	key := make([]byte, 0, len(globalEventKeyPrefix)+uint64sizeBytes)
+	key = append(key, globalEventKeyPrefix...)
+	key = binary.BigEndian.AppendUint64(key, uint64(globalVersion))
 	return key
 }
