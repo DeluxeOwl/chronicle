@@ -14,6 +14,8 @@ type ESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]] 
 	snapshotter       Snapshotter[TID, E, R, TS]
 	returnSnapshotErr ReturnSnapshotErrFunc
 	snapshotStrategy  SnapshotStrategy[TID, E, R]
+
+	snapshotSaveEnabled bool
 }
 
 // Note: this is a function, in case the user wants to customize the behavior of returning an error.
@@ -27,11 +29,12 @@ func NewESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID
 	opts ...ESRepoWithSnapshotsOption,
 ) (*ESRepoWithSnapshots[TID, E, R, TS], error) {
 	esr := &ESRepoWithSnapshots[TID, E, R, TS]{
-		internal:          esRepo,
-		returnSnapshotErr: func(err error) error { return nil },
-		snapstore:         snapstore,
-		snapshotter:       snapshotter,
-		snapshotStrategy:  snapstrategy,
+		internal:            esRepo,
+		returnSnapshotErr:   func(err error) error { return nil },
+		snapstore:           snapstore,
+		snapshotter:         snapshotter,
+		snapshotStrategy:    snapstrategy,
+		snapshotSaveEnabled: true,
 	}
 
 	for _, o := range opts {
@@ -84,6 +87,10 @@ func (esr *ESRepoWithSnapshots[TID, E, R, TS]) Save(
 		return newVersion, committedEvents, nil // Nothing to do
 	}
 
+	if !esr.snapshotSaveEnabled {
+		return newVersion, committedEvents, nil
+	}
+
 	previousVersion := newVersion - version.Version(len(committedEvents))
 
 	if !esr.snapshotStrategy.ShouldSnapshot(
@@ -120,8 +127,13 @@ func (esr *ESRepoWithSnapshots[TID, E, R, TS]) setReturnSnapshotErr(fn ReturnSna
 	esr.returnSnapshotErr = fn
 }
 
+func (esr *ESRepoWithSnapshots[TID, E, R, TS]) setSnapshotSaveEnabled(enabled bool) {
+	esr.snapshotSaveEnabled = enabled
+}
+
 type esRepoWithSnapshotsConfigurator interface {
 	setReturnSnapshotErr(ReturnSnapshotErrFunc)
+	setSnapshotSaveEnabled(bool)
 }
 
 type ESRepoWithSnapshotsOption func(esRepoWithSnapshotsConfigurator)
@@ -129,5 +141,12 @@ type ESRepoWithSnapshotsOption func(esRepoWithSnapshotsConfigurator)
 func ReturnErrorFunc(fn ReturnSnapshotErrFunc) ESRepoWithSnapshotsOption {
 	return func(c esRepoWithSnapshotsConfigurator) {
 		c.setReturnSnapshotErr(fn)
+	}
+}
+
+// In case you don't want the snapshot to be saved here (and you're saving the snapshot in another place).
+func SnapshotSaveEnabled(enabled bool) ESRepoWithSnapshotsOption {
+	return func(c esRepoWithSnapshotsConfigurator) {
+		c.setSnapshotSaveEnabled(enabled)
 	}
 }
