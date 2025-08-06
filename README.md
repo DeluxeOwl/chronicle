@@ -26,3 +26,4 @@
 - add repos under chronicle package
 - snapshots + transactional repo
 - consider cloudevents
+- consider support like riverqueue for goose migrations
