@@ -2,9 +2,7 @@ package chronicle
 
 import (
 	"github.com/DeluxeOwl/chronicle/aggregate"
-	"github.com/DeluxeOwl/chronicle/aggregate/snapshotstore"
 	"github.com/DeluxeOwl/chronicle/event"
-	"github.com/DeluxeOwl/chronicle/event/eventlog"
 )
 
 // Registries.
@@ -14,19 +12,6 @@ func NewEventRegistry[E event.Any]() *event.EventRegistry[E] {
 
 func NewAnyEventRegistry() *event.EventRegistry[event.Any] {
 	return event.NewRegistry[event.Any]()
-}
-
-// Event logs.
-func NewEventLogMemory() *eventlog.Memory {
-	return eventlog.NewMemory()
-}
-
-// Snapshot stores.
-func NewSnapshotStoreMemory[TID aggregate.ID, TS aggregate.Snapshot[TID]](
-	createSnapshot func() TS,
-	opts ...snapshotstore.MemoryStoreOption[TID, TS],
-) *snapshotstore.MemoryStore[TID, TS] {
-	return snapshotstore.NewMemoryStore(createSnapshot, opts...)
 }
 
 // Repositories.
@@ -39,18 +24,40 @@ func NewEventSourcedRepository[TID aggregate.ID, E event.Any, R aggregate.Root[T
 }
 
 func NewEventSourcedRepositoryWithSnapshots[TID aggregate.ID, E event.Any, R aggregate.Root[TID, E], TS aggregate.Snapshot[TID]](
-	eventlog event.Log,
+	esRepo *aggregate.ESRepo[TID, E, R],
 	snapstore aggregate.SnapshotStore[TID, TS],
-	createRoot func() R,
 	snapshotter aggregate.Snapshotter[TID, E, R, TS],
 	snapstrategy aggregate.SnapshotStrategy[TID, E, R],
 	opts ...aggregate.ESRepoWithSnapshotsOption,
 ) (*aggregate.ESRepoWithSnapshots[TID, E, R, TS], error) {
 	return aggregate.NewESRepoWithSnapshots(
-		eventlog,
+		esRepo,
 		snapstore,
-		createRoot,
 		snapshotter,
 		snapstrategy,
+		opts...)
+}
+
+func NewTransactionalRepository[TX any, TID aggregate.ID, E event.Any, R aggregate.Root[TID, E]](
+	log event.TransactionalEventLog[TX],
+	createRoot func() R,
+	aggProcessor aggregate.TransactionalAggregateProcessor[TX, TID, E, R],
+	opts ...aggregate.ESRepoOption,
+) (*aggregate.TransactionalRepository[TX, TID, E, R], error) {
+	return aggregate.NewTransactionalRepository(log, createRoot, aggProcessor, opts...)
+}
+
+func NewTransactionalRepositoryWithTransactor[TX any, TID aggregate.ID, E event.Any, R aggregate.Root[TID, E]](
+	transactor event.Transactor[TX],
+	txLog event.TransactionalLog[TX],
+	createRoot func() R,
+	aggProcessor aggregate.TransactionalAggregateProcessor[TX, TID, E, R],
+	opts ...aggregate.ESRepoOption,
+) (*aggregate.TransactionalRepository[TX, TID, E, R], error) {
+	return aggregate.NewTransactionalRepositoryWithTransactor(
+		transactor,
+		txLog,
+		createRoot,
+		aggProcessor,
 		opts...)
 }

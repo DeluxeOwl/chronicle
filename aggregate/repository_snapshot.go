@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/DeluxeOwl/chronicle/event"
-	"github.com/DeluxeOwl/chronicle/serde"
 	"github.com/DeluxeOwl/chronicle/version"
 )
 
@@ -21,21 +20,14 @@ type ESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]] 
 type ReturnSnapshotErrFunc = func(err error) error
 
 func NewESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]](
-	eventlog event.Log,
+	esRepo *ESRepo[TID, E, R],
 	snapstore SnapshotStore[TID, TS],
-	createRoot func() R,
 	snapshotter Snapshotter[TID, E, R, TS],
 	snapstrategy SnapshotStrategy[TID, E, R],
 	opts ...ESRepoWithSnapshotsOption,
 ) (*ESRepoWithSnapshots[TID, E, R, TS], error) {
 	esr := &ESRepoWithSnapshots[TID, E, R, TS]{
-		internal: &ESRepo[TID, E, R]{
-			eventlog:           eventlog,
-			createRoot:         createRoot,
-			registry:           event.NewRegistry[E](),
-			serde:              serde.NewJSONBinary(),
-			shouldRegisterRoot: true,
-		},
+		internal:          esRepo,
 		returnSnapshotErr: func(err error) error { return nil },
 		snapstore:         snapstore,
 		snapshotter:       snapshotter,
@@ -44,13 +36,6 @@ func NewESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID
 
 	for _, o := range opts {
 		o(esr)
-	}
-
-	if esr.internal.shouldRegisterRoot {
-		err := esr.internal.registry.RegisterEvents(createRoot())
-		if err != nil {
-			return nil, fmt.Errorf("new aggregate repository: %w", err)
-		}
 	}
 
 	return esr, nil
@@ -131,53 +116,18 @@ func (esr *ESRepoWithSnapshots[TID, E, R, TS]) Save(
 	return newVersion, committedEvents, nil
 }
 
-func (esr *ESRepoWithSnapshots[TID, E, R, TS]) setSerializer(s serde.BinarySerde) {
-	esr.internal.serde = s
-}
-
-func (esr *ESRepoWithSnapshots[TID, E, R, TS]) setShouldRegisterRoot(b bool) {
-	esr.internal.shouldRegisterRoot = b
-}
-
 func (esr *ESRepoWithSnapshots[TID, E, R, TS]) setReturnSnapshotErr(fn ReturnSnapshotErrFunc) {
 	esr.returnSnapshotErr = fn
 }
 
-func (esr *ESRepoWithSnapshots[TID, E, R, TS]) setAnyRegistry(
-	anyRegistry event.Registry[event.Any],
-) {
-	esr.internal.registry = event.NewConcreteRegistryFromAny[E](anyRegistry)
-}
-
 type esRepoWithSnapshotsConfigurator interface {
-	setSerializer(s serde.BinarySerde)
-	setShouldRegisterRoot(b bool)
 	setReturnSnapshotErr(ReturnSnapshotErrFunc)
-	setAnyRegistry(anyRegistry event.Registry[event.Any])
 }
 
 type ESRepoWithSnapshotsOption func(esRepoWithSnapshotsConfigurator)
 
-func SnapEventSerializer(serializer serde.BinarySerde) ESRepoWithSnapshotsOption {
-	return func(c esRepoWithSnapshotsConfigurator) {
-		c.setSerializer(serializer)
-	}
-}
-
-func SnapDontRegisterRoot() ESRepoWithSnapshotsOption {
-	return func(c esRepoWithSnapshotsConfigurator) {
-		c.setShouldRegisterRoot(false)
-	}
-}
-
-func SnapReturnError(fn ReturnSnapshotErrFunc) ESRepoWithSnapshotsOption {
+func ReturnErrorFunc(fn ReturnSnapshotErrFunc) ESRepoWithSnapshotsOption {
 	return func(c esRepoWithSnapshotsConfigurator) {
 		c.setReturnSnapshotErr(fn)
-	}
-}
-
-func SnapAnyEventRegistry(anyRegistry event.Registry[event.Any]) ESRepoWithSnapshotsOption {
-	return func(c esRepoWithSnapshotsConfigurator) {
-		c.setAnyRegistry(anyRegistry)
 	}
 }

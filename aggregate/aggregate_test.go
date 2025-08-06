@@ -9,8 +9,9 @@ import (
 	"github.com/DeluxeOwl/chronicle"
 	"github.com/DeluxeOwl/chronicle/aggregate"
 	"github.com/DeluxeOwl/chronicle/event"
-	"github.com/DeluxeOwl/chronicle/event/eventlog"
+	"github.com/DeluxeOwl/chronicle/eventlog"
 	"github.com/DeluxeOwl/chronicle/serde"
+	"github.com/DeluxeOwl/chronicle/snapshotstore"
 
 	"github.com/DeluxeOwl/chronicle/version"
 	"github.com/stretchr/testify/require"
@@ -180,9 +181,9 @@ func Test_Person(t *testing.T) {
 
 	p := createPerson(t)
 
-	memlog := chronicle.NewEventLogMemory()
+	memlog := eventlog.NewMemory()
 
-	_, err := aggregate.NewTransactionalRepository(
+	_, err := chronicle.NewTransactionalRepository(
 		memlog,
 		NewEmpty,
 		&TransactionalAggregateProcessorMock[eventlog.MemTx, PersonID, PersonEvent, *Person]{
@@ -193,16 +194,21 @@ func Test_Person(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	snapstore := chronicle.NewSnapshotStoreMemory(NewSnapshot)
+	snapstore := snapshotstore.NewMemoryStore(NewSnapshot)
 	registry := chronicle.NewAnyEventRegistry()
 
-	repo, err := chronicle.NewEventSourcedRepositoryWithSnapshots(
+	esRepo, err := chronicle.NewEventSourcedRepository(
 		memlog,
-		snapstore,
 		NewEmpty,
+		aggregate.AnyEventRegistry(registry),
+	)
+	require.NoError(t, err)
+
+	repo, err := chronicle.NewEventSourcedRepositoryWithSnapshots(
+		esRepo,
+		snapstore,
 		NewEmpty(),
 		aggregate.SnapStrategyFor[*Person]().EveryNEvents(10),
-		aggregate.SnapAnyEventRegistry(registry),
 	)
 	// You could also do: aggregate.SnapStrategyFor[*Person]().Custom(CustomSnapshot),
 	// Person is a snapshotter
@@ -291,7 +297,7 @@ func Test_FlushUncommitedEvents(t *testing.T) {
 func Test_CommitEvents(t *testing.T) {
 	serializer := serde.NewJSONBinary()
 	t.Run("without events", func(t *testing.T) {
-		memstore := chronicle.NewEventLogMemory()
+		memstore := eventlog.NewMemory()
 		p := NewEmpty()
 
 		v, events, err := aggregate.CommitEvents(t.Context(), memstore, serializer, p)
@@ -301,7 +307,7 @@ func Test_CommitEvents(t *testing.T) {
 	})
 
 	t.Run("with events", func(t *testing.T) {
-		memstore := chronicle.NewEventLogMemory()
+		memstore := eventlog.NewMemory()
 		p := createPerson(t)
 		p.Age()
 
@@ -331,7 +337,7 @@ func Test_CommitEvents(t *testing.T) {
 func Test_ReadAndLoadFromStore(t *testing.T) {
 	serializer := serde.NewJSONBinary()
 	t.Run("not found", func(t *testing.T) {
-		memlog := chronicle.NewEventLogMemory()
+		memlog := eventlog.NewMemory()
 		registry := chronicle.NewEventRegistry[PersonEvent]()
 
 		err := aggregate.ReadAndLoadFromStore(
@@ -350,7 +356,7 @@ func Test_ReadAndLoadFromStore(t *testing.T) {
 		p := createPerson(t)
 		p.Age()
 
-		memstore := chronicle.NewEventLogMemory()
+		memstore := eventlog.NewMemory()
 		registry := chronicle.NewEventRegistry[PersonEvent]()
 		err := registry.RegisterEvents(p)
 		require.NoError(t, err)
@@ -379,7 +385,7 @@ func Test_LoadFromRecords(t *testing.T) {
 	p.Age()
 
 	serializer := serde.NewJSONBinary()
-	memstore := chronicle.NewEventLogMemory()
+	memstore := eventlog.NewMemory()
 	registry := chronicle.NewEventRegistry[PersonEvent]()
 
 	err := registry.RegisterEvents(p)
@@ -405,7 +411,7 @@ func Test_SnapshotRepo(t *testing.T) {
 		ctx := t.Context()
 		p := createPerson(t)
 
-		memlog := chronicle.NewEventLogMemory()
+		memlog := eventlog.NewMemory()
 
 		var lastSnapshot *PersonSnapshot
 		snapstore := &SnapshotStoreMock[PersonID, *PersonSnapshot]{
@@ -416,13 +422,19 @@ func Test_SnapshotRepo(t *testing.T) {
 		}
 
 		registry := chronicle.NewAnyEventRegistry()
-		repo, err := chronicle.NewEventSourcedRepositoryWithSnapshots(
+
+		esRepo, err := chronicle.NewEventSourcedRepository(
 			memlog,
-			snapstore,
 			NewEmpty,
+			aggregate.AnyEventRegistry(registry),
+		)
+		require.NoError(t, err)
+
+		repo, err := chronicle.NewEventSourcedRepositoryWithSnapshots(
+			esRepo,
+			snapstore,
 			NewEmpty(),
 			aggregate.SnapStrategyFor[*Person]().EveryNEvents(10),
-			aggregate.SnapAnyEventRegistry(registry),
 		)
 		require.NoError(t, err)
 
@@ -469,7 +481,7 @@ func Test_SnapshotRepo(t *testing.T) {
 		ctx := t.Context()
 		p := createPerson(t)
 
-		memlog := chronicle.NewEventLogMemory()
+		memlog := eventlog.NewMemory()
 
 		snapstore := &SnapshotStoreMock[PersonID, *PersonSnapshot]{
 			SaveSnapshotFunc: func(ctx context.Context, snapshot *PersonSnapshot) error {
@@ -478,13 +490,17 @@ func Test_SnapshotRepo(t *testing.T) {
 		}
 
 		registry := chronicle.NewAnyEventRegistry()
-		repo, err := chronicle.NewEventSourcedRepositoryWithSnapshots(
+		esRepo, err := chronicle.NewEventSourcedRepository(
 			memlog,
-			snapstore,
 			NewEmpty,
+			aggregate.AnyEventRegistry(registry),
+		)
+		require.NoError(t, err)
+		repo, err := chronicle.NewEventSourcedRepositoryWithSnapshots(
+			esRepo,
+			snapstore,
 			NewEmpty(),
 			aggregate.SnapStrategyFor[*Person]().AfterCommit(),
-			aggregate.SnapAnyEventRegistry(registry),
 		)
 		require.NoError(t, err)
 
@@ -500,7 +516,7 @@ func Test_SnapshotRepo(t *testing.T) {
 		ctx := t.Context()
 		p := createPerson(t)
 
-		memlog := chronicle.NewEventLogMemory()
+		memlog := eventlog.NewMemory()
 
 		snapstore := &SnapshotStoreMock[PersonID, *PersonSnapshot]{
 			SaveSnapshotFunc: func(ctx context.Context, snapshot *PersonSnapshot) error {
@@ -509,14 +525,20 @@ func Test_SnapshotRepo(t *testing.T) {
 		}
 
 		registry := chronicle.NewAnyEventRegistry()
-		repo, err := chronicle.NewEventSourcedRepositoryWithSnapshots(
+
+		esRepo, err := chronicle.NewEventSourcedRepository(
 			memlog,
-			snapstore,
 			NewEmpty,
+			aggregate.AnyEventRegistry(registry),
+		)
+		require.NoError(t, err)
+
+		repo, err := chronicle.NewEventSourcedRepositoryWithSnapshots(
+			esRepo,
+			snapstore,
 			NewEmpty(),
 			aggregate.SnapStrategyFor[*Person]().AfterCommit(),
-			aggregate.SnapAnyEventRegistry(registry),
-			aggregate.SnapReturnError(func(err error) error {
+			aggregate.ReturnErrorFunc(func(err error) error {
 				// Received a non-nil error, but return nil anyway.
 				require.ErrorContains(t, err, "snapshot error")
 				require.Error(t, err)
@@ -537,7 +559,7 @@ func Test_SnapshotRepo(t *testing.T) {
 		ctx := t.Context()
 		p := createPerson(t)
 
-		memlog := chronicle.NewEventLogMemory()
+		memlog := eventlog.NewMemory()
 
 		snapstore := &SnapshotStoreMock[PersonID, *PersonSnapshot]{
 			SaveSnapshotFunc: func(ctx context.Context, snapshot *PersonSnapshot) error {
@@ -546,14 +568,20 @@ func Test_SnapshotRepo(t *testing.T) {
 		}
 
 		registry := chronicle.NewAnyEventRegistry()
-		repo, err := chronicle.NewEventSourcedRepositoryWithSnapshots(
+
+		esRepo, err := chronicle.NewEventSourcedRepository(
 			memlog,
-			snapstore,
 			NewEmpty,
+			aggregate.AnyEventRegistry(registry),
+		)
+		require.NoError(t, err)
+
+		repo, err := chronicle.NewEventSourcedRepositoryWithSnapshots(
+			esRepo,
+			snapstore,
 			NewEmpty(),
 			aggregate.SnapStrategyFor[*Person]().AfterCommit(),
-			aggregate.SnapAnyEventRegistry(registry),
-			aggregate.SnapReturnError(func(err error) error {
+			aggregate.ReturnErrorFunc(func(err error) error {
 				return fmt.Errorf("user customized message %w", err)
 			}),
 		)

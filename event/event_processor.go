@@ -7,7 +7,7 @@ import (
 	"github.com/DeluxeOwl/chronicle/version"
 )
 
-//go:generate go run github.com/matryer/moq@latest -pkg eventlog_test -skip-ensure -rm -out ./eventlog/processor_mock_test.go . TransactionalProcessor
+//go:generate go run github.com/matryer/moq@latest -pkg eventlog_test -skip-ensure -rm -out ../eventlog/processor_mock_test.go . TransactionalProcessor
 
 // TransactionalProcessor defines the contract for processing messages within a transaction.
 // The user implements this interface for their specific database and schema.

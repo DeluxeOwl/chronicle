@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/DeluxeOwl/chronicle/event"
-	"github.com/DeluxeOwl/chronicle/event/eventlog"
+	"github.com/DeluxeOwl/chronicle/eventlog"
 
 	"github.com/DeluxeOwl/chronicle/version"
 	_ "github.com/mattn/go-sqlite3"
