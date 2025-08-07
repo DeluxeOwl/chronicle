@@ -9,7 +9,8 @@ import (
 )
 
 type ESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]] struct {
-	internal          *ESRepo[TID, E, R]
+	internal HydratorRepo[TID, E, R]
+
 	snapstore         SnapshotStore[TID, TS]
 	snapshotter       Snapshotter[TID, E, R, TS]
 	returnSnapshotErr ReturnSnapshotErrFunc
@@ -21,8 +22,24 @@ type ESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]] 
 // Note: this is a function, in case the user wants to customize the behavior of returning an error.
 type ReturnSnapshotErrFunc = func(err error) error
 
+// This is needed for the snapshot to be able to hydrate an aggregate in case
+// we found an older snapshot and we need to replay the events starting with the next version
+type AggregateHydrator[TID ID, E event.Any, R Root[TID, E]] interface {
+	HydrateAggregate(
+		ctx context.Context,
+		root R,
+		id TID,
+		selector version.Selector,
+	) error
+}
+
+type HydratorRepo[TID ID, E event.Any, R Root[TID, E]] interface {
+	AggregateHydrator[TID, E, R]
+	Repository[TID, E, R]
+}
+
 func NewESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]](
-	esRepo *ESRepo[TID, E, R],
+	esRepo HydratorRepo[TID, E, R],
 	snapstore SnapshotStore[TID, TS],
 	snapshotter Snapshotter[TID, E, R, TS],
 	snapstrategy SnapshotStrategy[TID, E, R],
@@ -56,15 +73,9 @@ func (esr *ESRepoWithSnapshots[TID, E, R, TS]) Get(ctx context.Context, id TID) 
 		return esr.internal.Get(ctx, id)
 	}
 
-	if err := ReadAndLoadFromStore(ctx,
-		root,
-		esr.internal.eventlog,
-		esr.internal.registry,
-		esr.internal.serde,
-		id,
-		version.Selector{
-			From: root.Version() + 1,
-		}); err != nil {
+	if err := esr.internal.HydrateAggregate(ctx, root, id, version.Selector{
+		From: root.Version() + 1,
+	}); err != nil {
 		return empty, fmt.Errorf("snapshot repo get: failed to load events after snapshot: %w", err)
 	}
 

@@ -63,10 +63,19 @@ func NewESRepo[TID ID, E event.Any, R Root[TID, E]](
 	return esr, nil
 }
 
+func (repo *ESRepo[TID, E, R]) HydrateAggregate(
+	ctx context.Context,
+	root R,
+	id TID,
+	selector version.Selector,
+) error {
+	return ReadAndLoadFromStore(ctx, root, repo.eventlog, repo.registry, repo.serde, id, selector)
+}
+
 func (repo *ESRepo[TID, E, R]) Get(ctx context.Context, id TID) (R, error) {
 	root := repo.createRoot()
 
-	if err := ReadAndLoadFromStore(ctx, root, repo.eventlog, repo.registry, repo.serde, id, version.SelectFromBeginning); err != nil {
+	if err := repo.HydrateAggregate(ctx, root, id, version.SelectFromBeginning); err != nil {
 		var empty R
 		return empty, fmt.Errorf("repo get: %w", err)
 	}
@@ -78,11 +87,11 @@ func (repo *ESRepo[TID, E, R]) Save(
 	ctx context.Context,
 	root R,
 ) (version.Version, CommitedEvents[E], error) {
-	newVersion, commitedEvents, err := CommitEvents(ctx, repo.eventlog, repo.serde, root)
+	newVersion, committedEvents, err := CommitEvents(ctx, repo.eventlog, repo.serde, root)
 	if err != nil {
-		return newVersion, commitedEvents, fmt.Errorf("repo save: %w", err)
+		return newVersion, committedEvents, fmt.Errorf("repo save: %w", err)
 	}
-	return newVersion, commitedEvents, nil
+	return newVersion, committedEvents, nil
 }
 
 func (esr *ESRepo[TID, E, R]) setSerializer(s serde.BinarySerde) {

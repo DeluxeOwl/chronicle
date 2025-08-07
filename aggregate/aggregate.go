@@ -226,3 +226,57 @@ func CommitEvents[TID ID, E event.Any, R Root[TID, E]](
 	// These events now become committed
 	return newVersion, CommitedEvents[E](uncommitedEvents), nil
 }
+
+func CommitEventsWithTX[TX any, TID ID, E event.Any, R Root[TID, E]](
+	ctx context.Context,
+	transactor event.Transactor[TX],
+	txLog event.TransactionalLog[TX],
+	processor TransactionalAggregateProcessor[TX, TID, E, R],
+	serializer serde.BinarySerializer,
+	root R,
+) (version.Version, CommitedEvents[E], error) {
+	var newVersion version.Version
+	var committedEvents CommitedEvents[E]
+
+	uncommittedEvents := FlushUncommitedEvents(root)
+
+	if len(uncommittedEvents) == 0 {
+		return root.Version(), nil, nil // Nothing to save
+	}
+
+	logID := event.LogID(root.ID().String())
+
+	expectedVersion := version.CheckExact(
+		root.Version() - version.Version(len(uncommittedEvents)),
+	)
+
+	rawEvents, err := uncommittedEvents.ToRaw(serializer)
+	if err != nil {
+		return version.Zero, nil, fmt.Errorf("aggregate commit with tx: events to raw: %w", err)
+	}
+
+	err = transactor.WithinTx(ctx, func(ctx context.Context, tx TX) error {
+		// Append events to the log *within the transaction*
+		v, _, err := txLog.AppendInTx(ctx, tx, logID, expectedVersion, rawEvents)
+		if err != nil {
+			return fmt.Errorf("append events in tx: %w", err)
+		}
+
+		newVersion = v
+		committedEvents = CommitedEvents[E](uncommittedEvents)
+
+		// Call the high-level, type-safe aggregate processor in the same transaction
+		if processor != nil {
+			if err := processor.Process(ctx, tx, root, committedEvents); err != nil {
+				return fmt.Errorf("aggregate processor: %w", err)
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return version.Zero, nil, fmt.Errorf("aggregate commit with tx: %w", err)
+	}
+
+	return newVersion, committedEvents, nil
+}

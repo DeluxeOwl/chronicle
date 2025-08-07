@@ -13,7 +13,7 @@ type TransactionalRepository[T any, TID ID, E event.Any, R Root[TID, E]] struct 
 	transactor event.Transactor[T]
 	txLog      event.TransactionalLog[T]
 
-	log        event.Log
+	eventlog   event.Log
 	serde      serde.BinarySerde
 	registry   event.Registry[E]
 	createRoot func() R
@@ -34,7 +34,7 @@ func NewTransactionalRepository[TX any, TID ID, E event.Any, R Root[TID, E]](
 	repo := &TransactionalRepository[TX, TID, E, R]{
 		transactor:         log,
 		txLog:              log,
-		log:                event.NewLogWithProcessor(log, nil),
+		eventlog:           event.NewLogWithProcessor(log, nil),
 		createRoot:         createRoot,
 		registry:           event.NewRegistry[E](),
 		serde:              serde.NewJSONBinary(),
@@ -65,7 +65,7 @@ func NewTransactionalRepositoryWithTransactor[TX any, TID ID, E event.Any, R Roo
 	repo := &TransactionalRepository[TX, TID, E, R]{
 		transactor:         transactor,
 		txLog:              txLog,
-		log:                event.NewTransactableLogWithProcessor(transactor, txLog, nil),
+		eventlog:           event.NewTransactableLogWithProcessor(transactor, txLog, nil),
 		createRoot:         createRoot,
 		registry:           event.NewRegistry[E](),
 		serde:              serde.NewJSONBinary(),
@@ -87,61 +87,42 @@ func NewTransactionalRepositoryWithTransactor[TX any, TID ID, E event.Any, R Roo
 
 // Save atomically persists the aggregate's events and executes any configured
 // transactional processors within a single database transaction.
-func (repo *TransactionalRepository[T, TID, E, R]) Save(
+func (repo *TransactionalRepository[TX, TID, E, R]) Save(
 	ctx context.Context,
 	root R,
 ) (version.Version, CommitedEvents[E], error) {
-	var newVersion version.Version
-	var committedEvents CommitedEvents[E]
-
-	uncommittedEvents := FlushUncommitedEvents(root)
-
-	if len(uncommittedEvents) == 0 {
-		return root.Version(), nil, nil // Nothing to save
-	}
-
-	err := repo.transactor.WithinTx(ctx, func(ctx context.Context, tx T) error {
-		logID := event.LogID(root.ID().String())
-		expectedVersion := version.CheckExact(
-			root.Version() - version.Version(len(uncommittedEvents)),
-		)
-
-		rawEvents, err := uncommittedEvents.ToRaw(repo.serde)
-		if err != nil {
-			return fmt.Errorf("transactional repo save: events to raw: %w", err)
-		}
-
-		// Append events to the log *within the transaction*
-		v, _, err := repo.txLog.AppendInTx(ctx, tx, logID, expectedVersion, rawEvents)
-		if err != nil {
-			return fmt.Errorf("transactional repo save: append in tx: %w", err)
-		}
-
-		newVersion = v
-		committedEvents = CommitedEvents[E](uncommittedEvents)
-
-		// Call the high-level, type-safe aggregate processor
-		if repo.aggProcessor != nil {
-			if err := repo.aggProcessor.Process(ctx, tx, root, committedEvents); err != nil {
-				return fmt.Errorf("transactional repo save: aggregate processor: %w", err)
-			}
-		}
-
-		return nil
-	})
+	newVersion, committedEvents, err := CommitEventsWithTX(
+		ctx,
+		repo.transactor,
+		repo.txLog,
+		repo.aggProcessor,
+		repo.serde,
+		root,
+	)
 	if err != nil {
-		return version.Zero, nil, err
+		return newVersion, committedEvents, fmt.Errorf("repo save: %w", err)
 	}
 
 	return newVersion, committedEvents, nil
 }
 
-func (repo *TransactionalRepository[T, TID, E, R]) Get(ctx context.Context, id TID) (R, error) {
+func (repo *TransactionalRepository[TX, TID, E, R]) HydrateAggregate(
+	ctx context.Context,
+	root R,
+	id TID,
+	selector version.Selector,
+) error {
+	return ReadAndLoadFromStore(ctx, root, repo.eventlog, repo.registry, repo.serde, id, selector)
+}
+
+func (repo *TransactionalRepository[TX, TID, E, R]) Get(ctx context.Context, id TID) (R, error) {
 	root := repo.createRoot()
-	if err := ReadAndLoadFromStore(ctx, root, repo.log, repo.registry, repo.serde, id, version.SelectFromBeginning); err != nil {
+
+	if err := repo.HydrateAggregate(ctx, root, id, version.SelectFromBeginning); err != nil {
 		var empty R
 		return empty, fmt.Errorf("repo get: %w", err)
 	}
+
 	return root, nil
 }
 
