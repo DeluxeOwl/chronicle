@@ -29,17 +29,17 @@ var (
 
 // We don't need to store LogID and Version in the value, as they are already in the key.
 type pebbleEventData struct {
-	Data      []byte `json:"data"`
 	EventName string `json:"eventName"`
+	Data      []byte `json:"data"`
 }
 
 // pebbleGlobalEventData stores the data for the global event index.
 // We don't store the global version as it's part of the key.
 type pebbleGlobalEventData struct {
 	LogID     event.LogID     `json:"logID"`
-	Version   version.Version `json:"version"`
-	Data      []byte          `json:"data"`
 	EventName string          `json:"eventName"`
+	Data      []byte          `json:"data"`
+	Version   version.Version `json:"version"`
 }
 
 type Pebble struct {

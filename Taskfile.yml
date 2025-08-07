@@ -7,6 +7,9 @@ tasks:
       - golangci-lint run --fix .
       - golines --no-reformat-tags -w .
       - golangci-lint run
+  align-apply:
+    cmds:
+      - go run github.com/dkorunic/betteralign/cmd/betteralign@latest -apply ./...
   gen:
     cmds:
       - go generate ./...

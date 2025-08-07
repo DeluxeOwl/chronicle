@@ -18,18 +18,18 @@ var (
 )
 
 type Memory struct {
-	mu            sync.RWMutex
 	events        map[event.LogID][]memStoreRecord
 	logVersions   map[event.LogID]version.Version
 	globalVersion version.Version
+	mu            sync.RWMutex
 }
 
 type memStoreRecord struct {
 	LogID         event.LogID     `json:"logID"`
+	EventName     string          `json:"eventName"`
+	Data          []byte          `json:"data"`
 	Version       version.Version `json:"version"`
 	GlobalVersion version.Version `json:"globalVersion"`
-	Data          []byte          `json:"data"`
-	EventName     string          `json:"eventName"`
 }
 
 func NewMemory() *Memory {

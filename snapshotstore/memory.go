@@ -14,10 +14,10 @@ var _ aggregate.SnapshotStore[aggregate.ID, aggregate.Snapshot[aggregate.ID]] = 
 )
 
 type MemoryStore[TID aggregate.ID, TS aggregate.Snapshot[TID]] struct {
-	mu             sync.RWMutex
+	serde          serde.BinarySerde
 	snapshots      map[string][]byte
 	createSnapshot func() TS
-	serde          serde.BinarySerde
+	mu             sync.RWMutex
 }
 
 type MemoryStoreOption[TID aggregate.ID, TS aggregate.Snapshot[TID]] func(*MemoryStore[TID, TS])

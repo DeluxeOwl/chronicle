@@ -37,8 +37,8 @@ func (re RawEvents) ToRecords(logID LogID, startingVersion version.Version) []*R
 }
 
 type Raw struct {
-	data []byte
 	name string
+	data []byte
 }
 
 func NewRaw(name string, data []byte) Raw {
@@ -62,8 +62,8 @@ func (raw *Raw) Data() []byte {
 type LogID string
 
 type Record struct {
-	raw     Raw
 	logID   LogID
+	raw     Raw
 	version version.Version
 }
 
@@ -95,8 +95,8 @@ func (re *Record) Version() version.Version {
 }
 
 type GlobalRecord struct {
-	raw           Raw
 	logID         LogID
+	raw           Raw
 	version       version.Version
 	globalVersion version.Version
 }

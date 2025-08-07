@@ -8,10 +8,9 @@ import (
 )
 
 type Base struct {
-	version version.Version
-
 	//nolint:unused // False positive.
 	uncommitedEvents flushedUncommitedEvents
+	version          version.Version
 }
 
 func (br *Base) Version() version.Version { return br.version }
