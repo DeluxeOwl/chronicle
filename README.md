@@ -27,3 +27,4 @@
 - snapshots + transactional repo
 - consider cloudevents
 - consider support like riverqueue for goose migrations
+- maybe a get version

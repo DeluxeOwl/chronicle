@@ -137,16 +137,8 @@ func (repo *TransactionalRepository[T, TID, E, R]) Save(
 }
 
 func (repo *TransactionalRepository[T, TID, E, R]) Get(ctx context.Context, id TID) (R, error) {
-	return repo.GetVersion(ctx, id, version.SelectFromBeginning)
-}
-
-func (repo *TransactionalRepository[T, TID, E, R]) GetVersion(
-	ctx context.Context,
-	id TID,
-	selector version.Selector,
-) (R, error) {
 	root := repo.createRoot()
-	if err := ReadAndLoadFromStore(ctx, root, repo.log, repo.registry, repo.serde, id, selector); err != nil {
+	if err := ReadAndLoadFromStore(ctx, root, repo.log, repo.registry, repo.serde, id, version.SelectFromBeginning); err != nil {
 		var empty R
 		return empty, fmt.Errorf("repo get: %w", err)
 	}

@@ -14,7 +14,6 @@ import (
 
 type Getter[TID ID, E event.Any, R Root[TID, E]] interface {
 	Get(ctx context.Context, id TID) (R, error)
-	GetVersion(ctx context.Context, id ID, selector version.Selector) (R, error)
 }
 
 type Saver[TID ID, E event.Any, R Root[TID, E]] interface {
@@ -65,17 +64,9 @@ func NewESRepo[TID ID, E event.Any, R Root[TID, E]](
 }
 
 func (repo *ESRepo[TID, E, R]) Get(ctx context.Context, id TID) (R, error) {
-	return repo.GetVersion(ctx, id, version.SelectFromBeginning)
-}
-
-func (repo *ESRepo[TID, E, R]) GetVersion(
-	ctx context.Context,
-	id TID,
-	selector version.Selector,
-) (R, error) {
 	root := repo.createRoot()
 
-	if err := ReadAndLoadFromStore(ctx, root, repo.eventlog, repo.registry, repo.serde, id, selector); err != nil {
+	if err := ReadAndLoadFromStore(ctx, root, repo.eventlog, repo.registry, repo.serde, id, version.SelectFromBeginning); err != nil {
 		var empty R
 		return empty, fmt.Errorf("repo get: %w", err)
 	}
