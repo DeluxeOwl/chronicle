@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	_ event.GlobalReader                   = new(Sqlite)
+	_ event.GlobalLog                      = new(Sqlite)
 	_ event.Log                            = new(Sqlite)
 	_ event.TransactionalEventLog[*sql.Tx] = new(Sqlite)
 )

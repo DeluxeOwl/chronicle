@@ -15,7 +15,7 @@ import (
 )
 
 var (
-	_ event.GlobalReader                         = new(Pebble)
+	_ event.GlobalLog                            = new(Pebble)
 	_ event.Log                                  = new(Pebble)
 	_ event.TransactionalEventLog[*pebble.Batch] = new(Pebble)
 )

@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	_ event.GlobalReader                 = new(Memory)
+	_ event.GlobalLog                    = new(Memory)
 	_ event.Log                          = new(Memory)
 	_ event.TransactionalEventLog[MemTx] = new(Memory)
 )

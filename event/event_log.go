@@ -39,7 +39,14 @@ func (r Records) Collect() ([]*Record, error) {
 	return collected, nil
 }
 
-// This is implemented by the event logs who can keep a global version of the events.
+type GlobalLog interface {
+	Reader
+	Appender
+	GlobalReader
+}
+
+// This is implemented by the event logs who can keep a global ordered version of ALL events (not only per log id).
+// The global version should always start at 1 (not 0) - for compatibility with sql dbs.
 type GlobalReader interface {
 	ReadAllEvents(ctx context.Context, globalSelector version.Selector) GlobalRecords
 }

@@ -26,6 +26,11 @@ type eventLog struct {
 	log  event.Log
 }
 
+type globalEventLog struct {
+	name string
+	log  event.GlobalLog
+}
+
 func setupEventLogs(t *testing.T) ([]eventLog, func()) {
 	t.Helper()
 
@@ -48,6 +53,49 @@ func setupEventLogs(t *testing.T) ([]eventLog, func()) {
 	require.NoError(t, err)
 
 	return []eventLog{
+			{
+				name: "memory log",
+				log:  eventlog.NewMemory(),
+			},
+			{
+				name: "pebble memory log",
+				log:  pebbleLog,
+			},
+			{
+				name: "sqlite log",
+				log:  sqliteLog,
+			},
+		}, func() {
+			err := pebbleDB.Close()
+			require.NoError(t, err)
+
+			err = sqliteDB.Close()
+			require.NoError(t, err)
+		}
+}
+
+func setupGlobalEventLogs(t *testing.T) ([]globalEventLog, func()) {
+	t.Helper()
+
+	//nolint:exhaustruct // not needed.
+	pebbleDB, err := pebble.Open("", &pebble.Options{
+		FS: vfs.NewMem(),
+	})
+	require.NoError(t, err)
+
+	pebbleLog := eventlog.NewPebble(pebbleDB)
+	require.NoError(t, err)
+
+	f, err := os.CreateTemp(t.TempDir(), "sqlite-*.db")
+	require.NoError(t, err)
+
+	sqliteDB, err := sql.Open("sqlite3", f.Name())
+	require.NoError(t, err)
+
+	sqliteLog, err := eventlog.NewSqlite(sqliteDB)
+	require.NoError(t, err)
+
+	return []globalEventLog{
 			{
 				name: "memory log",
 				log:  eventlog.NewMemory(),
@@ -380,4 +428,47 @@ func Test_SqliteProcessor(t *testing.T) {
 		require.NoError(t, err)
 		require.Empty(t, records)
 	})
+}
+
+func Test_ReadAllEvents(t *testing.T) {
+	eventLogs, closeDBs := setupGlobalEventLogs(t)
+	defer closeDBs()
+
+	for _, el := range eventLogs {
+		t.Run(el.name, func(t *testing.T) {
+			for i := range 10 {
+				eventToAppend := event.NewRaw(
+					fmt.Sprintf("foo-event-%d", i),
+					[]byte("{\"data\":\"value\"}"),
+				)
+				_, err := el.log.AppendEvents(
+					t.Context(),
+					event.LogID("foo/123"),
+					version.CheckExact(i),
+					event.RawEvents{eventToAppend},
+				)
+				require.NoError(t, err)
+			}
+			for i := range 10 {
+				eventToAppend := event.NewRaw(
+					fmt.Sprintf("bar-event-%d", i),
+					[]byte("{\"data\":\"value\"}"),
+				)
+				_, err := el.log.AppendEvents(
+					t.Context(),
+					event.LogID("bar/123"),
+					version.CheckExact(i),
+					event.RawEvents{eventToAppend},
+				)
+				require.NoError(t, err)
+			}
+
+			versionToCheck := version.Zero + 1
+			for ev, err := range el.log.ReadAllEvents(t.Context(), version.SelectFromBeginning) {
+				require.NoError(t, err)
+				require.Equal(t, versionToCheck, ev.GlobalVersion())
+				versionToCheck++
+			}
+		})
+	}
 }
