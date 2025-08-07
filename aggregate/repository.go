@@ -25,6 +25,14 @@ type Repository[TID ID, E event.Any, R Root[TID, E]] interface {
 	Saver[TID, E, R]
 }
 
+// FusedRepo is a convenience type that can be used to fuse together
+// different implementations for the Getter and Saver Repository interface components.
+// Useful for wrapping the Save method with a retry for optimistic concurrency control.
+type FusedRepo[TID ID, E event.Any, R Root[TID, E]] struct {
+	Getter[TID, E, R]
+	Saver[TID, E, R]
+}
+
 type ESRepo[TID ID, E event.Any, R Root[TID, E]] struct {
 	registry   event.Registry[E]
 	serde      serde.BinarySerde

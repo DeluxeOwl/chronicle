@@ -38,6 +38,11 @@ type HydratorRepo[TID ID, E event.Any, R Root[TID, E]] interface {
 	Repository[TID, E, R]
 }
 
+type FusedHydratorRepo[TID ID, E event.Any, R Root[TID, E]] struct {
+	AggregateHydrator[TID, E, R]
+	Repository[TID, E, R]
+}
+
 func NewESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]](
 	esRepo HydratorRepo[TID, E, R],
 	snapstore SnapshotStore[TID, TS],
