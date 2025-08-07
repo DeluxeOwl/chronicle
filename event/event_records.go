@@ -67,35 +67,6 @@ type Record struct {
 	version version.Version
 }
 
-type GlobalRecord struct {
-	Record        Record
-	globalVersion version.Version
-}
-
-func NewGlobalRecord(
-	globalVersion version.Version,
-	version version.Version,
-	logID LogID,
-	name string,
-	data []byte,
-) *GlobalRecord {
-	return &GlobalRecord{
-		Record: Record{
-			version: version,
-			logID:   logID,
-			raw: Raw{
-				data: data,
-				name: name,
-			},
-		},
-		globalVersion: globalVersion,
-	}
-}
-
-func (gr *GlobalRecord) GlobalVersion() version.Version {
-	return gr.globalVersion
-}
-
 func NewRecord(version version.Version, logID LogID, name string, data []byte) *Record {
 	return &Record{
 		version: version,
@@ -121,4 +92,49 @@ func (re *Record) LogID() LogID {
 
 func (re *Record) Version() version.Version {
 	return re.version
+}
+
+type GlobalRecord struct {
+	raw           Raw
+	logID         LogID
+	version       version.Version
+	globalVersion version.Version
+}
+
+func NewGlobalRecord(
+	globalVersion version.Version,
+	version version.Version,
+	logID LogID,
+	name string,
+	data []byte,
+) *GlobalRecord {
+	return &GlobalRecord{
+		version: version,
+		logID:   logID,
+		raw: Raw{
+			data: data,
+			name: name,
+		},
+		globalVersion: globalVersion,
+	}
+}
+
+func (gr *GlobalRecord) GlobalVersion() version.Version {
+	return gr.globalVersion
+}
+
+func (gr *GlobalRecord) EventName() string {
+	return gr.raw.EventName()
+}
+
+func (gr *GlobalRecord) Data() []byte {
+	return gr.raw.Data()
+}
+
+func (gr *GlobalRecord) LogID() LogID {
+	return gr.logID
+}
+
+func (gr *GlobalRecord) Version() version.Version {
+	return gr.version
 }
