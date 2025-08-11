@@ -512,6 +512,9 @@ func Test_SnapshotRepo(t *testing.T) {
 			snapstore,
 			NewEmpty(),
 			aggregate.SnapStrategyFor[*Person]().AfterCommit(),
+			aggregate.ReturnErrorFunc(func(ctx context.Context, err error) error {
+				return nil
+			}),
 		)
 		require.NoError(t, err)
 
@@ -550,7 +553,7 @@ func Test_SnapshotRepo(t *testing.T) {
 			snapstore,
 			NewEmpty(),
 			aggregate.SnapStrategyFor[*Person]().AfterCommit(),
-			aggregate.ReturnErrorFunc(func(err error) error {
+			aggregate.ReturnErrorFunc(func(_ context.Context, err error) error {
 				// Received a non-nil error, but return nil anyway.
 				require.ErrorContains(t, err, "snapshot error")
 				require.Error(t, err)
@@ -594,7 +597,7 @@ func Test_SnapshotRepo(t *testing.T) {
 			snapstore,
 			NewEmpty(),
 			aggregate.SnapStrategyFor[*Person]().AfterCommit(),
-			aggregate.ReturnErrorFunc(func(err error) error {
+			aggregate.ReturnErrorFunc(func(_ context.Context, err error) error {
 				return fmt.Errorf("user customized message %w", err)
 			}),
 		)
