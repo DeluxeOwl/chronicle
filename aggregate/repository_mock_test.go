@@ -26,7 +26,7 @@ import (
 //			LoadAggregateFunc: func(ctx context.Context, root R, id TID, selector version.Selector) error {
 //				panic("mock out the LoadAggregate method")
 //			},
-//			SaveFunc: func(ctx context.Context, root R) (version.Version, aggregate.CommitedEvents[E], error) {
+//			SaveFunc: func(ctx context.Context, root R) (version.Version, aggregate.CommittedEvents[E], error) {
 //				panic("mock out the Save method")
 //			},
 //		}
@@ -46,7 +46,7 @@ type RepositoryMock[TID aggregate.ID, E event.Any, R aggregate.Root[TID, E]] str
 	LoadAggregateFunc func(ctx context.Context, root R, id TID, selector version.Selector) error
 
 	// SaveFunc mocks the Save method.
-	SaveFunc func(ctx context.Context, root R) (version.Version, aggregate.CommitedEvents[E], error)
+	SaveFunc func(ctx context.Context, root R) (version.Version, aggregate.CommittedEvents[E], error)
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -212,7 +212,7 @@ func (mock *RepositoryMock[TID, E, R]) LoadAggregateCalls() []struct {
 }
 
 // Save calls SaveFunc.
-func (mock *RepositoryMock[TID, E, R]) Save(ctx context.Context, root R) (version.Version, aggregate.CommitedEvents[E], error) {
+func (mock *RepositoryMock[TID, E, R]) Save(ctx context.Context, root R) (version.Version, aggregate.CommittedEvents[E], error) {
 	if mock.SaveFunc == nil {
 		panic("RepositoryMock.SaveFunc: method is nil but Repository.Save was just called")
 	}
@@ -253,7 +253,7 @@ func (mock *RepositoryMock[TID, E, R]) SaveCalls() []struct {
 //
 //		// make and configure a mocked aggregate.TransactionalAggregateProcessor
 //		mockedTransactionalAggregateProcessor := &TransactionalAggregateProcessorMock{
-//			ProcessFunc: func(ctx context.Context, tx TX, root R, events aggregate.CommitedEvents[E]) error {
+//			ProcessFunc: func(ctx context.Context, tx TX, root R, events aggregate.CommittedEvents[E]) error {
 //				panic("mock out the Process method")
 //			},
 //		}
@@ -264,7 +264,7 @@ func (mock *RepositoryMock[TID, E, R]) SaveCalls() []struct {
 //	}
 type TransactionalAggregateProcessorMock[TX any, TID aggregate.ID, E event.Any, R aggregate.Root[TID, E]] struct {
 	// ProcessFunc mocks the Process method.
-	ProcessFunc func(ctx context.Context, tx TX, root R, events aggregate.CommitedEvents[E]) error
+	ProcessFunc func(ctx context.Context, tx TX, root R, events aggregate.CommittedEvents[E]) error
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -277,14 +277,14 @@ type TransactionalAggregateProcessorMock[TX any, TID aggregate.ID, E event.Any, 
 			// Root is the root argument value.
 			Root R
 			// Events is the events argument value.
-			Events aggregate.CommitedEvents[E]
+			Events aggregate.CommittedEvents[E]
 		}
 	}
 	lockProcess sync.RWMutex
 }
 
 // Process calls ProcessFunc.
-func (mock *TransactionalAggregateProcessorMock[TX, TID, E, R]) Process(ctx context.Context, tx TX, root R, events aggregate.CommitedEvents[E]) error {
+func (mock *TransactionalAggregateProcessorMock[TX, TID, E, R]) Process(ctx context.Context, tx TX, root R, events aggregate.CommittedEvents[E]) error {
 	if mock.ProcessFunc == nil {
 		panic("TransactionalAggregateProcessorMock.ProcessFunc: method is nil but TransactionalAggregateProcessor.Process was just called")
 	}
@@ -292,7 +292,7 @@ func (mock *TransactionalAggregateProcessorMock[TX, TID, E, R]) Process(ctx cont
 		Ctx    context.Context
 		Tx     TX
 		Root   R
-		Events aggregate.CommitedEvents[E]
+		Events aggregate.CommittedEvents[E]
 	}{
 		Ctx:    ctx,
 		Tx:     tx,
@@ -313,13 +313,13 @@ func (mock *TransactionalAggregateProcessorMock[TX, TID, E, R]) ProcessCalls() [
 	Ctx    context.Context
 	Tx     TX
 	Root   R
-	Events aggregate.CommitedEvents[E]
+	Events aggregate.CommittedEvents[E]
 } {
 	var calls []struct {
 		Ctx    context.Context
 		Tx     TX
 		Root   R
-		Events aggregate.CommitedEvents[E]
+		Events aggregate.CommittedEvents[E]
 	}
 	mock.lockProcess.RLock()
 	calls = mock.calls.Process

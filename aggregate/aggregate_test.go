@@ -151,7 +151,7 @@ func CustomSnapshot(
 	ctx context.Context,
 	root *Person,
 	previousVersion, newVersion version.Version,
-	committedEvents aggregate.CommitedEvents[PersonEvent],
+	committedEvents aggregate.CommittedEvents[PersonEvent],
 ) bool {
 	for evt := range committedEvents.All() {
 		// This is exhaustive.
@@ -187,7 +187,7 @@ func Test_Person(t *testing.T) {
 		memlog,
 		NewEmpty,
 		&TransactionalAggregateProcessorMock[eventlog.MemTx, PersonID, PersonEvent, *Person]{
-			ProcessFunc: func(ctx context.Context, tx eventlog.MemTx, root *Person, events aggregate.CommitedEvents[PersonEvent]) error {
+			ProcessFunc: func(ctx context.Context, tx eventlog.MemTx, root *Person, events aggregate.CommittedEvents[PersonEvent]) error {
 				return nil
 			},
 		},
@@ -275,11 +275,11 @@ func Test_RecordEvent(t *testing.T) {
 	})
 }
 
-func Test_FlushUncommitedEvents(t *testing.T) {
+func Test_FlushUncommittedEvents(t *testing.T) {
 	p := createPerson(t)
 	p.Age()
 
-	uncommitted := aggregate.FlushUncommitedEvents(p)
+	uncommitted := aggregate.FlushUncommittedEvents(p)
 	require.Len(t, uncommitted, 2)
 
 	personWasBornName := new(personWasBorn).EventName()
@@ -288,7 +288,7 @@ func Test_FlushUncommitedEvents(t *testing.T) {
 	require.Equal(t, uncommitted[0].EventName(), personWasBornName)
 	require.Equal(t, uncommitted[1].EventName(), personAgedName)
 
-	raw, err := aggregate.RawEventsFromUncommited(t.Context(), serde.NewJSONBinary(), uncommitted)
+	raw, err := aggregate.RawEventsFromUncommitted(t.Context(), serde.NewJSONBinary(), uncommitted)
 	require.NoError(t, err)
 	require.Equal(t, raw[0].EventName(), personWasBornName)
 	require.Equal(t, raw[1].EventName(), personAgedName)

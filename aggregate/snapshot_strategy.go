@@ -18,7 +18,7 @@ type SnapshotStrategy[TID ID, E event.Any, R Root[TID, E]] interface {
 		// The new version of the aggregate *after* the events were committed.
 		newVersion version.Version,
 		// The events that were just committed in this Save operation.
-		committedEvents CommitedEvents[E],
+		committedEvents CommittedEvents[E],
 	) bool
 }
 
@@ -36,7 +36,7 @@ func (s *everyNEventsStrategy[TID, E, R]) ShouldSnapshot(
 	_ context.Context,
 	_ R,
 	previousVersion, newVersion version.Version,
-	_ CommitedEvents[E],
+	_ CommittedEvents[E],
 ) bool {
 	if s.N == 0 {
 		return false
@@ -57,7 +57,7 @@ func (s *onEventsStrategy[TID, E, R]) ShouldSnapshot(
 	_ context.Context,
 	_ R,
 	_, _ version.Version,
-	committedEvents CommitedEvents[E],
+	committedEvents CommittedEvents[E],
 ) bool {
 	for _, committedEvent := range committedEvents {
 		if _, ok := s.eventsToMatch[committedEvent.EventName()]; ok {
@@ -85,7 +85,7 @@ type customStrategy[TID ID, E event.Any, R Root[TID, E]] struct {
 		root R,
 		previousVersion version.Version,
 		newVersion version.Version,
-		committedEvents CommitedEvents[E],
+		committedEvents CommittedEvents[E],
 	) bool
 }
 
@@ -93,7 +93,7 @@ func (s *customStrategy[TID, E, R]) ShouldSnapshot(
 	ctx context.Context,
 	root R,
 	previousVersion, newVersion version.Version,
-	committedEvents CommitedEvents[E],
+	committedEvents CommittedEvents[E],
 ) bool {
 	if s.shouldSnapshot == nil {
 		return false
@@ -107,7 +107,7 @@ func (b *strategyBuilder[TID, E, R]) Custom(shouldSnapshot func(
 	root R,
 	previousVersion version.Version,
 	newVersion version.Version,
-	committedEvents CommitedEvents[E],
+	committedEvents CommittedEvents[E],
 ) bool,
 ) *customStrategy[TID, E, R] {
 	return &customStrategy[TID, E, R]{
@@ -121,7 +121,7 @@ func (s *afterCommit[TID, E, R]) ShouldSnapshot(
 	_ context.Context,
 	_ R,
 	_, _ version.Version,
-	committedEvents CommitedEvents[E],
+	committedEvents CommittedEvents[E],
 ) bool {
 	return len(committedEvents) > 0
 }
@@ -139,7 +139,7 @@ func (s *anyOf[TID, E, R]) ShouldSnapshot(
 	ctx context.Context,
 	root R,
 	previousVersion, newVersion version.Version,
-	committedEvents CommitedEvents[E],
+	committedEvents CommittedEvents[E],
 ) bool {
 	for _, snapstrategy := range s.strategies {
 		if snapstrategy.ShouldSnapshot(ctx, root, previousVersion, newVersion, committedEvents) {
@@ -167,7 +167,7 @@ func (s *allOf[TID, E, R]) ShouldSnapshot(
 	ctx context.Context,
 	root R,
 	previousVersion, newVersion version.Version,
-	committedEvents CommitedEvents[E],
+	committedEvents CommittedEvents[E],
 ) bool {
 	for _, snapstrategy := range s.strategies {
 		if !snapstrategy.ShouldSnapshot(ctx, root, previousVersion, newVersion, committedEvents) {

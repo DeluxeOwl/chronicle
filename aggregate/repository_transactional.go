@@ -95,7 +95,7 @@ func NewTransactionalRepositoryWithTransactor[TX any, TID ID, E event.Any, R Roo
 func (repo *TransactionalRepository[TX, TID, E, R]) Save(
 	ctx context.Context,
 	root R,
-) (version.Version, CommitedEvents[E], error) {
+) (version.Version, CommittedEvents[E], error) {
 	newVersion, committedEvents, err := CommitEventsWithTX(
 		ctx,
 		repo.transactor,

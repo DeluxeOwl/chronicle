@@ -8,17 +8,17 @@ import (
 )
 
 type Base struct {
-	uncommitedEvents flushedUncommitedEvents
-	version          version.Version
+	uncommittedEvents flushedUncommittedEvents
+	version           version.Version
 }
 
 func (br *Base) Version() version.Version { return br.version }
 
-type flushedUncommitedEvents []event.Any
+type flushedUncommittedEvents []event.Any
 
-func (br *Base) flushUncommitedEvents() flushedUncommitedEvents {
-	flushed := br.uncommitedEvents
-	br.uncommitedEvents = nil
+func (br *Base) flushUncommittedEvents() flushedUncommittedEvents {
+	flushed := br.uncommittedEvents
+	br.uncommittedEvents = nil
 
 	return flushed
 }
@@ -37,7 +37,7 @@ func (br *Base) recordThat(aggregate anyEventApplier, events ...event.Any) error
 			return fmt.Errorf("record events: root apply: %w", err)
 		}
 
-		br.uncommitedEvents = append(br.uncommitedEvents, anyEvent)
+		br.uncommittedEvents = append(br.uncommittedEvents, anyEvent)
 		br.version++
 	}
 

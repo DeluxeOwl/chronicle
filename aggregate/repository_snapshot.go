@@ -92,7 +92,7 @@ func (esr *ESRepoWithSnapshots[TID, E, R, TS]) LoadAggregate(
 func (esr *ESRepoWithSnapshots[TID, E, R, TS]) Save(
 	ctx context.Context,
 	root R,
-) (version.Version, CommitedEvents[E], error) {
+) (version.Version, CommittedEvents[E], error) {
 	// First, commit events to the event log. This is the source of truth.
 	newVersion, committedEvents, err := esr.internal.Save(ctx, root)
 	if err != nil {

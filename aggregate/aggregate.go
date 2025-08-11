@@ -38,7 +38,7 @@ type (
 		event.EventFuncCreator[E]
 
 		// Base implements these, so you *have* to embed Base.
-		flushUncommitedEvents() flushedUncommitedEvents
+		flushUncommittedEvents() flushedUncommittedEvents
 		setVersion(version.Version)
 		recordThat(anyEventApplier, ...event.Any) error
 	}
@@ -142,16 +142,16 @@ func LoadFromRecords[TID ID, E event.Any](
 }
 
 type (
-	UncommitedEvents[E event.Any] []E
+	UncommittedEvents[E event.Any] []E
 )
 
-func FlushUncommitedEvents[TID ID, E event.Any, R Root[TID, E]](
+func FlushUncommittedEvents[TID ID, E event.Any, R Root[TID, E]](
 	root R,
-) UncommitedEvents[E] {
-	flushedUncommited := root.flushUncommitedEvents()
-	uncommitted := make([]E, len(flushedUncommited))
+) UncommittedEvents[E] {
+	flushedUncommitted := root.flushUncommittedEvents()
+	uncommitted := make([]E, len(flushedUncommitted))
 
-	for i, evt := range flushedUncommited {
+	for i, evt := range flushedUncommitted {
 		concrete, ok := event.AnyToConcrete[E](evt)
 		if !ok {
 			assert.Never("any to concrete")
@@ -163,7 +163,11 @@ func FlushUncommitedEvents[TID ID, E event.Any, R Root[TID, E]](
 	return uncommitted
 }
 
-func RawEventsFromUncommited[E event.Any](ctx context.Context, serializer serde.BinarySerializer, uncommitted UncommitedEvents[E]) ([]event.Raw, error) {
+func RawEventsFromUncommitted[E event.Any](
+	ctx context.Context,
+	serializer serde.BinarySerializer,
+	uncommitted UncommittedEvents[E],
+) ([]event.Raw, error) {
 	rawEvents := make([]event.Raw, len(uncommitted))
 	for i, evt := range uncommitted {
 		bytes, err := serializer.SerializeBinary(evt)
@@ -177,9 +181,9 @@ func RawEventsFromUncommited[E event.Any](ctx context.Context, serializer serde.
 	return rawEvents, nil
 }
 
-type CommitedEvents[E event.Any] []E
+type CommittedEvents[E event.Any] []E
 
-func (committed CommitedEvents[E]) All() iter.Seq[E] {
+func (committed CommittedEvents[E]) All() iter.Seq[E] {
 	return func(yield func(E) bool) {
 		for _, evt := range committed {
 			if !yield(evt) {
@@ -197,8 +201,8 @@ func CommitEvents[TID ID, E event.Any, R Root[TID, E]](
 	store event.Log,
 	serializer serde.BinarySerializer,
 	root R,
-) (version.Version, CommitedEvents[E], error) {
-	uncommittedEvents := FlushUncommitedEvents(root)
+) (version.Version, CommittedEvents[E], error) {
+	uncommittedEvents := FlushUncommittedEvents(root)
 
 	if len(uncommittedEvents) == 0 {
 		return version.Zero, nil, nil // Nothing to save
@@ -211,7 +215,7 @@ func CommitEvents[TID ID, E event.Any, R Root[TID, E]](
 		root.Version() - version.Version(len(uncommittedEvents)),
 	)
 
-	rawEvents, err := RawEventsFromUncommited(ctx, serializer, uncommittedEvents)
+	rawEvents, err := RawEventsFromUncommitted(ctx, serializer, uncommittedEvents)
 	if err != nil {
 		return version.Zero, nil, fmt.Errorf("aggregate commit: events to raw: %w", err)
 	}
@@ -222,7 +226,7 @@ func CommitEvents[TID ID, E event.Any, R Root[TID, E]](
 	}
 
 	// These events now become committed
-	return newVersion, CommitedEvents[E](uncommittedEvents), nil
+	return newVersion, CommittedEvents[E](uncommittedEvents), nil
 }
 
 func CommitEventsWithTX[TX any, TID ID, E event.Any, R Root[TID, E]](
@@ -232,11 +236,11 @@ func CommitEventsWithTX[TX any, TID ID, E event.Any, R Root[TID, E]](
 	processor TransactionalAggregateProcessor[TX, TID, E, R],
 	serializer serde.BinarySerializer,
 	root R,
-) (version.Version, CommitedEvents[E], error) {
+) (version.Version, CommittedEvents[E], error) {
 	var newVersion version.Version
-	var committedEvents CommitedEvents[E]
+	var committedEvents CommittedEvents[E]
 
-	uncommittedEvents := FlushUncommitedEvents(root)
+	uncommittedEvents := FlushUncommittedEvents(root)
 
 	if len(uncommittedEvents) == 0 {
 		return root.Version(), nil, nil // Nothing to save
@@ -248,7 +252,7 @@ func CommitEventsWithTX[TX any, TID ID, E event.Any, R Root[TID, E]](
 		root.Version() - version.Version(len(uncommittedEvents)),
 	)
 
-	rawEvents, err := RawEventsFromUncommited(ctx, serializer, uncommittedEvents)
+	rawEvents, err := RawEventsFromUncommitted(ctx, serializer, uncommittedEvents)
 	if err != nil {
 		return version.Zero, nil, fmt.Errorf("aggregate commit with tx: events to raw: %w", err)
 	}
@@ -261,7 +265,7 @@ func CommitEventsWithTX[TX any, TID ID, E event.Any, R Root[TID, E]](
 		}
 
 		newVersion = v
-		committedEvents = CommitedEvents[E](uncommittedEvents)
+		committedEvents = CommittedEvents[E](uncommittedEvents)
 
 		// Call the high-level, type-safe aggregate processor in the same transaction
 		if processor != nil {

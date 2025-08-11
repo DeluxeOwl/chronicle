@@ -20,5 +20,5 @@ type TransactionalAggregateProcessor[TX any, TID ID, E event.Any, R Root[TID, E]
 	// immediately after the aggregate's events have been successfully saved to the event log.
 	// It receives the transaction handle, the aggregate in its new state, and the
 	// strongly-typed events that were just committed.
-	Process(ctx context.Context, tx TX, root R, events CommitedEvents[E]) error
+	Process(ctx context.Context, tx TX, root R, events CommittedEvents[E]) error
 }

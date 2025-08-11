@@ -21,7 +21,7 @@ type VersionedGetter[TID ID, E event.Any, R Root[TID, E]] interface {
 }
 
 type Saver[TID ID, E event.Any, R Root[TID, E]] interface {
-	Save(ctx context.Context, root R) (version.Version, CommitedEvents[E], error)
+	Save(ctx context.Context, root R) (version.Version, CommittedEvents[E], error)
 }
 
 // This is needed for the snapshot to be able to hydrate an aggregate in case
@@ -125,7 +125,7 @@ func (repo *ESRepo[TID, E, R]) GetVersion(
 func (repo *ESRepo[TID, E, R]) Save(
 	ctx context.Context,
 	root R,
-) (version.Version, CommitedEvents[E], error) {
+) (version.Version, CommittedEvents[E], error) {
 	newVersion, committedEvents, err := CommitEvents(ctx, repo.eventlog, repo.serde, root)
 	if err != nil {
 		return newVersion, committedEvents, fmt.Errorf("repo save: %w", err)
