@@ -107,7 +107,7 @@ func (repo *TransactionalRepository[TX, TID, E, R]) Save(
 		repo.txLog,
 		repo.aggProcessor,
 		repo.serde,
-		nil,
+		repo.transformers,
 		root,
 	)
 	if err != nil {
