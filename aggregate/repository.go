@@ -20,7 +20,19 @@ type Saver[TID ID, E event.Any, R Root[TID, E]] interface {
 	Save(ctx context.Context, root R) (version.Version, CommitedEvents[E], error)
 }
 
+// This is needed for the snapshot to be able to hydrate an aggregate in case
+// we found an older snapshot and we need to replay the events starting with the next version
+type AggregateLoader[TID ID, E event.Any, R Root[TID, E]] interface {
+	LoadAggregate(
+		ctx context.Context,
+		root R,
+		id TID,
+		selector version.Selector,
+	) error
+}
+
 type Repository[TID ID, E event.Any, R Root[TID, E]] interface {
+	AggregateLoader[TID, E, R]
 	Getter[TID, E, R]
 	Saver[TID, E, R]
 }
@@ -29,6 +41,7 @@ type Repository[TID ID, E event.Any, R Root[TID, E]] interface {
 // different implementations for the Getter and Saver Repository interface components.
 // Useful for wrapping the Save method with a retry for optimistic concurrency control.
 type FusedRepo[TID ID, E event.Any, R Root[TID, E]] struct {
+	AggregateLoader[TID, E, R]
 	Getter[TID, E, R]
 	Saver[TID, E, R]
 }
@@ -71,7 +84,7 @@ func NewESRepo[TID ID, E event.Any, R Root[TID, E]](
 	return esr, nil
 }
 
-func (repo *ESRepo[TID, E, R]) HydrateAggregate(
+func (repo *ESRepo[TID, E, R]) LoadAggregate(
 	ctx context.Context,
 	root R,
 	id TID,
@@ -83,7 +96,7 @@ func (repo *ESRepo[TID, E, R]) HydrateAggregate(
 func (repo *ESRepo[TID, E, R]) Get(ctx context.Context, id TID) (R, error) {
 	root := repo.createRoot()
 
-	if err := repo.HydrateAggregate(ctx, root, id, version.SelectFromBeginning); err != nil {
+	if err := repo.LoadAggregate(ctx, root, id, version.SelectFromBeginning); err != nil {
 		var empty R
 		return empty, fmt.Errorf("repo get: %w", err)
 	}

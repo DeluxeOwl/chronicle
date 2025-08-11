@@ -106,7 +106,7 @@ func (repo *TransactionalRepository[TX, TID, E, R]) Save(
 	return newVersion, committedEvents, nil
 }
 
-func (repo *TransactionalRepository[TX, TID, E, R]) HydrateAggregate(
+func (repo *TransactionalRepository[TX, TID, E, R]) LoadAggregate(
 	ctx context.Context,
 	root R,
 	id TID,
@@ -118,7 +118,7 @@ func (repo *TransactionalRepository[TX, TID, E, R]) HydrateAggregate(
 func (repo *TransactionalRepository[TX, TID, E, R]) Get(ctx context.Context, id TID) (R, error) {
 	root := repo.createRoot()
 
-	if err := repo.HydrateAggregate(ctx, root, id, version.SelectFromBeginning); err != nil {
+	if err := repo.LoadAggregate(ctx, root, id, version.SelectFromBeginning); err != nil {
 		var empty R
 		return empty, fmt.Errorf("repo get: %w", err)
 	}

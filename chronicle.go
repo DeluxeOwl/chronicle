@@ -24,7 +24,7 @@ func NewEventSourcedRepository[TID aggregate.ID, E event.Any, R aggregate.Root[T
 }
 
 func NewEventSourcedRepositoryWithSnapshots[TID aggregate.ID, E event.Any, R aggregate.Root[TID, E], TS aggregate.Snapshot[TID]](
-	esRepo aggregate.HydratorRepo[TID, E, R],
+	esRepo aggregate.Repository[TID, E, R],
 	snapstore aggregate.SnapshotStore[TID, TS],
 	snapshotter aggregate.Snapshotter[TID, E, R, TS],
 	snapstrategy aggregate.SnapshotStrategy[TID, E, R],
