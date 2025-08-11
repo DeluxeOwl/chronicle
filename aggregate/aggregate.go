@@ -172,7 +172,7 @@ func RawEventsFromUncommitted[E event.Any](
 	for i, evt := range uncommitted {
 		bytes, err := serializer.SerializeBinary(evt)
 		if err != nil {
-			return nil, fmt.Errorf("raw events from uncommited: %w", err)
+			return nil, fmt.Errorf("raw events from uncommitted: %w", err)
 		}
 
 		rawEvents[i] = event.NewRaw(evt.EventName(), bytes)
