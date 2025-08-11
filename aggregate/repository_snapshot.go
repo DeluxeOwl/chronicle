@@ -15,16 +15,16 @@ var _ Repository[testAggID, testAggEvent, *testAgg] = (*ESRepoWithSnapshots[test
 type ESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]] struct {
 	internal Repository[TID, E, R]
 
-	snapstore         SnapshotStore[TID, TS]
-	snapshotter       Snapshotter[TID, E, R, TS]
-	returnSnapshotErr ReturnSnapshotErrFunc
-	snapshotStrategy  SnapshotStrategy[TID, E, R]
+	snapstore        SnapshotStore[TID, TS]
+	snapshotter      Snapshotter[TID, E, R, TS]
+	onSnapshotErr    OnSnapshotErrFunc
+	snapshotStrategy SnapshotStrategy[TID, E, R]
 
 	snapshotSaveEnabled bool
 }
 
 // Note: this is a function, in case the user wants to customize the behavior of returning an error.
-type ReturnSnapshotErrFunc = func(ctx context.Context, err error) error
+type OnSnapshotErrFunc = func(ctx context.Context, err error) error
 
 func NewESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]](
 	esRepo Repository[TID, E, R],
@@ -35,7 +35,7 @@ func NewESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID
 ) (*ESRepoWithSnapshots[TID, E, R, TS], error) {
 	esr := &ESRepoWithSnapshots[TID, E, R, TS]{
 		internal: esRepo,
-		returnSnapshotErr: func(ctx context.Context, err error) error {
+		onSnapshotErr: func(ctx context.Context, err error) error {
 			return err
 		},
 		snapstore:           snapstore,
@@ -130,9 +130,9 @@ func (esr *ESRepoWithSnapshots[TID, E, R, TS]) Save(
 	}
 
 	err = esr.snapstore.SaveSnapshot(ctx, snapshot)
-	if err != nil && esr.returnSnapshotErr != nil {
+	if err != nil && esr.onSnapshotErr != nil {
 		var snapshotErr error
-		if snapshotErr = esr.returnSnapshotErr(ctx, err); snapshotErr != nil {
+		if snapshotErr = esr.onSnapshotErr(ctx, err); snapshotErr != nil {
 			snapshotErr = fmt.Errorf("snapshot repo save: save snapshot: %w", snapshotErr)
 		}
 		return newVersion, committedEvents, snapshotErr
@@ -141,8 +141,8 @@ func (esr *ESRepoWithSnapshots[TID, E, R, TS]) Save(
 	return newVersion, committedEvents, nil
 }
 
-func (esr *ESRepoWithSnapshots[TID, E, R, TS]) setReturnSnapshotErr(fn ReturnSnapshotErrFunc) {
-	esr.returnSnapshotErr = fn
+func (esr *ESRepoWithSnapshots[TID, E, R, TS]) setOnSnapshotErr(fn OnSnapshotErrFunc) {
+	esr.onSnapshotErr = fn
 }
 
 func (esr *ESRepoWithSnapshots[TID, E, R, TS]) setSnapshotSaveEnabled(enabled bool) {
@@ -150,15 +150,15 @@ func (esr *ESRepoWithSnapshots[TID, E, R, TS]) setSnapshotSaveEnabled(enabled bo
 }
 
 type esRepoWithSnapshotsConfigurator interface {
-	setReturnSnapshotErr(ReturnSnapshotErrFunc)
+	setOnSnapshotErr(OnSnapshotErrFunc)
 	setSnapshotSaveEnabled(bool)
 }
 
 type ESRepoWithSnapshotsOption func(esRepoWithSnapshotsConfigurator)
 
-func ReturnErrorFunc(fn ReturnSnapshotErrFunc) ESRepoWithSnapshotsOption {
+func OnSnapshotError(fn OnSnapshotErrFunc) ESRepoWithSnapshotsOption {
 	return func(c esRepoWithSnapshotsConfigurator) {
-		c.setReturnSnapshotErr(fn)
+		c.setOnSnapshotErr(fn)
 	}
 }
 
