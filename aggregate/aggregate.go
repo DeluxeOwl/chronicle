@@ -44,6 +44,8 @@ type (
 	}
 )
 
+// anyApplier is a type-erased adapter that allows the generic Root.Apply(E) method
+// to be called from non-generic code that works with `anyEventApplier`.
 type anyApplier[TID ID, E event.Any] struct {
 	internalRoot Root[TID, E]
 }
