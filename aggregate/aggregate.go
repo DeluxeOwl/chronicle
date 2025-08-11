@@ -163,9 +163,7 @@ func FlushUncommitedEvents[TID ID, E event.Any, R Root[TID, E]](
 	return uncommitted
 }
 
-func (uncommitted UncommitedEvents[E]) ToRaw(
-	serializer serde.BinarySerializer,
-) ([]event.Raw, error) {
+func RawEventsFromUncommited[E event.Any](ctx context.Context, serializer serde.BinarySerializer, uncommitted UncommitedEvents[E]) ([]event.Raw, error) {
 	rawEvents := make([]event.Raw, len(uncommitted))
 	for i, evt := range uncommitted {
 		bytes, err := serializer.SerializeBinary(evt)
@@ -200,9 +198,9 @@ func CommitEvents[TID ID, E event.Any, R Root[TID, E]](
 	serializer serde.BinarySerializer,
 	root R,
 ) (version.Version, CommitedEvents[E], error) {
-	uncommitedEvents := FlushUncommitedEvents(root)
+	uncommittedEvents := FlushUncommitedEvents(root)
 
-	if len(uncommitedEvents) == 0 {
+	if len(uncommittedEvents) == 0 {
 		return version.Zero, nil, nil // Nothing to save
 	}
 
@@ -210,10 +208,10 @@ func CommitEvents[TID ID, E event.Any, R Root[TID, E]](
 
 	// This logic correctly calculates the version before the new events were applied
 	expectedVersion := version.CheckExact(
-		root.Version() - version.Version(len(uncommitedEvents)),
+		root.Version() - version.Version(len(uncommittedEvents)),
 	)
 
-	rawEvents, err := uncommitedEvents.ToRaw(serializer)
+	rawEvents, err := RawEventsFromUncommited(ctx, serializer, uncommittedEvents)
 	if err != nil {
 		return version.Zero, nil, fmt.Errorf("aggregate commit: events to raw: %w", err)
 	}
@@ -224,7 +222,7 @@ func CommitEvents[TID ID, E event.Any, R Root[TID, E]](
 	}
 
 	// These events now become committed
-	return newVersion, CommitedEvents[E](uncommitedEvents), nil
+	return newVersion, CommitedEvents[E](uncommittedEvents), nil
 }
 
 func CommitEventsWithTX[TX any, TID ID, E event.Any, R Root[TID, E]](
@@ -250,7 +248,7 @@ func CommitEventsWithTX[TX any, TID ID, E event.Any, R Root[TID, E]](
 		root.Version() - version.Version(len(uncommittedEvents)),
 	)
 
-	rawEvents, err := uncommittedEvents.ToRaw(serializer)
+	rawEvents, err := RawEventsFromUncommited(ctx, serializer, uncommittedEvents)
 	if err != nil {
 		return version.Zero, nil, fmt.Errorf("aggregate commit with tx: events to raw: %w", err)
 	}

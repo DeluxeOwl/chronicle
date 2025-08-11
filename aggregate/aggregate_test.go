@@ -288,7 +288,7 @@ func Test_FlushUncommitedEvents(t *testing.T) {
 	require.Equal(t, uncommitted[0].EventName(), personWasBornName)
 	require.Equal(t, uncommitted[1].EventName(), personAgedName)
 
-	raw, err := uncommitted.ToRaw(serde.NewJSONBinary())
+	raw, err := aggregate.RawEventsFromUncommited(t.Context(), serde.NewJSONBinary(), uncommitted)
 	require.NoError(t, err)
 	require.Equal(t, raw[0].EventName(), personWasBornName)
 	require.Equal(t, raw[1].EventName(), personAgedName)
