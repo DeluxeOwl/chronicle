@@ -37,8 +37,8 @@ type AggregateLoader[TID ID, E event.Any, R Root[TID, E]] interface {
 
 type Repository[TID ID, E event.Any, R Root[TID, E]] interface {
 	AggregateLoader[TID, E, R]
-	Getter[TID, E, R]
 	VersionedGetter[TID, E, R]
+	Getter[TID, E, R]
 	Saver[TID, E, R]
 }
 
@@ -47,6 +47,7 @@ type Repository[TID ID, E event.Any, R Root[TID, E]] interface {
 // Useful for wrapping the Save method with a retry for optimistic concurrency control.
 type FusedRepo[TID ID, E event.Any, R Root[TID, E]] struct {
 	AggregateLoader[TID, E, R]
+	VersionedGetter[TID, E, R]
 	Getter[TID, E, R]
 	Saver[TID, E, R]
 }
