@@ -32,7 +32,11 @@ func (a *anyTransformerAdapter[E]) TransformForWrite(ctx context.Context, event 
 	finalEvent, ok := transformedAny.(E)
 	if !ok {
 		var empty E
-		return empty, fmt.Errorf("transform for write: incompatible type %T", transformedAny)
+		return empty, fmt.Errorf(
+			"transform for write: transformer returned type %T which is not assignable to expected type %T",
+			transformedAny,
+			empty,
+		)
 	}
 
 	return finalEvent, nil
