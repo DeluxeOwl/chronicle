@@ -16,6 +16,10 @@ type Getter[TID ID, E event.Any, R Root[TID, E]] interface {
 	Get(ctx context.Context, id TID) (R, error)
 }
 
+type VersionedGetter[TID ID, E event.Any, R Root[TID, E]] interface {
+	GetVersion(ctx context.Context, id TID, selector version.Selector) (R, error)
+}
+
 type Saver[TID ID, E event.Any, R Root[TID, E]] interface {
 	Save(ctx context.Context, root R) (version.Version, CommitedEvents[E], error)
 }
@@ -34,6 +38,7 @@ type AggregateLoader[TID ID, E event.Any, R Root[TID, E]] interface {
 type Repository[TID ID, E event.Any, R Root[TID, E]] interface {
 	AggregateLoader[TID, E, R]
 	Getter[TID, E, R]
+	VersionedGetter[TID, E, R]
 	Saver[TID, E, R]
 }
 
@@ -45,6 +50,10 @@ type FusedRepo[TID ID, E event.Any, R Root[TID, E]] struct {
 	Getter[TID, E, R]
 	Saver[TID, E, R]
 }
+
+var _ Repository[testAggID, testAggEvent, *testAgg] = (*ESRepo[testAggID, testAggEvent, *testAgg])(
+	nil,
+)
 
 type ESRepo[TID ID, E event.Any, R Root[TID, E]] struct {
 	registry   event.Registry[E]
@@ -94,11 +103,19 @@ func (repo *ESRepo[TID, E, R]) LoadAggregate(
 }
 
 func (repo *ESRepo[TID, E, R]) Get(ctx context.Context, id TID) (R, error) {
+	return repo.GetVersion(ctx, id, version.SelectFromBeginning)
+}
+
+func (repo *ESRepo[TID, E, R]) GetVersion(
+	ctx context.Context,
+	id TID,
+	selector version.Selector,
+) (R, error) {
 	root := repo.createRoot()
 
-	if err := repo.LoadAggregate(ctx, root, id, version.SelectFromBeginning); err != nil {
+	if err := repo.LoadAggregate(ctx, root, id, selector); err != nil {
 		var empty R
-		return empty, fmt.Errorf("repo get: %w", err)
+		return empty, fmt.Errorf("repo get version %d: %w", selector.From, err)
 	}
 
 	return root, nil
@@ -152,4 +169,34 @@ func AnyEventRegistry(anyRegistry event.Registry[event.Any]) ESRepoOption {
 	return func(c esRepoConfigurator) {
 		c.setAnyRegistry(anyRegistry)
 	}
+}
+
+// Aggregate for compile time check
+
+type testAggID string
+
+func (testAggID) String() string { return "" }
+
+var _ Root[testAggID, testAggEvent] = (*testAgg)(nil)
+
+type testAgg struct {
+	Base
+}
+type testAggEvent interface {
+	event.Any
+}
+
+// Apply implements Root.
+func (t *testAgg) Apply(e testAggEvent) error {
+	panic("unimplemented")
+}
+
+// EventFuncs implements Root.
+func (t *testAgg) EventFuncs() event.FuncsFor[testAggEvent] {
+	panic("unimplemented")
+}
+
+// ID implements Root.
+func (t *testAgg) ID() testAggID {
+	panic("unimplemented")
 }

@@ -2,11 +2,16 @@ package aggregate
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 
 	"github.com/DeluxeOwl/chronicle/event"
 	"github.com/DeluxeOwl/chronicle/serde"
 	"github.com/DeluxeOwl/chronicle/version"
+)
+
+var _ Repository[testAggID, testAggEvent, *testAgg] = (*TransactionalRepository[*sql.Tx, testAggID, testAggEvent, *testAgg])(
+	nil,
 )
 
 type TransactionalRepository[T any, TID ID, E event.Any, R Root[TID, E]] struct {
@@ -116,11 +121,19 @@ func (repo *TransactionalRepository[TX, TID, E, R]) LoadAggregate(
 }
 
 func (repo *TransactionalRepository[TX, TID, E, R]) Get(ctx context.Context, id TID) (R, error) {
+	return repo.GetVersion(ctx, id, version.SelectFromBeginning)
+}
+
+func (repo *TransactionalRepository[TX, TID, E, R]) GetVersion(
+	ctx context.Context,
+	id TID,
+	selector version.Selector,
+) (R, error) {
 	root := repo.createRoot()
 
-	if err := repo.LoadAggregate(ctx, root, id, version.SelectFromBeginning); err != nil {
+	if err := repo.LoadAggregate(ctx, root, id, selector); err != nil {
 		var empty R
-		return empty, fmt.Errorf("repo get: %w", err)
+		return empty, fmt.Errorf("repo get version %d: %w", selector.From, err)
 	}
 
 	return root, nil

@@ -20,6 +20,12 @@ import (
 //			GetFunc: func(ctx context.Context, id TID) (R, error) {
 //				panic("mock out the Get method")
 //			},
+//			GetVersionFunc: func(ctx context.Context, id TID, selector version.Selector) (R, error) {
+//				panic("mock out the GetVersion method")
+//			},
+//			LoadAggregateFunc: func(ctx context.Context, root R, id TID, selector version.Selector) error {
+//				panic("mock out the LoadAggregate method")
+//			},
 //			SaveFunc: func(ctx context.Context, root R) (version.Version, aggregate.CommitedEvents[E], error) {
 //				panic("mock out the Save method")
 //			},
@@ -33,6 +39,12 @@ type RepositoryMock[TID aggregate.ID, E event.Any, R aggregate.Root[TID, E]] str
 	// GetFunc mocks the Get method.
 	GetFunc func(ctx context.Context, id TID) (R, error)
 
+	// GetVersionFunc mocks the GetVersion method.
+	GetVersionFunc func(ctx context.Context, id TID, selector version.Selector) (R, error)
+
+	// LoadAggregateFunc mocks the LoadAggregate method.
+	LoadAggregateFunc func(ctx context.Context, root R, id TID, selector version.Selector) error
+
 	// SaveFunc mocks the Save method.
 	SaveFunc func(ctx context.Context, root R) (version.Version, aggregate.CommitedEvents[E], error)
 
@@ -45,6 +57,26 @@ type RepositoryMock[TID aggregate.ID, E event.Any, R aggregate.Root[TID, E]] str
 			// ID is the id argument value.
 			ID TID
 		}
+		// GetVersion holds details about calls to the GetVersion method.
+		GetVersion []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// ID is the id argument value.
+			ID TID
+			// Selector is the selector argument value.
+			Selector version.Selector
+		}
+		// LoadAggregate holds details about calls to the LoadAggregate method.
+		LoadAggregate []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Root is the root argument value.
+			Root R
+			// ID is the id argument value.
+			ID TID
+			// Selector is the selector argument value.
+			Selector version.Selector
+		}
 		// Save holds details about calls to the Save method.
 		Save []struct {
 			// Ctx is the ctx argument value.
@@ -53,8 +85,10 @@ type RepositoryMock[TID aggregate.ID, E event.Any, R aggregate.Root[TID, E]] str
 			Root R
 		}
 	}
-	lockGet  sync.RWMutex
-	lockSave sync.RWMutex
+	lockGet           sync.RWMutex
+	lockGetVersion    sync.RWMutex
+	lockLoadAggregate sync.RWMutex
+	lockSave          sync.RWMutex
 }
 
 // Get calls GetFunc.
@@ -90,6 +124,90 @@ func (mock *RepositoryMock[TID, E, R]) GetCalls() []struct {
 	mock.lockGet.RLock()
 	calls = mock.calls.Get
 	mock.lockGet.RUnlock()
+	return calls
+}
+
+// GetVersion calls GetVersionFunc.
+func (mock *RepositoryMock[TID, E, R]) GetVersion(ctx context.Context, id TID, selector version.Selector) (R, error) {
+	if mock.GetVersionFunc == nil {
+		panic("RepositoryMock.GetVersionFunc: method is nil but Repository.GetVersion was just called")
+	}
+	callInfo := struct {
+		Ctx      context.Context
+		ID       TID
+		Selector version.Selector
+	}{
+		Ctx:      ctx,
+		ID:       id,
+		Selector: selector,
+	}
+	mock.lockGetVersion.Lock()
+	mock.calls.GetVersion = append(mock.calls.GetVersion, callInfo)
+	mock.lockGetVersion.Unlock()
+	return mock.GetVersionFunc(ctx, id, selector)
+}
+
+// GetVersionCalls gets all the calls that were made to GetVersion.
+// Check the length with:
+//
+//	len(mockedRepository.GetVersionCalls())
+func (mock *RepositoryMock[TID, E, R]) GetVersionCalls() []struct {
+	Ctx      context.Context
+	ID       TID
+	Selector version.Selector
+} {
+	var calls []struct {
+		Ctx      context.Context
+		ID       TID
+		Selector version.Selector
+	}
+	mock.lockGetVersion.RLock()
+	calls = mock.calls.GetVersion
+	mock.lockGetVersion.RUnlock()
+	return calls
+}
+
+// LoadAggregate calls LoadAggregateFunc.
+func (mock *RepositoryMock[TID, E, R]) LoadAggregate(ctx context.Context, root R, id TID, selector version.Selector) error {
+	if mock.LoadAggregateFunc == nil {
+		panic("RepositoryMock.LoadAggregateFunc: method is nil but Repository.LoadAggregate was just called")
+	}
+	callInfo := struct {
+		Ctx      context.Context
+		Root     R
+		ID       TID
+		Selector version.Selector
+	}{
+		Ctx:      ctx,
+		Root:     root,
+		ID:       id,
+		Selector: selector,
+	}
+	mock.lockLoadAggregate.Lock()
+	mock.calls.LoadAggregate = append(mock.calls.LoadAggregate, callInfo)
+	mock.lockLoadAggregate.Unlock()
+	return mock.LoadAggregateFunc(ctx, root, id, selector)
+}
+
+// LoadAggregateCalls gets all the calls that were made to LoadAggregate.
+// Check the length with:
+//
+//	len(mockedRepository.LoadAggregateCalls())
+func (mock *RepositoryMock[TID, E, R]) LoadAggregateCalls() []struct {
+	Ctx      context.Context
+	Root     R
+	ID       TID
+	Selector version.Selector
+} {
+	var calls []struct {
+		Ctx      context.Context
+		Root     R
+		ID       TID
+		Selector version.Selector
+	}
+	mock.lockLoadAggregate.RLock()
+	calls = mock.calls.LoadAggregate
+	mock.lockLoadAggregate.RUnlock()
 	return calls
 }
 

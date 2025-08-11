@@ -8,6 +8,10 @@ import (
 	"github.com/DeluxeOwl/chronicle/version"
 )
 
+var _ Repository[testAggID, testAggEvent, *testAgg] = (*ESRepoWithSnapshots[testAggID, testAggEvent, *testAgg, *testAgg])(
+	nil,
+)
+
 type ESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]] struct {
 	internal Repository[TID, E, R]
 
@@ -64,6 +68,23 @@ func (esr *ESRepoWithSnapshots[TID, E, R, TS]) Get(ctx context.Context, id TID) 
 	}
 
 	return root, nil
+}
+
+func (esr *ESRepoWithSnapshots[TID, E, R, TS]) GetVersion(
+	ctx context.Context,
+	id TID,
+	selector version.Selector,
+) (R, error) {
+	return esr.internal.GetVersion(ctx, id, selector)
+}
+
+func (esr *ESRepoWithSnapshots[TID, E, R, TS]) LoadAggregate(
+	ctx context.Context,
+	root R,
+	id TID,
+	selector version.Selector,
+) error {
+	return esr.internal.LoadAggregate(ctx, root, id, selector)
 }
 
 // Save persists the uncommitted events of an aggregate and, if the policy dictates,

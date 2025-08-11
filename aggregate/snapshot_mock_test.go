@@ -6,6 +6,8 @@ package aggregate_test
 import (
 	"context"
 	"github.com/DeluxeOwl/chronicle/aggregate"
+	"github.com/DeluxeOwl/chronicle/event"
+	"github.com/DeluxeOwl/chronicle/version"
 	"sync"
 )
 
@@ -124,5 +126,203 @@ func (mock *SnapshotStoreMock[TID, TS]) SaveSnapshotCalls() []struct {
 	mock.lockSaveSnapshot.RLock()
 	calls = mock.calls.SaveSnapshot
 	mock.lockSaveSnapshot.RUnlock()
+	return calls
+}
+
+// SnapshotterMock is a mock implementation of aggregate.Snapshotter.
+//
+//	func TestSomethingThatUsesSnapshotter(t *testing.T) {
+//
+//		// make and configure a mocked aggregate.Snapshotter
+//		mockedSnapshotter := &SnapshotterMock{
+//			FromSnapshotFunc: func(v TS) (R, error) {
+//				panic("mock out the FromSnapshot method")
+//			},
+//			ToSnapshotFunc: func(v R) (TS, error) {
+//				panic("mock out the ToSnapshot method")
+//			},
+//		}
+//
+//		// use mockedSnapshotter in code that requires aggregate.Snapshotter
+//		// and then make assertions.
+//
+//	}
+type SnapshotterMock[TID aggregate.ID, E event.Any, R aggregate.Root[TID, E], TS aggregate.Snapshot[TID]] struct {
+	// FromSnapshotFunc mocks the FromSnapshot method.
+	FromSnapshotFunc func(v TS) (R, error)
+
+	// ToSnapshotFunc mocks the ToSnapshot method.
+	ToSnapshotFunc func(v R) (TS, error)
+
+	// calls tracks calls to the methods.
+	calls struct {
+		// FromSnapshot holds details about calls to the FromSnapshot method.
+		FromSnapshot []struct {
+			// V is the v argument value.
+			V TS
+		}
+		// ToSnapshot holds details about calls to the ToSnapshot method.
+		ToSnapshot []struct {
+			// V is the v argument value.
+			V R
+		}
+	}
+	lockFromSnapshot sync.RWMutex
+	lockToSnapshot   sync.RWMutex
+}
+
+// FromSnapshot calls FromSnapshotFunc.
+func (mock *SnapshotterMock[TID, E, R, TS]) FromSnapshot(v TS) (R, error) {
+	if mock.FromSnapshotFunc == nil {
+		panic("SnapshotterMock.FromSnapshotFunc: method is nil but Snapshotter.FromSnapshot was just called")
+	}
+	callInfo := struct {
+		V TS
+	}{
+		V: v,
+	}
+	mock.lockFromSnapshot.Lock()
+	mock.calls.FromSnapshot = append(mock.calls.FromSnapshot, callInfo)
+	mock.lockFromSnapshot.Unlock()
+	return mock.FromSnapshotFunc(v)
+}
+
+// FromSnapshotCalls gets all the calls that were made to FromSnapshot.
+// Check the length with:
+//
+//	len(mockedSnapshotter.FromSnapshotCalls())
+func (mock *SnapshotterMock[TID, E, R, TS]) FromSnapshotCalls() []struct {
+	V TS
+} {
+	var calls []struct {
+		V TS
+	}
+	mock.lockFromSnapshot.RLock()
+	calls = mock.calls.FromSnapshot
+	mock.lockFromSnapshot.RUnlock()
+	return calls
+}
+
+// ToSnapshot calls ToSnapshotFunc.
+func (mock *SnapshotterMock[TID, E, R, TS]) ToSnapshot(v R) (TS, error) {
+	if mock.ToSnapshotFunc == nil {
+		panic("SnapshotterMock.ToSnapshotFunc: method is nil but Snapshotter.ToSnapshot was just called")
+	}
+	callInfo := struct {
+		V R
+	}{
+		V: v,
+	}
+	mock.lockToSnapshot.Lock()
+	mock.calls.ToSnapshot = append(mock.calls.ToSnapshot, callInfo)
+	mock.lockToSnapshot.Unlock()
+	return mock.ToSnapshotFunc(v)
+}
+
+// ToSnapshotCalls gets all the calls that were made to ToSnapshot.
+// Check the length with:
+//
+//	len(mockedSnapshotter.ToSnapshotCalls())
+func (mock *SnapshotterMock[TID, E, R, TS]) ToSnapshotCalls() []struct {
+	V R
+} {
+	var calls []struct {
+		V R
+	}
+	mock.lockToSnapshot.RLock()
+	calls = mock.calls.ToSnapshot
+	mock.lockToSnapshot.RUnlock()
+	return calls
+}
+
+// SnapshotMock is a mock implementation of aggregate.Snapshot.
+//
+//	func TestSomethingThatUsesSnapshot(t *testing.T) {
+//
+//		// make and configure a mocked aggregate.Snapshot
+//		mockedSnapshot := &SnapshotMock{
+//			IDFunc: func() TID {
+//				panic("mock out the ID method")
+//			},
+//			VersionFunc: func() version.Version {
+//				panic("mock out the Version method")
+//			},
+//		}
+//
+//		// use mockedSnapshot in code that requires aggregate.Snapshot
+//		// and then make assertions.
+//
+//	}
+type SnapshotMock[TID aggregate.ID] struct {
+	// IDFunc mocks the ID method.
+	IDFunc func() TID
+
+	// VersionFunc mocks the Version method.
+	VersionFunc func() version.Version
+
+	// calls tracks calls to the methods.
+	calls struct {
+		// ID holds details about calls to the ID method.
+		ID []struct {
+		}
+		// Version holds details about calls to the Version method.
+		Version []struct {
+		}
+	}
+	lockID      sync.RWMutex
+	lockVersion sync.RWMutex
+}
+
+// ID calls IDFunc.
+func (mock *SnapshotMock[TID]) ID() TID {
+	if mock.IDFunc == nil {
+		panic("SnapshotMock.IDFunc: method is nil but Snapshot.ID was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockID.Lock()
+	mock.calls.ID = append(mock.calls.ID, callInfo)
+	mock.lockID.Unlock()
+	return mock.IDFunc()
+}
+
+// IDCalls gets all the calls that were made to ID.
+// Check the length with:
+//
+//	len(mockedSnapshot.IDCalls())
+func (mock *SnapshotMock[TID]) IDCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockID.RLock()
+	calls = mock.calls.ID
+	mock.lockID.RUnlock()
+	return calls
+}
+
+// Version calls VersionFunc.
+func (mock *SnapshotMock[TID]) Version() version.Version {
+	if mock.VersionFunc == nil {
+		panic("SnapshotMock.VersionFunc: method is nil but Snapshot.Version was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockVersion.Lock()
+	mock.calls.Version = append(mock.calls.Version, callInfo)
+	mock.lockVersion.Unlock()
+	return mock.VersionFunc()
+}
+
+// VersionCalls gets all the calls that were made to Version.
+// Check the length with:
+//
+//	len(mockedSnapshot.VersionCalls())
+func (mock *SnapshotMock[TID]) VersionCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockVersion.RLock()
+	calls = mock.calls.Version
+	mock.lockVersion.RUnlock()
 	return calls
 }

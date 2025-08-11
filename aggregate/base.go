@@ -8,7 +8,6 @@ import (
 )
 
 type Base struct {
-	//nolint:unused // False positive.
 	uncommitedEvents flushedUncommitedEvents
 	version          version.Version
 }
@@ -17,7 +16,6 @@ func (br *Base) Version() version.Version { return br.version }
 
 type flushedUncommitedEvents []event.Any
 
-//nolint:unused // False positive.
 func (br *Base) flushUncommitedEvents() flushedUncommitedEvents {
 	flushed := br.uncommitedEvents
 	br.uncommitedEvents = nil
@@ -25,7 +23,6 @@ func (br *Base) flushUncommitedEvents() flushedUncommitedEvents {
 	return flushed
 }
 
-//nolint:unused // False positive.
 func (br *Base) setVersion(v version.Version) {
 	br.version = v
 }
@@ -34,7 +31,6 @@ type anyEventApplier interface {
 	Apply(event.Any) error
 }
 
-//nolint:unused // False positive.
 func (br *Base) recordThat(aggregate anyEventApplier, events ...event.Any) error {
 	for _, anyEvent := range events {
 		if err := aggregate.Apply(anyEvent); err != nil {

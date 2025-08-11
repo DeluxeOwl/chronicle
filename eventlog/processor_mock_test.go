@@ -6,6 +6,7 @@ package eventlog_test
 import (
 	"context"
 	"github.com/DeluxeOwl/chronicle/event"
+	"github.com/DeluxeOwl/chronicle/version"
 	"sync"
 )
 
@@ -80,5 +81,215 @@ func (mock *TransactionalProcessorMock[TX]) ProcessRecordsCalls() []struct {
 	mock.lockProcessRecords.RLock()
 	calls = mock.calls.ProcessRecords
 	mock.lockProcessRecords.RUnlock()
+	return calls
+}
+
+// TransactorMock is a mock implementation of event.Transactor.
+//
+//	func TestSomethingThatUsesTransactor(t *testing.T) {
+//
+//		// make and configure a mocked event.Transactor
+//		mockedTransactor := &TransactorMock{
+//			WithinTxFunc: func(ctx context.Context, fn func(ctx context.Context, tx TX) error) error {
+//				panic("mock out the WithinTx method")
+//			},
+//		}
+//
+//		// use mockedTransactor in code that requires event.Transactor
+//		// and then make assertions.
+//
+//	}
+type TransactorMock[TX any] struct {
+	// WithinTxFunc mocks the WithinTx method.
+	WithinTxFunc func(ctx context.Context, fn func(ctx context.Context, tx TX) error) error
+
+	// calls tracks calls to the methods.
+	calls struct {
+		// WithinTx holds details about calls to the WithinTx method.
+		WithinTx []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Fn is the fn argument value.
+			Fn func(ctx context.Context, tx TX) error
+		}
+	}
+	lockWithinTx sync.RWMutex
+}
+
+// WithinTx calls WithinTxFunc.
+func (mock *TransactorMock[TX]) WithinTx(ctx context.Context, fn func(ctx context.Context, tx TX) error) error {
+	if mock.WithinTxFunc == nil {
+		panic("TransactorMock.WithinTxFunc: method is nil but Transactor.WithinTx was just called")
+	}
+	callInfo := struct {
+		Ctx context.Context
+		Fn  func(ctx context.Context, tx TX) error
+	}{
+		Ctx: ctx,
+		Fn:  fn,
+	}
+	mock.lockWithinTx.Lock()
+	mock.calls.WithinTx = append(mock.calls.WithinTx, callInfo)
+	mock.lockWithinTx.Unlock()
+	return mock.WithinTxFunc(ctx, fn)
+}
+
+// WithinTxCalls gets all the calls that were made to WithinTx.
+// Check the length with:
+//
+//	len(mockedTransactor.WithinTxCalls())
+func (mock *TransactorMock[TX]) WithinTxCalls() []struct {
+	Ctx context.Context
+	Fn  func(ctx context.Context, tx TX) error
+} {
+	var calls []struct {
+		Ctx context.Context
+		Fn  func(ctx context.Context, tx TX) error
+	}
+	mock.lockWithinTx.RLock()
+	calls = mock.calls.WithinTx
+	mock.lockWithinTx.RUnlock()
+	return calls
+}
+
+// TransactionalLogMock is a mock implementation of event.TransactionalLog.
+//
+//	func TestSomethingThatUsesTransactionalLog(t *testing.T) {
+//
+//		// make and configure a mocked event.TransactionalLog
+//		mockedTransactionalLog := &TransactionalLogMock{
+//			AppendInTxFunc: func(ctx context.Context, tx TX, id event.LogID, expected version.Check, events event.RawEvents) (version.Version, []*event.Record, error) {
+//				panic("mock out the AppendInTx method")
+//			},
+//			ReadEventsFunc: func(ctx context.Context, id event.LogID, selector version.Selector) event.Records {
+//				panic("mock out the ReadEvents method")
+//			},
+//		}
+//
+//		// use mockedTransactionalLog in code that requires event.TransactionalLog
+//		// and then make assertions.
+//
+//	}
+type TransactionalLogMock[TX any] struct {
+	// AppendInTxFunc mocks the AppendInTx method.
+	AppendInTxFunc func(ctx context.Context, tx TX, id event.LogID, expected version.Check, events event.RawEvents) (version.Version, []*event.Record, error)
+
+	// ReadEventsFunc mocks the ReadEvents method.
+	ReadEventsFunc func(ctx context.Context, id event.LogID, selector version.Selector) event.Records
+
+	// calls tracks calls to the methods.
+	calls struct {
+		// AppendInTx holds details about calls to the AppendInTx method.
+		AppendInTx []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Tx is the tx argument value.
+			Tx TX
+			// ID is the id argument value.
+			ID event.LogID
+			// Expected is the expected argument value.
+			Expected version.Check
+			// Events is the events argument value.
+			Events event.RawEvents
+		}
+		// ReadEvents holds details about calls to the ReadEvents method.
+		ReadEvents []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// ID is the id argument value.
+			ID event.LogID
+			// Selector is the selector argument value.
+			Selector version.Selector
+		}
+	}
+	lockAppendInTx sync.RWMutex
+	lockReadEvents sync.RWMutex
+}
+
+// AppendInTx calls AppendInTxFunc.
+func (mock *TransactionalLogMock[TX]) AppendInTx(ctx context.Context, tx TX, id event.LogID, expected version.Check, events event.RawEvents) (version.Version, []*event.Record, error) {
+	if mock.AppendInTxFunc == nil {
+		panic("TransactionalLogMock.AppendInTxFunc: method is nil but TransactionalLog.AppendInTx was just called")
+	}
+	callInfo := struct {
+		Ctx      context.Context
+		Tx       TX
+		ID       event.LogID
+		Expected version.Check
+		Events   event.RawEvents
+	}{
+		Ctx:      ctx,
+		Tx:       tx,
+		ID:       id,
+		Expected: expected,
+		Events:   events,
+	}
+	mock.lockAppendInTx.Lock()
+	mock.calls.AppendInTx = append(mock.calls.AppendInTx, callInfo)
+	mock.lockAppendInTx.Unlock()
+	return mock.AppendInTxFunc(ctx, tx, id, expected, events)
+}
+
+// AppendInTxCalls gets all the calls that were made to AppendInTx.
+// Check the length with:
+//
+//	len(mockedTransactionalLog.AppendInTxCalls())
+func (mock *TransactionalLogMock[TX]) AppendInTxCalls() []struct {
+	Ctx      context.Context
+	Tx       TX
+	ID       event.LogID
+	Expected version.Check
+	Events   event.RawEvents
+} {
+	var calls []struct {
+		Ctx      context.Context
+		Tx       TX
+		ID       event.LogID
+		Expected version.Check
+		Events   event.RawEvents
+	}
+	mock.lockAppendInTx.RLock()
+	calls = mock.calls.AppendInTx
+	mock.lockAppendInTx.RUnlock()
+	return calls
+}
+
+// ReadEvents calls ReadEventsFunc.
+func (mock *TransactionalLogMock[TX]) ReadEvents(ctx context.Context, id event.LogID, selector version.Selector) event.Records {
+	if mock.ReadEventsFunc == nil {
+		panic("TransactionalLogMock.ReadEventsFunc: method is nil but TransactionalLog.ReadEvents was just called")
+	}
+	callInfo := struct {
+		Ctx      context.Context
+		ID       event.LogID
+		Selector version.Selector
+	}{
+		Ctx:      ctx,
+		ID:       id,
+		Selector: selector,
+	}
+	mock.lockReadEvents.Lock()
+	mock.calls.ReadEvents = append(mock.calls.ReadEvents, callInfo)
+	mock.lockReadEvents.Unlock()
+	return mock.ReadEventsFunc(ctx, id, selector)
+}
+
+// ReadEventsCalls gets all the calls that were made to ReadEvents.
+// Check the length with:
+//
+//	len(mockedTransactionalLog.ReadEventsCalls())
+func (mock *TransactionalLogMock[TX]) ReadEventsCalls() []struct {
+	Ctx      context.Context
+	ID       event.LogID
+	Selector version.Selector
+} {
+	var calls []struct {
+		Ctx      context.Context
+		ID       event.LogID
+		Selector version.Selector
+	}
+	mock.lockReadEvents.RLock()
+	calls = mock.calls.ReadEvents
+	mock.lockReadEvents.RUnlock()
 	return calls
 }
