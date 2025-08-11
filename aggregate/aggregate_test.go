@@ -186,6 +186,7 @@ func Test_Person(t *testing.T) {
 	_, err := chronicle.NewTransactionalRepository(
 		memlog,
 		NewEmpty,
+		nil,
 		&TransactionalAggregateProcessorMock[eventlog.MemTx, PersonID, PersonEvent, *Person]{
 			ProcessFunc: func(ctx context.Context, tx eventlog.MemTx, root *Person, events aggregate.CommittedEvents[PersonEvent]) error {
 				return nil
@@ -200,6 +201,7 @@ func Test_Person(t *testing.T) {
 	esRepo, err := chronicle.NewEventSourcedRepository(
 		memlog,
 		NewEmpty,
+		nil,
 		aggregate.AnyEventRegistry(registry),
 	)
 	require.NoError(t, err)
@@ -288,7 +290,12 @@ func Test_FlushUncommittedEvents(t *testing.T) {
 	require.Equal(t, uncommitted[0].EventName(), personWasBornName)
 	require.Equal(t, uncommitted[1].EventName(), personAgedName)
 
-	raw, err := aggregate.RawEventsFromUncommitted(t.Context(), serde.NewJSONBinary(), uncommitted)
+	raw, err := aggregate.RawEventsFromUncommitted(
+		t.Context(),
+		serde.NewJSONBinary(),
+		nil,
+		uncommitted,
+	)
 	require.NoError(t, err)
 	require.Equal(t, raw[0].EventName(), personWasBornName)
 	require.Equal(t, raw[1].EventName(), personAgedName)
@@ -300,7 +307,7 @@ func Test_CommitEvents(t *testing.T) {
 		memstore := eventlog.NewMemory()
 		p := NewEmpty()
 
-		v, events, err := aggregate.CommitEvents(t.Context(), memstore, serializer, p)
+		v, events, err := aggregate.CommitEvents(t.Context(), memstore, serializer, nil, p)
 		require.EqualValues(t, 0, v)
 		require.Nil(t, events)
 		require.NoError(t, err)
@@ -314,7 +321,7 @@ func Test_CommitEvents(t *testing.T) {
 		personWasBornName := new(personWasBorn).EventName()
 		personAgedName := new(personAgedOneYear).EventName()
 
-		v, events, err := aggregate.CommitEvents(t.Context(), memstore, serializer, p)
+		v, events, err := aggregate.CommitEvents(t.Context(), memstore, serializer, nil, p)
 		require.EqualValues(t, 2, v)
 		require.Len(t, events, 2)
 		require.NoError(t, err)
@@ -346,6 +353,7 @@ func Test_ReadAndLoadFromStore(t *testing.T) {
 			event.Log(memlog),
 			registry,
 			serde.BinaryDeserializer(serializer),
+			nil,
 			PersonID("john"),
 			version.SelectFromBeginning,
 		)
@@ -361,7 +369,7 @@ func Test_ReadAndLoadFromStore(t *testing.T) {
 		err := registry.RegisterEvents(p)
 		require.NoError(t, err)
 
-		_, _, err = aggregate.CommitEvents(t.Context(), memstore, serializer, p)
+		_, _, err = aggregate.CommitEvents(t.Context(), memstore, serializer, nil, p)
 		require.NoError(t, err)
 
 		emptyRoot := NewEmpty()
@@ -371,6 +379,7 @@ func Test_ReadAndLoadFromStore(t *testing.T) {
 			event.Log(memstore),
 			registry,
 			serde.BinaryDeserializer(serializer),
+			nil,
 			p.ID(),
 			version.SelectFromBeginning,
 		)
@@ -391,7 +400,7 @@ func Test_LoadFromRecords(t *testing.T) {
 	err := registry.RegisterEvents(p)
 	require.NoError(t, err)
 
-	v, events, err := aggregate.CommitEvents(t.Context(), memstore, serializer, p)
+	v, events, err := aggregate.CommitEvents(t.Context(), memstore, serializer, nil, p)
 	require.EqualValues(t, 2, v)
 	require.Len(t, events, 2)
 	require.NoError(t, err)
@@ -400,7 +409,7 @@ func Test_LoadFromRecords(t *testing.T) {
 		ReadEvents(t.Context(), event.LogID(p.ID()), version.SelectFromBeginning)
 
 	emptyPerson := NewEmpty()
-	err = aggregate.LoadFromRecords(emptyPerson, registry, serializer, records)
+	err = aggregate.LoadFromRecords(t.Context(), emptyPerson, registry, serializer, nil, records)
 	require.NoError(t, err)
 
 	require.Equal(t, emptyPerson, p)
@@ -426,6 +435,7 @@ func Test_SnapshotRepo(t *testing.T) {
 		esRepo, err := chronicle.NewEventSourcedRepository(
 			memlog,
 			NewEmpty,
+			nil,
 			aggregate.AnyEventRegistry(registry),
 		)
 		require.NoError(t, err)
@@ -493,6 +503,7 @@ func Test_SnapshotRepo(t *testing.T) {
 		esRepo, err := chronicle.NewEventSourcedRepository(
 			memlog,
 			NewEmpty,
+			nil,
 			aggregate.AnyEventRegistry(registry),
 		)
 		require.NoError(t, err)
@@ -529,6 +540,7 @@ func Test_SnapshotRepo(t *testing.T) {
 		esRepo, err := chronicle.NewEventSourcedRepository(
 			memlog,
 			NewEmpty,
+			nil,
 			aggregate.AnyEventRegistry(registry),
 		)
 		require.NoError(t, err)
@@ -572,6 +584,7 @@ func Test_SnapshotRepo(t *testing.T) {
 		esRepo, err := chronicle.NewEventSourcedRepository(
 			memlog,
 			NewEmpty,
+			nil,
 			aggregate.AnyEventRegistry(registry),
 		)
 		require.NoError(t, err)

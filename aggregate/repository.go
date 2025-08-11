@@ -62,6 +62,8 @@ type ESRepo[TID ID, E event.Any, R Root[TID, E]] struct {
 	eventlog   event.Log
 	createRoot func() R
 
+	transformers []event.Transformer[E]
+
 	shouldRegisterRoot bool
 }
 
@@ -70,6 +72,7 @@ type ESRepo[TID ID, E event.Any, R Root[TID, E]] struct {
 func NewESRepo[TID ID, E event.Any, R Root[TID, E]](
 	eventLog event.Log,
 	createRoot func() R,
+	transformers []event.Transformer[E],
 	opts ...ESRepoOption,
 ) (*ESRepo[TID, E, R], error) {
 	esr := &ESRepo[TID, E, R]{
@@ -77,6 +80,7 @@ func NewESRepo[TID ID, E event.Any, R Root[TID, E]](
 		createRoot:         createRoot,
 		registry:           event.NewRegistry[E](),
 		serde:              serde.NewJSONBinary(),
+		transformers:       transformers,
 		shouldRegisterRoot: true,
 	}
 
@@ -100,7 +104,16 @@ func (repo *ESRepo[TID, E, R]) LoadAggregate(
 	id TID,
 	selector version.Selector,
 ) error {
-	return ReadAndLoadFromStore(ctx, root, repo.eventlog, repo.registry, repo.serde, id, selector)
+	return ReadAndLoadFromStore(
+		ctx,
+		root,
+		repo.eventlog,
+		repo.registry,
+		repo.serde,
+		repo.transformers,
+		id,
+		selector,
+	)
 }
 
 func (repo *ESRepo[TID, E, R]) Get(ctx context.Context, id TID) (R, error) {
@@ -126,7 +139,13 @@ func (repo *ESRepo[TID, E, R]) Save(
 	ctx context.Context,
 	root R,
 ) (version.Version, CommittedEvents[E], error) {
-	newVersion, committedEvents, err := CommitEvents(ctx, repo.eventlog, repo.serde, root)
+	newVersion, committedEvents, err := CommitEvents(
+		ctx,
+		repo.eventlog,
+		repo.serde,
+		repo.transformers,
+		root,
+	)
 	if err != nil {
 		return newVersion, committedEvents, fmt.Errorf("repo save: %w", err)
 	}

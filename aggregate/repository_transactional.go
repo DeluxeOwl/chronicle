@@ -18,10 +18,11 @@ type TransactionalRepository[T any, TID ID, E event.Any, R Root[TID, E]] struct 
 	transactor event.Transactor[T]
 	txLog      event.TransactionalLog[T]
 
-	eventlog   event.Log
-	serde      serde.BinarySerde
-	registry   event.Registry[E]
-	createRoot func() R
+	eventlog     event.Log
+	serde        serde.BinarySerde
+	registry     event.Registry[E]
+	createRoot   func() R
+	transformers []event.Transformer[E]
 
 	aggProcessor TransactionalAggregateProcessor[T, TID, E, R]
 
@@ -33,6 +34,7 @@ type TransactionalRepository[T any, TID ID, E event.Any, R Root[TID, E]] struct 
 func NewTransactionalRepository[TX any, TID ID, E event.Any, R Root[TID, E]](
 	log event.TransactionalEventLog[TX],
 	createRoot func() R,
+	transformers []event.Transformer[E],
 	aggProcessor TransactionalAggregateProcessor[TX, TID, E, R],
 	opts ...ESRepoOption,
 ) (*TransactionalRepository[TX, TID, E, R], error) {
@@ -45,6 +47,7 @@ func NewTransactionalRepository[TX any, TID ID, E event.Any, R Root[TID, E]](
 		serde:              serde.NewJSONBinary(),
 		shouldRegisterRoot: true,
 		aggProcessor:       aggProcessor,
+		transformers:       transformers,
 	}
 
 	for _, o := range opts {
@@ -64,6 +67,7 @@ func NewTransactionalRepositoryWithTransactor[TX any, TID ID, E event.Any, R Roo
 	transactor event.Transactor[TX],
 	txLog event.TransactionalLog[TX],
 	createRoot func() R,
+	transformers []event.Transformer[E],
 	aggProcessor TransactionalAggregateProcessor[TX, TID, E, R],
 	opts ...ESRepoOption,
 ) (*TransactionalRepository[TX, TID, E, R], error) {
@@ -76,6 +80,7 @@ func NewTransactionalRepositoryWithTransactor[TX any, TID ID, E event.Any, R Roo
 		serde:              serde.NewJSONBinary(),
 		shouldRegisterRoot: true,
 		aggProcessor:       aggProcessor,
+		transformers:       transformers,
 	}
 
 	for _, o := range opts {
@@ -102,6 +107,7 @@ func (repo *TransactionalRepository[TX, TID, E, R]) Save(
 		repo.txLog,
 		repo.aggProcessor,
 		repo.serde,
+		nil,
 		root,
 	)
 	if err != nil {
@@ -117,7 +123,16 @@ func (repo *TransactionalRepository[TX, TID, E, R]) LoadAggregate(
 	id TID,
 	selector version.Selector,
 ) error {
-	return ReadAndLoadFromStore(ctx, root, repo.eventlog, repo.registry, repo.serde, id, selector)
+	return ReadAndLoadFromStore(
+		ctx,
+		root,
+		repo.eventlog,
+		repo.registry,
+		repo.serde,
+		repo.transformers,
+		id,
+		selector,
+	)
 }
 
 func (repo *TransactionalRepository[TX, TID, E, R]) Get(ctx context.Context, id TID) (R, error) {

@@ -90,13 +90,14 @@ func ReadAndLoadFromStore[TID ID, E event.Any](
 	store event.Log,
 	registry event.Registry[E],
 	deserializer serde.BinaryDeserializer,
+	transformers []event.Transformer[E],
 	id TID,
 	selector version.Selector,
 ) error {
 	logID := event.LogID(id.String())
 	recordedEvents := store.ReadEvents(ctx, logID, selector)
 
-	if err := LoadFromRecords(root, registry, deserializer, recordedEvents); err != nil {
+	if err := LoadFromRecords(ctx, root, registry, deserializer, transformers, recordedEvents); err != nil {
 		return fmt.Errorf("read and load from store: %w", err)
 	}
 
@@ -108,9 +109,11 @@ func ReadAndLoadFromStore[TID ID, E event.Any](
 }
 
 func LoadFromRecords[TID ID, E event.Any](
+	ctx context.Context,
 	root Root[TID, E],
 	registry event.Registry[E],
 	deserializer serde.BinaryDeserializer,
+	transformers []event.Transformer[E],
 	records event.Records,
 ) error {
 	for record, err := range records {
@@ -131,7 +134,23 @@ func LoadFromRecords[TID ID, E event.Any](
 			return fmt.Errorf("load from records: unmarshal record data: %w", err)
 		}
 
-		if err := root.Apply(evt); err != nil {
+		transformedEvt := evt
+		// Note: transformers need to happen in reverse order
+		// e.g. encrypt -> compress
+		// inverse is decompress -> decrypt
+		for i := len(transformers) - 1; i >= 0; i-- {
+			transformedEvt, err = transformers[i].TransformForRead(ctx, transformedEvt)
+			if err != nil {
+				return fmt.Errorf(
+					"load from records: read transform for event %q (version %d) failed: %w",
+					record.EventName(),
+					record.Version(),
+					err,
+				)
+			}
+		}
+
+		if err := root.Apply(transformedEvt); err != nil {
 			return fmt.Errorf("load from records: root apply: %w", err)
 		}
 
@@ -166,16 +185,31 @@ func FlushUncommittedEvents[TID ID, E event.Any, R Root[TID, E]](
 func RawEventsFromUncommitted[E event.Any](
 	ctx context.Context,
 	serializer serde.BinarySerializer,
+	transformers []event.Transformer[E],
 	uncommitted UncommittedEvents[E],
 ) ([]event.Raw, error) {
 	rawEvents := make([]event.Raw, len(uncommitted))
 	for i, evt := range uncommitted {
-		bytes, err := serializer.SerializeBinary(evt)
+		transformedEvt := evt
+		var err error
+
+		for _, t := range transformers {
+			transformedEvt, err = t.TransformForWrite(ctx, transformedEvt)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"raw events from uncommitted: write transform failed for event %q: %w",
+					evt.EventName(),
+					err,
+				)
+			}
+		}
+
+		bytes, err := serializer.SerializeBinary(transformedEvt)
 		if err != nil {
 			return nil, fmt.Errorf("raw events from uncommitted: %w", err)
 		}
 
-		rawEvents[i] = event.NewRaw(evt.EventName(), bytes)
+		rawEvents[i] = event.NewRaw(transformedEvt.EventName(), bytes)
 	}
 
 	return rawEvents, nil
@@ -200,6 +234,7 @@ func CommitEvents[TID ID, E event.Any, R Root[TID, E]](
 	ctx context.Context,
 	store event.Log,
 	serializer serde.BinarySerializer,
+	transformers []event.Transformer[E],
 	root R,
 ) (version.Version, CommittedEvents[E], error) {
 	uncommittedEvents := FlushUncommittedEvents(root)
@@ -215,7 +250,7 @@ func CommitEvents[TID ID, E event.Any, R Root[TID, E]](
 		root.Version() - version.Version(len(uncommittedEvents)),
 	)
 
-	rawEvents, err := RawEventsFromUncommitted(ctx, serializer, uncommittedEvents)
+	rawEvents, err := RawEventsFromUncommitted(ctx, serializer, transformers, uncommittedEvents)
 	if err != nil {
 		return version.Zero, nil, fmt.Errorf("aggregate commit: events to raw: %w", err)
 	}
@@ -235,6 +270,7 @@ func CommitEventsWithTX[TX any, TID ID, E event.Any, R Root[TID, E]](
 	txLog event.TransactionalLog[TX],
 	processor TransactionalAggregateProcessor[TX, TID, E, R],
 	serializer serde.BinarySerializer,
+	transformers []event.Transformer[E],
 	root R,
 ) (version.Version, CommittedEvents[E], error) {
 	var newVersion version.Version
@@ -252,7 +288,7 @@ func CommitEventsWithTX[TX any, TID ID, E event.Any, R Root[TID, E]](
 		root.Version() - version.Version(len(uncommittedEvents)),
 	)
 
-	rawEvents, err := RawEventsFromUncommitted(ctx, serializer, uncommittedEvents)
+	rawEvents, err := RawEventsFromUncommitted(ctx, serializer, transformers, uncommittedEvents)
 	if err != nil {
 		return version.Zero, nil, fmt.Errorf("aggregate commit with tx: events to raw: %w", err)
 	}
