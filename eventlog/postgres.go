@@ -215,17 +215,30 @@ func (p *Postgres) AppendInTx(
 			// Check for our custom conflict error message raised by the trigger.
 			if actualStr, found := strings.CutPrefix(err.Error(), conflictErrorPrefix); found {
 				// We expect the raised exception to be just the version number.
-				actual, parseErr := version.Version(0), fmt.Errorf("could not parse version from: %s", actualStr)
+				actual, parseErr := version.Version(
+					0,
+				), fmt.Errorf(
+					"could not parse version from: %s",
+					actualStr,
+				)
 				_, errScan := fmt.Sscan(actualStr, &actual)
 				if errScan == nil {
 					return version.Zero, nil, version.NewConflictError(record.Version()-1, actual)
 				}
 				// Fallback error if parsing fails for some reason
-				return version.Zero, nil, fmt.Errorf("version conflict detected but could not parse actual version: %w, original error: %w", parseErr, err)
+				return version.Zero, nil, fmt.Errorf(
+					"version conflict detected but could not parse actual version: %w, original error: %w",
+					parseErr,
+					err,
+				)
 			}
 			// Handle other potential errors, like unique constraint violation (which can still happen in race conditions
 			// if the FOR UPDATE lock isn't sufficient) or data type errors (e.g., non-json for jsonb column).
-			return version.Zero, nil, fmt.Errorf("append in tx: exec statement for version %d: %w", record.Version(), err)
+			return version.Zero, nil, fmt.Errorf(
+				"append in tx: exec statement for version %d: %w",
+				record.Version(),
+				err,
+			)
 		}
 	}
 
