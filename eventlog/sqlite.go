@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strconv"
-	"strings"
 
 	"github.com/DeluxeOwl/chronicle/event"
 	"github.com/DeluxeOwl/chronicle/version"
@@ -22,8 +20,6 @@ var (
 	ErrUnsupportedCheck = errors.New("unsupported version check type")
 	ErrNoEvents         = errors.New("empty events")
 )
-
-const conflictErrorPrefix = "_chronicle_version_conflict: "
 
 type Sqlite struct {
 	db *sql.DB
@@ -159,17 +155,11 @@ func (s *Sqlite) AppendInTx(
 			record.Data(),
 		)
 		if err != nil {
-			// TODO: I dont think the way we parse the message is correct, also check sqlite
-			parts := strings.SplitN(err.Error(), conflictErrorPrefix, 2)
-
-			if len(parts) == 2 {
-				actualVersion, parseErr := strconv.ParseUint(parts[1], 10, 64)
-				if parseErr == nil {
-					return version.Zero, nil, version.NewConflictError(
-						version.Version(exp),
-						version.Version(actualVersion),
-					)
-				}
+			if actualVersion, isConflict := parseConflictError(err); isConflict {
+				return version.Zero, nil, version.NewConflictError(
+					version.Version(exp),
+					actualVersion,
+				)
 			}
 
 			return version.Zero, nil, fmt.Errorf("append in tx: exec statement: %w", err)

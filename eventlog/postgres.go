@@ -4,8 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strconv"
-	"strings"
 
 	"github.com/DeluxeOwl/chronicle/event"
 	"github.com/DeluxeOwl/chronicle/version"
@@ -197,16 +195,11 @@ func (p *Postgres) AppendInTx(
 			record.Data(),
 		)
 		if err != nil {
-			parts := strings.SplitN(err.Error(), conflictErrorPrefix, 2)
-
-			if len(parts) == 2 {
-				actualVersion, parseErr := strconv.ParseUint(parts[1], 10, 64)
-				if parseErr == nil {
-					return version.Zero, nil, version.NewConflictError(
-						version.Version(exp),
-						version.Version(actualVersion),
-					)
-				}
+			if actualVersion, isConflict := parseConflictError(err); isConflict {
+				return version.Zero, nil, version.NewConflictError(
+					version.Version(exp),
+					actualVersion,
+				)
 			}
 
 			return version.Zero, nil, fmt.Errorf("append in tx: exec statement: %w", err)
