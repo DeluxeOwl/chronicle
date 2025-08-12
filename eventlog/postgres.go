@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/DeluxeOwl/chronicle/event"
@@ -21,13 +22,12 @@ type Postgres struct {
 	db       *sql.DB
 	useByteA bool
 
-	qCreateTable      string
-	qCreateFunction   string
-	qCreateTrigger    string
-	qInsertEvent      string
-	qReadEvents       string
-	qReadAllEvents    string
-	qGetLatestVersion string
+	qCreateTable    string
+	qCreateFunction string
+	qCreateTrigger  string
+	qInsertEvent    string
+	qReadEvents     string
+	qReadAllEvents  string
 }
 
 type PostgresOption func(*Postgres)
@@ -84,10 +84,6 @@ func PostgresTableName(tableName string) PostgresOption {
 		)
 		p.qReadAllEvents = fmt.Sprintf(
 			"SELECT global_version, version, log_id, event_name, data FROM %s WHERE global_version >= $1 ORDER BY global_version ASC",
-			tableName,
-		)
-		p.qGetLatestVersion = fmt.Sprintf(
-			"SELECT COALESCE(MAX(version), 0) FROM %s WHERE log_id = $1",
 			tableName,
 		)
 	}
@@ -185,24 +181,13 @@ func (p *Postgres) AppendInTx(
 		return version.Zero, nil, fmt.Errorf("append in tx: %w", ErrUnsupportedCheck)
 	}
 
-	// Our trigger does the sequential version check, but we still need to check
-	// if the stream is at the version the caller *expects*.
-	var actualVersion version.Version
-	err := tx.QueryRowContext(ctx, p.qGetLatestVersion, id).Scan(&actualVersion)
-	if err != nil {
-		return version.Zero, nil, fmt.Errorf("append in tx: could not get latest version: %w", err)
-	}
-	if err := exp.CheckExact(actualVersion); err != nil {
-		return version.Zero, nil, err
-	}
-
 	stmt, err := tx.PrepareContext(ctx, p.qInsertEvent)
 	if err != nil {
 		return version.Zero, nil, fmt.Errorf("append in tx: prepare statement: %w", err)
 	}
 	defer stmt.Close()
 
-	records := events.ToRecords(id, actualVersion)
+	records := events.ToRecords(id, version.Version(exp))
 	for _, record := range records {
 		_, err := stmt.ExecContext(
 			ctx,
@@ -212,37 +197,23 @@ func (p *Postgres) AppendInTx(
 			record.Data(),
 		)
 		if err != nil {
-			// Check for our custom conflict error message raised by the trigger.
-			if actualStr, found := strings.CutPrefix(err.Error(), conflictErrorPrefix); found {
-				// We expect the raised exception to be just the version number.
-				actual, parseErr := version.Version(
-					0,
-				), fmt.Errorf(
-					"could not parse version from: %s",
-					actualStr,
-				)
-				_, errScan := fmt.Sscan(actualStr, &actual)
-				if errScan == nil {
-					return version.Zero, nil, version.NewConflictError(record.Version()-1, actual)
+			parts := strings.SplitN(err.Error(), conflictErrorPrefix, 2)
+
+			if len(parts) == 2 {
+				actualVersion, parseErr := strconv.ParseUint(parts[1], 10, 64)
+				if parseErr == nil {
+					return version.Zero, nil, version.NewConflictError(
+						version.Version(exp),
+						version.Version(actualVersion),
+					)
 				}
-				// Fallback error if parsing fails for some reason
-				return version.Zero, nil, fmt.Errorf(
-					"version conflict detected but could not parse actual version: %w, original error: %w",
-					parseErr,
-					err,
-				)
 			}
-			// Handle other potential errors, like unique constraint violation (which can still happen in race conditions
-			// if the FOR UPDATE lock isn't sufficient) or data type errors (e.g., non-json for jsonb column).
-			return version.Zero, nil, fmt.Errorf(
-				"append in tx: exec statement for version %d: %w",
-				record.Version(),
-				err,
-			)
+
+			return version.Zero, nil, fmt.Errorf("append in tx: exec statement: %w", err)
 		}
 	}
 
-	newStreamVersion := actualVersion + version.Version(len(events))
+	newStreamVersion := version.Version(exp) + version.Version(len(events))
 	return newStreamVersion, records, nil
 }
 

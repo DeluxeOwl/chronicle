@@ -159,6 +159,7 @@ func (s *Sqlite) AppendInTx(
 			record.Data(),
 		)
 		if err != nil {
+			// TODO: I dont think the way we parse the message is correct, also check sqlite
 			parts := strings.SplitN(err.Error(), conflictErrorPrefix, 2)
 
 			if len(parts) == 2 {
