@@ -202,6 +202,7 @@ func (s *Sqlite) WithinTx(
 	return nil
 }
 
+//nolint:dupl // I think it's better to keep them separate.
 func (s *Sqlite) ReadEvents(
 	ctx context.Context,
 	id event.LogID,
