@@ -126,6 +126,6 @@ Reasons **NOT** to use event sourcing:
 - **Data deletion and privacy require complex workarounds.**
     - e.g. the event log being immutable makes it hard to implement GDPR compliance, requiring things like crypto shedding, see TODO
 - **It has a high learning curve.** Most developers are not familiar with this pattern.
-    - Forcing it on an unprepared team can lead to slower devxelopment and team friction.
+    - Forcing it on an unprepared team can lead to slower development and team friction.
 - **You cannot directly query the current state;** you must build and rely on projections for all queries.
 - **It often requires additional infrastructure,** such as a message queue (e.g., NATS, Amazon SQS, Kafka) to process events and update projections reliably.
