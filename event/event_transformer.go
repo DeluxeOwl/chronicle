@@ -6,7 +6,12 @@ import (
 )
 
 type Transformer[E Any] interface {
+	// TransformForWrite is called BEFORE an event is serialized and saved to the event log.
+	// Use this to encrypt, compress, or otherwise modify the event for storage.
 	TransformForWrite(ctx context.Context, event E) (E, error)
+
+	// TransformForRead is called AFTER an event is loaded and deserialized from the event log.
+	// This should be the inverse operation of TransformForWrite (e.g., decrypt, decompress).
 	TransformForRead(ctx context.Context, event E) (E, error)
 }
 
