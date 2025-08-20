@@ -292,6 +292,102 @@
           "store_path": "/nix/store/66m2bfjz36hjcw6741gxmjpykrjrcban-gopls-0.18.1"
         }
       }
+    },
+    "lefthook@latest": {
+      "last_modified": "2025-07-30T02:55:55Z",
+      "resolved": "github:NixOS/nixpkgs/e44b8dc0882d66e2627a8ff252b04a22f4a629fd#lefthook",
+      "source": "devbox-search",
+      "version": "1.12.2",
+      "systems": {
+        "aarch64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/7ivdkh8gx9rjsivxkdhx19zg49jbpnhk-lefthook-1.12.2",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/7ivdkh8gx9rjsivxkdhx19zg49jbpnhk-lefthook-1.12.2"
+        },
+        "aarch64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/s7qyls4ycar7529pkrgzdf2snlzqxwr2-lefthook-1.12.2",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/s7qyls4ycar7529pkrgzdf2snlzqxwr2-lefthook-1.12.2"
+        },
+        "x86_64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/kxiiqhfv7wa78gqxpkixzzijyx94bc6b-lefthook-1.12.2",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/kxiiqhfv7wa78gqxpkixzzijyx94bc6b-lefthook-1.12.2"
+        },
+        "x86_64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/sq1kk0fv3p4xl0sqcfp6mgni4s39jmp3-lefthook-1.12.2",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/sq1kk0fv3p4xl0sqcfp6mgni4s39jmp3-lefthook-1.12.2"
+        }
+      }
+    },
+    "yek@latest": {
+      "last_modified": "2025-07-28T17:09:23Z",
+      "resolved": "github:NixOS/nixpkgs/648f70160c03151bc2121d179291337ad6bc564b#yek",
+      "source": "devbox-search",
+      "version": "0.21.0",
+      "systems": {
+        "aarch64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/z8859nfdfyb44iiy804wcr39fmavz3b9-yek-0.21.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/z8859nfdfyb44iiy804wcr39fmavz3b9-yek-0.21.0"
+        },
+        "aarch64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/lrp0n67gr94yiviz687carsmq31dpxn7-yek-0.21.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/lrp0n67gr94yiviz687carsmq31dpxn7-yek-0.21.0"
+        },
+        "x86_64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/w80wfhp85d63dwrc65smprwqpkyww1qn-yek-0.21.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/w80wfhp85d63dwrc65smprwqpkyww1qn-yek-0.21.0"
+        },
+        "x86_64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/zq90ybhm9cc8dllw75pnanmil4j13bdj-yek-0.21.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/zq90ybhm9cc8dllw75pnanmil4j13bdj-yek-0.21.0"
+        }
+      }
     }
   }
 }

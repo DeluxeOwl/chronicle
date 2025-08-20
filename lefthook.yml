@@ -1,0 +1,19 @@
+pre-commit:
+  parallel: true
+  jobs:
+    - name: check-if-in-devbox
+      run: task check-if-in-devbox
+
+commit-msg:
+  commands:
+    "lint commit message":
+      use_stdin: true
+      run: cat {1} | commitlint
+
+pre-push:
+  parallel: true
+  jobs:
+    - name: check-if-in-devbox
+      run: task check-if-in-devbox
+    - name: run-tests
+      run: task test

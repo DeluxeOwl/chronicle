@@ -1,24 +1,43 @@
 version: "3"
 
 tasks:
+  check-if-in-devbox:
+    desc: Checks if the user is in a devbox shell
+    silent: true
+    cmds:
+      - |
+        if [ "${DEVBOX_SHELL_ENABLED}" != "1" ]; then
+          echo "Error: ⚠️ You're not in a devbox shell. Please enter a devbox shell before pushing."
+          exit 1
+        fi
+
   lint:
+    desc: Runs the linters and formatters
     cmds:
       - go run github.com/alecthomas/go-check-sumtype/cmd/go-check-sumtype@latest -default-signifies-exhaustive=false -include-shared-interfaces ./...
       - golangci-lint run --fix .
       - golines --no-reformat-tags -w .
       - golangci-lint run
-  align-apply:
-    cmds:
-      - go run github.com/dkorunic/betteralign/cmd/betteralign@latest -apply ./...
+
   gen:
+    desc: Generates go code.
     cmds:
       - go generate ./...
+
+  align-apply:
+    desc: Runs struct alignment for efficiency.
+    cmds:
+      - go run github.com/dkorunic/betteralign/cmd/betteralign@latest -apply ./...
+
   test:
     cmds:
       - go test ./...
+
   test-no-cache:
     cmds:
       - go test -v -count=1 ./...
-  copy:
+
+  llm-copy:
+    desc: Copies the go files for LLMs. Uses pbcopy (mac only).
     cmds:
       - yek ./**/*.go --ignore-patterns "*_mock*" --ignore-patterns "*_test.go" | pbcopy
