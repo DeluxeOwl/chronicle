@@ -1,12 +1,12 @@
 {
   "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.14.2/.schema/devbox.schema.json",
   "packages": [
-    "go@latest",
     "gopls@latest",
     "golangci-lint@latest",
     "go-task@latest",
     "golines@latest",
-    "commitlint-rs@latest"
+    "commitlint-rs@latest",
+    "go@1.24"
   ],
   "shell": {
     "init_hook": [

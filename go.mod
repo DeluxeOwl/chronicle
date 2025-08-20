@@ -1,6 +1,6 @@
 module github.com/DeluxeOwl/chronicle
 
-go 1.24.2
+go 1.24.0
 
 require (
 	github.com/cockroachdb/pebble v1.1.5
