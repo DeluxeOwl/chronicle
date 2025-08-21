@@ -63,6 +63,8 @@ Examples of projections:
 - The people aged 30 to 40
 - How much money was withdrawn per day for the past 30 days
 
+![1-projections](./assets/1-projections.svg)
+
 Projections can be stored in many different ways, **usually separate** from the event log store itself:
 - In a database table you can query with SQL
 - In an in-memory database like Redis
