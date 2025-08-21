@@ -44,6 +44,11 @@ With event sourcing, the event log would instead store a list of all transaction
 | account/162accc9 | 2 | account/money_deposited | {"amount": "$200"} |
 | account/162accc9 | 3 | account/money_withdrawn | {"amount": "$50"} |
 
+Events are organized per log id (**also called an aggregate id**). In the examples above, you have events **per** person (`person/7d7e974e` and `person/44bcdbc3`) and **per** account (`account/162accc9`).
+
+![0](./assets/0-event-log.svg)
+
+
 Events are facts: they describe *something* that happened in the past and should be named in the past tense:
 ```
 person/was_born
