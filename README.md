@@ -2,7 +2,7 @@
 
 Event sourcing is a pattern for storing all changes to an application's state as a sequence of *immutable* "**events**".
 
-The current state can be rebuilt from these events, treating the sequence (the "**event log**") as the single source of truth.
+The current state can be rebuilt from these events, treating the sequence ("**event log**") as the single source of truth.
 
 You can only add new events to the event log; you can never change or delete existing ones.
 
@@ -24,11 +24,11 @@ We store a sequence of events in an event log:
 | person/44bcdbc3 | 2 | person/aged_one_year | {} |
 | ... | ... | ... | ... |
 
-By **applying** (or replaying) these events in order, we can reconstruct the current state of any person.
+By **applying** (or replaying) these events in order for a, we can reconstruct the current state of any person.
 
-In the example above, you would apply all events with the log ID `person/7d7e974e`, ordered by `version`, to reconstruct the current state for "John Smith."
+In the example above, you would apply all events with the log ID `person/7d7e974e` (the bold rows), ordered by `version`, to reconstruct the current state for "John Smith."
 
-Let's take a simplified bank account example. Instead of storing the current balance like this:
+Let's take a simplified bank account example with the balance stored in an db table:
 
 | id | balance |
 | :--- | :--- |
@@ -52,11 +52,16 @@ account/money_deposited
 account/money_withdrawn
 ```
 
-You might wonder, "What if the user wants to see how many people are named 'John'?" You'd have to apply ALL events for ALL people and count how many have the name "John".
+You might wonder, "What if the user wants to see how many people are named 'John'?" You'd have to replay ALL events for ALL people and count how many have the name "John".
 
 That would be inefficient. This is why **projections** exist.
 
 Projections are specialized **read** models, optimized for querying. They are built by listening to the stream of events as they happen.
+
+Examples of projections:
+- How many people are named john
+- The people aged 30 to 40
+- How much money was withdrawn per day for the past 30 days
 
 Projections can be stored in many different ways, **usually separate** from the event log store itself:
 - In a database table you can query with SQL
@@ -78,7 +83,8 @@ Here’s how the projector builds the read model by processing events from the l
 | `person/aged_one_year` `{}` | Irrelevant event for this projection. State is unchanged. | `{ "john_count": 2 }` |
 | `person/was_born` `{"name": "Peter Jones"}` | Name does not start with "John". State is unchanged. | `{ "john_count": 2 }` |
 
-The final result is a projection—a simple read model that is incredibly fast to query. It could be stored in a key-value store like Redis, or a simple database table:
+The final result is a projection - a simple read model that's fast to query. 
+It could be stored in a key-value store like Redis, or a simple db table:
 
 **Table: `name_counts`**
 
@@ -105,11 +111,10 @@ Here are some of the most common benefits cited for event sourcing:
 - **Time Travel**: You can reconstruct the state of your application at any point in time.
 - **Read/Write Separation**: You can create new read models for new use cases at any time by replaying the event log, without impacting the write side.
 - **Scalability**: You can scale the read and write sides of your application independently.
+- **Simple integration**: Other systems can subscribe to the event stream.
 
-But the main benefit I agree with comes from [this event-driven.io article](https://event-driven.io/en/dealing_with_eventual_consistency_and_idempotency_in_mongodb_projections/):
-> Projections have multiple advantages for the development process. The one that I’d like to highlight especially is reducing the cognitive load. You can break down a process into two parts. At first, on modelling the business logic and capturing its result. Then thinking about how to interpret it. This is a liberating experience from thinking all at once in the relational approach.
-
-**tl;dr:** Event sourcing helps you first model *what happens* (the events), and **then** worry about how to interpret that data using projections.
+But the main benefit I agree with comes from [this event-driven.io article](https://event-driven.io/en/dealing_with_eventual_consistency_and_idempotency_in_mongodb_projections/), paraphrasing:
+> Event sourcing helps you first model *what happens* (the events), and **then** worry about how to interpret that data using projections.
 
 ## Why not event sourcing?
 
