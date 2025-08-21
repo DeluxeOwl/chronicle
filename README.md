@@ -26,7 +26,7 @@ We store a sequence of events in an event log:
 
 By **applying** (or replaying) these events in order for a, we can reconstruct the current state of any person.
 
-In the example above, you would apply all events with the log ID `person/7d7e974e` (the bold rows), ordered by `version`, to reconstruct the current state for "John Smith."
+In the example above, you would apply all events with the log ID `person/7d7e974e` (the bold rows), ordered by `version`, to reconstruct the current state for "John Smith".
 
 Let's take a simplified bank account example with the balance stored in an db table:
 
@@ -104,7 +104,7 @@ This pattern plays well with Command Query Responsibility Segregation, or CQRS f
 
 ## Why event sourcing?
 
-TODO: event logs are everywhere
+> [*"Every system is a log"*](https://news.ycombinator.com/item?id=42813049)
 
 Here are some of the most common benefits cited for event sourcing:
 - **Auditing**: You have a complete, unchangeable record of every action that has occurred in your application.
@@ -115,6 +115,10 @@ Here are some of the most common benefits cited for event sourcing:
 
 But the main benefit I agree with comes from [this event-driven.io article](https://event-driven.io/en/dealing_with_eventual_consistency_and_idempotency_in_mongodb_projections/), paraphrasing:
 > Event sourcing helps you first model *what happens* (the events), and **then** worry about how to interpret that data using projections.
+
+The event log is a very powerful primitive, from [every system is a log](https://restate.dev/blog/every-system-is-a-log-avoiding-coordination-in-distributed-applications/) (I highly recommend reading this article and discussion on HN to get a better idea why a log is useful):
+- Message queues are logs: Apache Kafka, Pulsar, Meta’s Scribe are distributed implementations of the log abstraction. 
+- Databases (and K/V stores) are logs: changes go to the write-ahead-log first, then get materialized into the tables.
 
 ## Why not event sourcing?
 
