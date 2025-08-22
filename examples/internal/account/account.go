@@ -1,4 +1,4 @@
-package main
+package account
 
 import (
 	"errors"
@@ -81,16 +81,16 @@ func (a *Account) Apply(evt AccountEvent) error {
 	return nil
 }
 
-func NewEmptyAccount() *Account {
+func NewEmpty() *Account {
 	return new(Account)
 }
 
-func OpenAccount(id AccountID, currentTime time.Time) (*Account, error) {
+func Open(id AccountID, currentTime time.Time) (*Account, error) {
 	if currentTime.Weekday() == time.Sunday {
 		return nil, errors.New("sorry, you can't open an account on Sunday ¯\\_(ツ)_/¯")
 	}
 
-	a := NewEmptyAccount()
+	a := NewEmpty()
 
 	// Note: this is type safe, you'll get autocomplete for the events
 	if err := a.recordThat(&accountOpened{

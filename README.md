@@ -18,7 +18,16 @@ Define your aggregate and embed `aggregate.Base`. This embedded struct handles t
 
 We'll use a classic yet very simplified bank account example:
 ```go
-import "github.com/DeluxeOwl/chronicle/aggregate"
+package account
+
+import (
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/DeluxeOwl/chronicle/aggregate"
+	"github.com/DeluxeOwl/chronicle/event"
+)
 
 type Account struct {
 	aggregate.Base
@@ -28,8 +37,6 @@ type Account struct {
 Declare a type for the aggregate's ID. This ID type **MUST** implement `fmt.Stringer`. You also need to add an `ID()` method to your aggregate that returns this ID.
 
 ```go
-import "github.com/DeluxeOwl/chronicle/aggregate"
-
 type AccountID string
 
 func (a AccountID) String() string { return string(a) }
@@ -159,14 +166,14 @@ Let's start with opening an account. This will be a "factory function" that crea
 
 First, we define a function that returns an empty aggregate, we'll need it later and in the constructor:
 ```go
-func NewEmptyAccount() *Account {
+func NewEmpty() *Account {
 	return new(Account)
 }
 ```
 
 And now, opening an account, and let's say **you can't open an account on a Sunday** (as an example of a business rule):
 ```go
-func OpenAccount(id AccountID, currentTime time.Time) (*Account, error) {
+func Open(id AccountID, currentTime time.Time) (*Account, error) {
 	if currentTime.Weekday() == time.Sunday {
 		return nil, errors.New("sorry, you can't open an account on Sunday ¯\\_(ツ)_/¯")
 	}
@@ -181,14 +188,14 @@ func (a *Account) recordThat(event AccountEvent) error {
 }
 ```
 
-Getting back to `OpenAccount`, recording an event is now straightforward:
+Getting back to `Open`, recording an event is now straightforward:
 ```go
-func OpenAccount(id AccountID, currentTime time.Time) (*Account, error) {
+func Open(id AccountID, currentTime time.Time) (*Account, error) {
 	if currentTime.Weekday() == time.Sunday {
 		return nil, errors.New("sorry, you can't open an account on Sunday ¯\\_(ツ)_/¯")
 	}
 
-	a := NewEmptyAccount()
+	a := NewEmpty()
 
 	// Note: this is type safe, you'll get autocomplete for the events
 	if err := a.recordThat(&accountOpened{
@@ -238,6 +245,19 @@ That's it, it's time to wire everything up.
 
 We start by creating an event log. For this example, we'll use a simple in-memory log, but other implementations (sqlite, postgres etc.) are available.
 ```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/DeluxeOwl/chronicle"
+	"github.com/DeluxeOwl/chronicle/eventlog"
+	"github.com/DeluxeOwl/chronicle/examples/internal/account"
+	"github.com/sanity-io/litter"
+)
+
 func main() {
 	// Create a memory event log
 	memoryEventLog := eventlog.NewMemory()
@@ -249,7 +269,7 @@ We continue by creating the repository for the accounts:
 ```go
 	accountRepo, err := chronicle.NewEventSourcedRepository(
 		memoryEventLog,  // The event log
-		NewEmptyAccount, // The constructor for our aggregate
+		account.NewEmpty, // The constructor for our aggregate
 		nil,             // This is an optional parameter called "transformers"
 	)
 	if err != nil {
@@ -260,19 +280,19 @@ We continue by creating the repository for the accounts:
 We create the account and interact with it
 ```go
 	// Create an account
-	account, err := OpenAccount(AccountID("123"), time.Now())
+	acc, err := account.Open(AccountID("123"), time.Now())
 	if err != nil {
 		panic(err)
 	}
 	
 	// Deposit some money
-	err = account.DepositMoney(200)
+	err = acc.DepositMoney(200)
 	if err != nil {
 		panic(err)
 	}
 	
 	// Withdraw some money
-	_, err = account.WithdrawMoney(50)
+	_, err = acc.WithdrawMoney(50)
 	if err != nil {
 		panic(err)
 	}
@@ -281,13 +301,13 @@ We create the account and interact with it
 And we use the repo to save the account:
 ```go
 	ctx := context.Background()
-	version, commitedEvents, err := accountRepo.Save(ctx, account)
+	version, commitedEvents, err := accountRepo.Save(ctx, acc)
 	if err != nil {
 		panic(err)
 	}
 ```
 
-The repository returns the new version of the aggregate, the list of committed events, and an error if one occurred. The version is also updated on the aggregate instance itself and can be accessed via `account.Version()` (this is handled by `aggregate.Base`)
+The repository returns the new version of the aggregate, the list of committed events, and an error if one occurred. The version is also updated on the aggregate instance itself and can be accessed via `acc.Version()` (this is handled by `aggregate.Base`)
 
 An aggregate starts at version 0. The version is incremented for each new event that is recorded.
 
@@ -300,7 +320,7 @@ Printing these values gives:
 ```
 
 ```go
-❯ go run examples/1_quickstart/*.go
+❯ go run examples/1_quickstart/main.go
 version: 3
 &main.accountOpened{
   ID: "123",
@@ -315,6 +335,7 @@ version: 3
 ```
 
 You can find this example in [./examples/1_quickstart](./examples/1_quickstart).
+You can find the implementation of the account in [./examples/internal/account/account.go](./examples/internal/account/account.go).
 
 ## What is event sourcing?
 
