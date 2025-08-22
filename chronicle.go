@@ -3,6 +3,7 @@ package chronicle
 import (
 	"github.com/DeluxeOwl/chronicle/aggregate"
 	"github.com/DeluxeOwl/chronicle/event"
+	"github.com/avast/retry-go/v4"
 )
 
 // Registries.
@@ -37,6 +38,15 @@ func NewEventSourcedRepositoryWithSnapshots[TID aggregate.ID, E event.Any, R agg
 		snapshotter,
 		snapstrategy,
 		opts...)
+}
+
+// Retries the saving of an aggregate up to 3 times on conflict errors.
+// Note: you probably want to configure the retry mechanism by providing retry.Option(s)
+func NewEventSourcedRepositoryWithRetry[TID aggregate.ID, E event.Any, R aggregate.Root[TID, E]](
+	repo aggregate.Repository[TID, E, R],
+	opts ...retry.Option,
+) *aggregate.ESRepoWithRetry[TID, E, R] {
+	return aggregate.NewESRepoWithRetry(repo, opts...)
 }
 
 func NewTransactionalRepository[TX any, TID aggregate.ID, E event.Any, R aggregate.Root[TID, E]](

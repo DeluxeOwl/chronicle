@@ -132,3 +132,7 @@ func (a *Account) WithdrawMoney(amount int) (int, error) {
 
 	return amount, nil
 }
+
+func (a *Account) Balance() int {
+	return a.balance
+}

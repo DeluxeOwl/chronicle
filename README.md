@@ -2,6 +2,8 @@
 - [What is event sourcing?](#what-is-event-sourcing)
 - [Why event sourcing?](#why-event-sourcing)
 - [Why not event sourcing?](#why-not-event-sourcing)
+	- [Handling conflict errors](#handling-conflict-errors)
+	- [Retry with backoff](#retry-with-backoff)
 
 
 ## Quickstart
@@ -482,3 +484,115 @@ Reasons **NOT** to use event sourcing:
     - Forcing it on an unprepared team can lead to slower development and team friction.
 - **You cannot directly query the current state;** you must build and rely on projections for all queries.
 - **It often requires additional infrastructure,** such as a message queue (e.g., NATS, Amazon SQS, Kafka) to process events and update projections reliably.
+
+### Handling conflict errors
+
+How do you handle the error above? The most common way is to **retry the command**:
+1. Re-load the aggregate from the repository to get the absolute latest state and version
+2. Re-run the original command
+3. Try to Save again
+
+```go
+	// 💥 Oh no! A conflict error occurred!
+	//...
+	//... try to withdraw again
+	accUserA, _ = accountRepo.Get(ctx, accID)
+	_, err = accUserA.WithdrawMoney(100)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println("User A tries to withdraw $100 and save...")
+	version, _, err := accountRepo.Save(ctx, accUserA)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("User A saved successfully! Version is %d and balance $%d\n", version, accUserA.Balance())
+	// User A saved successfully! Version is 4 and balance $50
+```
+
+
+
+### Retry with backoff
+The retry cycle can be handled in a loop. If the conflicts are frequent, you might add a backoff.
+
+You can wrap the repository with `chronicle.NewEventSourcedRepositoryWithRetry`, which uses github.com/avast/retry-go/v4 for retries. **By default it retries up to 3 times on conflict errors.** You can customize the retry mechanism by providing `retry.Option(s)`.
+
+```go
+	import "github.com/avast/retry-go/v4"
+
+	ar, _ := chronicle.NewEventSourcedRepository(
+		memoryEventLog,
+		account.NewEmpty,
+		nil,
+	)
+
+	accountRepo := chronicle.NewEventSourcedRepositoryWithRetry(ar)
+	
+	accountRepo := chronicle.NewEventSourcedRepositoryWithRetry(ar, retry.Attempts(5),
+		retry.Delay(100*time.Millisecond),    // Initial delay
+		retry.MaxDelay(10*time.Second),       // Cap the maximum delay
+		retry.DelayType(retry.BackOffDelay),  // Exponential backoff
+		retry.MaxJitter(50*time.Millisecond), // Add randomness
+	)
+```
+
+<details>
+<summary>Example of wrapping a repository with a custom `Save` method with retries</summary>
+
+```go
+type SaveResult struct {
+	Version         version.Version
+	CommittedEvents aggregate.CommittedEvents[account.AccountEvent]
+}
+
+type SaverWithRetry struct {
+	saver aggregate.Saver[account.AccountID, account.AccountEvent, *account.Account]
+}
+
+func (s *SaverWithRetry) Save(ctx context.Context, root *account.Account) (version.Version, aggregate.CommittedEvents[account.AccountEvent], error) {
+	result, err := retry.DoWithData(
+		func() (SaveResult, error) {
+			version, committedEvents, err := s.saver.Save(ctx, root)
+			if err != nil {
+				return SaveResult{}, err
+			}
+			return SaveResult{
+				Version:         version,
+				CommittedEvents: committedEvents,
+			}, nil
+		},
+		retry.Attempts(3),
+		retry.Context(ctx),
+		retry.RetryIf(func(err error) bool {
+			// Only retry on ConflictErr or specific errors
+			var conflictErr *version.ConflictError
+			return errors.As(err, &conflictErr)
+		}),
+	)
+	if err != nil {
+		var zero version.Version
+		var zeroCE aggregate.CommittedEvents[account.AccountEvent]
+		return zero, zeroCE, err
+	}
+
+	return result.Version, result.CommittedEvents, nil
+}
+// ...
+	accountRepo, _ := chronicle.NewEventSourcedRepository(
+		memoryEventLog,
+		account.NewEmpty,
+		nil,
+	)
+
+	repoWithRetry := &aggregate.FusedRepo[account.AccountID, account.AccountEvent, *account.Account]{
+		AggregateLoader: accountRepo,
+		VersionedGetter: accountRepo,
+		Getter:          accountRepo,
+		Saver: &SaverWithRetry{
+			saver: accountRepo,
+		},
+	}
+
+```
+</details>

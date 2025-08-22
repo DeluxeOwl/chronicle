@@ -3,6 +3,7 @@ module github.com/DeluxeOwl/chronicle
 go 1.24.0
 
 require (
+	github.com/avast/retry-go/v4 v4.6.1
 	github.com/cockroachdb/pebble v1.1.5
 	github.com/docker/go-connections v0.5.0
 	github.com/jackc/pgx/v5 v5.7.5
