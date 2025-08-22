@@ -44,13 +44,13 @@ func main() {
 	}
 
 	ctx := context.Background()
-	version, commitedEvents, err := accountRepo.Save(ctx, acc)
+	version, committedEvents, err := accountRepo.Save(ctx, acc)
 	if err != nil {
 		panic(err)
 	}
 
 	fmt.Printf("version: %d\n", version)
-	for _, ev := range commitedEvents {
+	for _, ev := range committedEvents {
 		litter.Dump(ev)
 	}
 }

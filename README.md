@@ -7,6 +7,8 @@
 	- [Retry with backoff](#retry-with-backoff)
 	- [How is this different from SQL transactions?](#how-is-this-different-from-sql-transactions)
 	- [Will conflicts be a bottleneck?](#will-conflicts-be-a-bottleneck)
+- [Snapshots](#snapshots)
+	- [Snapshot strategies](#snapshot-strategies)
 
 
 ## Quickstart
@@ -67,6 +69,8 @@ type AccountEvent interface {
 ```
 
 Now declare the events that are relevant for your business domain.
+
+The events **MUST** be side effect free (no i/o).
 The event methods (`EventName`, `isAccountEvent`) **MUST** have pointer receivers:
 
 ```go
@@ -306,7 +310,7 @@ We create the account and interact with it
 And we use the repo to save the account:
 ```go
 	ctx := context.Background()
-	version, commitedEvents, err := accountRepo.Save(ctx, acc)
+	version, committedEvents, err := accountRepo.Save(ctx, acc)
 	if err != nil {
 		panic(err)
 	}
@@ -319,7 +323,7 @@ An aggregate starts at version 0. The version is incremented for each new event 
 Printing these values gives:
 ```go
 	fmt.Printf("version: %d\n", version)
-	for _, ev := range commitedEvents {
+	for _, ev := range committedEvents {
 		litter.Dump(ev)
 	}
 ```
@@ -489,6 +493,8 @@ Reasons **NOT** to use event sourcing:
 - **It often requires additional infrastructure,** such as a message queue (e.g., NATS, Amazon SQS, Kafka) to process events and update projections reliably.
 
 ## Optimistic Concurrency & Conflict Errors
+
+You can find this example in [./examples/2_optimistic_concurrency/main.go](./examples/2_optimistic_concurrency/main.go).
 
 What happens if two users try to withdraw money from the same bank account at the exact same time? This is called a "race condition" problem.
 
@@ -698,3 +704,212 @@ A `version.ConflictError` for `AccountID("acc-123")` has absolutely no effect on
 Because aggregates are typically designed to represent a single, cohesive entity that is most often manipulated by a single user at a time (like _your_ shopping cart, or _your_ user profile), the opportunity for conflicts is naturally low. 
 
 This fine-grained concurrency model is what allows event-sourced systems to achieve high throughput, as the vast majority of operations on different aggregates can proceed in parallel without any contention.
+
+## Snapshots
+
+You can find this example in [./examples/3_snapshots/main.go](./examples/3_snapshots/main.go) and [(./examples/internal/account/account_snapshot.go](./examples/internal/account/account_snapshot.go).
+
+During the lifecycle of an application, some aggregates might accumulate a very long list of events.
+
+For example, an account could exist for decades and accumulate thousands or even tens of thousands of transactions.
+
+Loading such an aggregate would require fetching and replaying its entire history from the beginning, which could become a performance bottleneck. (As a rule of thumb, always measure first—loading even a few thousand events is often perfectly acceptable performance-wise).
+
+Snapshots are a performance optimization that solves this problem. 
+
+A snapshot is a serialized copy of an aggregate's state at a specific version. Instead of replaying the entire event history, the system can load the *latest snapshot* and then replay only the events that have occurred _since_ that snapshot was taken.
+
+Let's continue our `Account` example from the quickstart and add snapshot functionality. 
+
+First we need to create our snapshot struct which needs to satisfy the interface `aggregate.Snapshot[TID]` (by implementing `ID() AccountID` and `Version() version.Version`). 
+
+This means it must store the aggregate's ID and version, which are then exposed via the required `ID()` and `Version()` methods.
+
+```go
+package account
+
+type Snapshot struct {
+	AccountID        AccountID       `json:"id"`
+	OpenedAt         time.Time       `json:"openedAt"`
+	Balance          int             `json:"balance"`
+	AggregateVersion version.Version `json:"version"`
+}
+
+func (s *Snapshot) ID() AccountID {
+	return s.AccountID
+}
+
+func (s *Snapshot) Version() version.Version {
+	return s.AggregateVersion
+}
+```
+
+It's a "snapshot" (a point in time picture) of the `Account`'s state at a given point that can be serialized (JSON by default).
+
+Next, we need a way to convert an `Account` aggregate to an `AccountSnapshot` and back. This is the job of a `Snapshotter`. It acts as a bridge between your live aggregate and its serialized snapshot representation.
+
+We create a type that implements the `aggregate.Snapshotter` interface.
+
+```go
+package account
+
+type Snapshotter struct{}
+
+func (s *Snapshotter) ToSnapshot(acc *Account) (*Snapshot, error) {
+	return &Snapshot{
+		AccountID:        acc.ID(), // Important: save the aggregate's id
+		OpenedAt:         acc.openedAt,
+		Balance:          acc.balance,
+		AggregateVersion: acc.Version(), // Important: save the aggregate's version
+	}, nil
+}
+
+func (s *Snapshotter) FromSnapshot(snap *Snapshot) (*Account, error) {
+	// Recreate the aggregate from the snapshot's data
+	acc := NewEmpty()
+	acc.id = snap.ID()
+	acc.openedAt = snap.OpenedAt
+	acc.balance = snap.Balance
+
+	// ⚠️ The repository will set the correct version on the aggregate's Base
+	return acc, nil
+}
+```
+
+The `ToSnapshot` method captures the current state, and `FromSnapshot` restores it. 
+
+Note that `FromSnapshot` doesn't need to set the version on the aggregate's embedded `Base`; the framework handles this automatically when loading from a snapshot.
+
+
+
+Let's wire everything up in `main`:
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/DeluxeOwl/chronicle"
+	"github.com/DeluxeOwl/chronicle/eventlog"
+	"github.com/DeluxeOwl/chronicle/examples/internal/account"
+	"github.com/DeluxeOwl/chronicle/snapshotstore"
+)
+
+func main() {
+	memoryEventLog := eventlog.NewMemory()
+	baseRepo, _ := chronicle.NewEventSourcedRepository(
+		memoryEventLog,
+		account.NewEmpty,
+		nil,
+	)
+
+	accountSnapshotStore := snapshotstore.NewMemoryStore(
+		func() *account.Snapshot { return new(account.Snapshot) },
+	)
+	// ...
+}
+```
+
+We create a snapshot store for our snapshots. It needs a constructor for an empty snapshot, used for deserialization.
+
+While the library provides an in-memory snapshot store out of the box, the `aggregate.SnapshotStore` interface makes it straightforward to implement your own persistent store (e.g., using a database table, Redis, or a file-based store).
+
+Then, we wrap the base repository with the snapshotting functionality. 
+
+Now, we need to decide _when_ to take a snapshot. You probably don't want to create one on every single change, as that would be inefficient. The framework provides a flexible `SnapshotStrategy` to define this policy and a builder for various strategies:
+```go
+	accountSnapshotStore := snapshotstore.NewMemoryStore(
+		func() *account.Snapshot { return new(account.Snapshot) },
+	)
+
+	accountRepo, err := chronicle.NewEventSourcedRepositoryWithSnapshots(
+		baseRepo,
+		accountSnapshotStore,
+		&account.Snapshotter{},
+		aggregate.SnapStrategyFor[*account.Account]().EveryNEvents(3),
+	)
+	if err != nil {
+		panic(err)
+	}
+```
+
+In our example, we chose to snapshot every 3 events.
+
+Let's issue some commands:
+```go
+	ctx := context.Background()
+	accID := account.AccountID("snap-123")
+
+	acc, err := account.Open(accID, time.Now()) // version 1
+	if err != nil {
+		panic(err)
+	}
+	_ = acc.DepositMoney(100) // version 2
+	_ = acc.DepositMoney(100) // version 3
+	
+	// Saving the aggregate with 3 uncommitted events.
+	// The new version will be 3.
+	// Since 3 >= 3 (our N), the strategy will trigger a snapshot.
+	_, _, err = accountRepo.Save(ctx, acc)
+	if err != nil {
+		panic(err)
+	}
+```
+
+The repository loads the snapshot at version 3. Then, it will ask the event log for events for "snap-123" starting from version 4. Since there are none, loading is complete, and very fast.
+
+```go
+	reloadedAcc, err := accountRepo.Get(ctx, accID)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("Loaded account from snapshot. Version: %d\n", reloadedAcc.Version())
+	// Loaded account from snapshot. Version: 3
+```
+
+We can also get the snapshot from the store to check:
+```go
+	snap, found, err := accountSnapshotStore.GetSnapshot(ctx, accID)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("Found snapshot: %t: %+v\n", found, snap)
+	// Found snapshot: true: &{AccountID:snap-123 OpenedAt:2025-08-22 15:35:31.622177 +0300 EEST Balance:200 AggregateVersion:3}
+```
+
+### Snapshot strategies
+If you type `aggregate.SnapStrategyFor[*account.Account]().` you will get autocomplete for various snapshot strategies:
+- `EveryNEvents(n)`: Takes a snapshot every n times the aggregate is saved.
+- `AfterCommit()`: Takes a snapshot after every successful save.
+- `OnEvents(eventNames...)`: Takes a snapshot only if one or more of the specified event types were part of the save.
+- `AllOf(strategies...)`: A composite strategy that triggers only if all of its child strategies match.
+- `AnyOf(strategies...)`: A composite strategy that triggers if any of its child strategies match.     
+
+Or a `Custom(...)` strategy, which gives you complete control by allowing you to provide your own function. This function receives the aggregate's state, its versions, and the list of committed events, so you can decide when a snapshot should be taken:
+```go
+aggregate.SnapStrategyFor[*account.Account]().Custom(
+			func(ctx context.Context, root *account.Account, previousVersion, newVersion version.Version, committedEvents aggregate.CommittedEvents[account.AccountEvent]) bool {
+				return true // always snapshot
+			}),
+```
+
+An example in [account_snapshot.go](./examples/internal/account/account_snapshot.go):
+```go
+func CustomSnapshot(
+	ctx context.Context,
+	root *Account,
+	_, _ version.Version,
+	_ aggregate.CommittedEvents[AccountEvent],
+) bool {
+	return root.balance%250 == 0 // Only snapshot if the balance is a multiple of 250
+}
+```
+
+**Important**: Regardless of the snapshot strategy chosen, saving the snapshot happens after the new events are successfully committed to the event log. This means the two operations are not atomic. It is possible for the events to be saved successfully but for the subsequent snapshot save to fail. 
+
+By default, an error during a snapshot save will be returned by the Save method. You can customize this behavior with the `aggregate.OnSnapshotError` option, allowing you to log the error and continue, or ignore it entirely.
+
+Since snapshots are purely a performance optimization, ignoring a failed snapshot save can be a safe and reasonable strategy. The aggregate can always be rebuilt from the event log, which remains the single source of truth.
