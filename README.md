@@ -584,7 +584,9 @@ How do you handle the error above? The most common way is to **retry the command
 ### Retry with backoff
 The retry cycle can be handled in a loop. If the conflicts are frequent, you might add a backoff.
 
-You can wrap the repository with `chronicle.NewEventSourcedRepositoryWithRetry`, which uses github.com/avast/retry-go/v4 for retries. **By default it retries up to 3 times on conflict errors.** You can customize the retry mechanism by providing `retry.Option(s)`.
+You can wrap the repository with `chronicle.NewEventSourcedRepositoryWithRetry`, which uses github.com/avast/retry-go/v4 for retries. 
+
+**The default is to retry 3 times on conflict errors**. You can customize the retry mechanism by providing `retry.Option(s)`.
 
 ```go
 	import "github.com/avast/retry-go/v4"
