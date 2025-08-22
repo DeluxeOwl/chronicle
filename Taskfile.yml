@@ -40,7 +40,7 @@ tasks:
   llm-copy:
     desc: Copies the go files for LLMs. Uses pbcopy (mac only).
     cmds:
-      - yek ./**/*.go --ignore-patterns "*_mock*" --ignore-patterns "*_test.go" | pbcopy
+      - yek README.md ./**/*.go --ignore-patterns "*_mock*" --ignore-patterns "*_test.go" | pbcopy
 
   gen-diagrams:
     desc: Generates the d2 gen-diagrams
