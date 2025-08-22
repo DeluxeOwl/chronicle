@@ -1,3 +1,9 @@
+- [Quickstart](#quickstart)
+- [What is event sourcing?](#what-is-event-sourcing)
+- [Why event sourcing?](#why-event-sourcing)
+- [Why not event sourcing?](#why-not-event-sourcing)
+
+
 ## Quickstart
 
 Install the library
