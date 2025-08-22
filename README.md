@@ -5,6 +5,8 @@
 - [Optimistic Concurrency \& Conflict Errors](#optimistic-concurrency--conflict-errors)
 	- [Handling conflict errors](#handling-conflict-errors)
 	- [Retry with backoff](#retry-with-backoff)
+	- [How is this different from SQL transactions?](#how-is-this-different-from-sql-transactions)
+	- [Will conflicts be a bottleneck?](#will-conflicts-be-a-bottleneck)
 
 
 ## Quickstart
@@ -665,3 +667,34 @@ func (s *SaverWithRetry) Save(ctx context.Context, root *account.Account) (versi
 	}
 ```
 </details>
+
+### How is this different from SQL transactions?
+
+SQL transactions often use **pessimistic locking** - which means you assume a conflict is likely and you lock the data upfront to prevent it:
+
+1. **`BEGIN TRANSACTION;`**: Start a database transaction.
+2. **`SELECT balance FROM accounts WHERE id = 'acc-123' FOR UPDATE;`**: This is the critical step. The `FOR UPDATE` clause tells the database to place a **write lock** on the selected row.
+3. While this lock is held, no other transaction can read that row with `FOR UPDATE` or write to it. Any other process trying to do so will be **blocked** and forced to wait until the first transaction is finished.
+4. The application code checks if `balance >= amount_to_withdraw`.
+5. **`UPDATE accounts SET balance = balance - 50 WHERE id = 'acc-123';`**: The balance is updated.
+6. **`COMMIT;`**: The transaction is committed, and the lock on the row is released.
+
+In this model, a race condition like the one in our example is impossible. User B's transaction would simply pause at step 2, waiting for User A's transaction to `COMMIT` or `ROLLBACK`. 
+
+The database itself serializes the access. 
+
+In **optimistic concurrency control** - we shift the responsability from out database to our application.
+
+### Will conflicts be a bottleneck?
+
+A common question is: "Will my app constantly handle conflict errors and retries? Won't that be a bottleneck?".
+
+With well designed aggregates, the answer is **no**. Conflicts are the exception, not the rule.
+
+The most important thing to remember is that version conflicts happen **per aggregate**. 
+
+A `version.ConflictError` for `AccountID("acc-123")` has absolutely no effect on a concurrent operation for `AccountID("acc-456")`. The aggregate itself defines the consistency boundary.
+
+Because aggregates are typically designed to represent a single, cohesive entity that is most often manipulated by a single user at a time (like _your_ shopping cart, or _your_ user profile), the opportunity for conflicts is naturally low. 
+
+This fine-grained concurrency model is what allows event-sourced systems to achieve high throughput, as the vast majority of operations on different aggregates can proceed in parallel without any contention.
