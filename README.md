@@ -13,6 +13,9 @@
 
 ## Quickstart
 
+> [!WARNING]
+> I recommend going through the quickstart, since all examples use the `Account` struct from below.
+
 Install the library
 ```sh
 go get github.com/DeluxeOwl/chronicle
