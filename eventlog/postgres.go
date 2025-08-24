@@ -15,7 +15,12 @@ var (
 	_ event.TransactionalEventLog[*sql.Tx] = (*Postgres)(nil)
 )
 
-// Uses a PL/pgSQL function and a trigger to perform optimistic concurrency checks.
+// Postgres is an implementation of event.Log for a PostgreSQL database.
+// It uses a dedicated table for events and a PL/pgSQL function with a trigger
+// to enforce optimistic concurrency control at the database level.
+// This approach is highly reliable as it prevents race conditions during writes.
+//
+// See `NewPostgres` for initialization.
 type Postgres struct {
 	db       *sql.DB
 	useByteA bool
@@ -30,6 +35,17 @@ type Postgres struct {
 
 type PostgresOption func(*Postgres)
 
+// PostgresTableName is a configuration option that sets the name of the table
+// used to store events. If not provided, it defaults to "chronicle_events".
+// This option also regenerates all internal SQL queries to use the specified table name.
+//
+// Usage:
+//
+//	pgLog, err := eventlog.NewPostgres(db,
+//	    eventlog.PostgresTableName("my_domain_events"),
+//	)
+//
+// Returns a `PostgresOption` to be used with `NewPostgres`.
 func PostgresTableName(tableName string) PostgresOption {
 	return func(p *Postgres) {
 		dataType := "JSONB"
@@ -98,20 +114,43 @@ func PostgresTableName(tableName string) PostgresOption {
 	}
 }
 
-// PostgresUseBYTEA configures the event log to use a BYTEA column for event data.
-// If not used, the default column type is JSONB.
+// PostgresUseBYTEA configures the event log to use a BYTEA column for event data
+// instead of the default JSONB. This is useful if you are using a binary
+// serialization format like Protobuf instead of JSON.
+//
+// Usage:
+//
+//	pgLog, err := eventlog.NewPostgres(db,
+//	    eventlog.PostgresUseBYTEA(),
+//	)
+//
+// Returns a `PostgresOption` to be used with `NewPostgres`.
 func PostgresUseBYTEA() PostgresOption {
 	return func(p *Postgres) {
 		p.useByteA = true
 	}
 }
 
-// NewPostgres creates a new Postgres event log. It will also create the necessary
-// table, function, and trigger in the database if they don't already exist.
+// NewPostgres creates a new Postgres event log. Upon initialization, it ensures that
+// the necessary database schema (table, function, and trigger) is created. This
+// setup is performed within a transaction, making it safe to call on application startup.
 //
-// The application is responsible for providing a JSON-based
-// serializer (e.g., serde.NewJSONBinary()) to the repository. The database will
-// reject non-JSON data. If you want to use a BYTEA column instead of JSONB, you can use the PostgresUseBYTEA option.
+// By default, this log uses a JSONB column and expects a JSON-based
+// serializer (e.g., serde.NewJSONBinary()) to be configured in the repository.
+// Use the `PostgresUseBYTEA` option if you plan to use a different binary format.
+//
+// Usage:
+//
+//	db, err := sql.Open("postgres", "user=... password=... dbname=... sslmode=disable")
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	pgLog, err := eventlog.NewPostgres(db)
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//
+// Returns a configured `*Postgres` instance or an error if the setup fails.
 func NewPostgres(db *sql.DB, opts ...PostgresOption) (*Postgres, error) {
 	//nolint:exhaustruct // Fields are set below
 	pgLog := &Postgres{db: db}
@@ -149,6 +188,21 @@ func NewPostgres(db *sql.DB, opts ...PostgresOption) (*Postgres, error) {
 	return pgLog, nil
 }
 
+// AppendEvents writes a batch of raw events for a given aggregate ID to the log.
+// It wraps the entire operation in a new database transaction to ensure atomicity.
+//
+// Usage:
+//
+//	newVersion, err := pgLog.AppendEvents(ctx, logID, expectedVersion, rawEvents)
+//	if err != nil {
+//	    var conflictErr *version.ConflictError
+//	    if errors.As(err, &conflictErr) {
+//	        // handle optimistic concurrency failure
+//	    }
+//	}
+//
+// Returns the new version of the aggregate after the append, or an error.
+// A `version.ConflictError` is returned if the expected version does not match.
 func (p *Postgres) AppendEvents(
 	ctx context.Context,
 	id event.LogID,
@@ -171,6 +225,14 @@ func (p *Postgres) AppendEvents(
 	return newVersion, nil
 }
 
+// AppendInTx writes events within an existing database transaction.
+// It relies on the `trg_chronicle_check_event_version` trigger in the database to
+// perform the optimistic concurrency check. If the check fails, the trigger
+// raises an exception which is parsed into a `version.ConflictError`.
+//
+// This method is primarily for internal use by `TransactionalRepository` or advanced scenarios.
+//
+// Returns the new aggregate version, the records that were created, and an error if the operation fails.
 func (p *Postgres) AppendInTx(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -221,7 +283,19 @@ func (p *Postgres) AppendInTx(
 	return newStreamVersion, records, nil
 }
 
-// WithinTx executes a function within a database transaction.
+// WithinTx executes a function within a database transaction. It begins a new
+// transaction, executes the provided function, and then commits it. If the
+// function returns an error or a panic occurs, the transaction is rolled back.
+//
+// Usage:
+//
+//	err := pgLog.WithinTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+//	    // Perform database operations with tx
+//	    return nil
+//	})
+//
+// Returns an error if the transaction fails to begin, commit, or if the
+// provided function returns an error.
 func (p *Postgres) WithinTx(
 	ctx context.Context,
 	fn func(ctx context.Context, tx *sql.Tx) error,
@@ -245,6 +319,18 @@ func (p *Postgres) WithinTx(
 	return nil
 }
 
+// ReadEvents retrieves the event history for a single aggregate, starting from
+// a specified version. It returns an iterator for efficiently processing the stream.
+//
+// Usage:
+//
+//	records := pgLog.ReadEvents(ctx, logID, version.SelectFromBeginning)
+//	for record, err := range records {
+//	    // process record
+//	}
+//
+// Returns an `event.Records` iterator.
+//
 //nolint:dupl // I think it's better to keep them separate.
 func (p *Postgres) ReadEvents(
 	ctx context.Context,
@@ -286,6 +372,18 @@ func (p *Postgres) ReadEvents(
 	}
 }
 
+// ReadAllEvents retrieves the global stream of all events across all aggregates,
+// ordered chronologically by their global sequence number. This is useful for
+// building projections or other system-wide consumers.
+//
+// Usage:
+//
+//	globalRecords := pgLog.ReadAllEvents(ctx, version.Selector{From: 1})
+//	for gRecord, err := range globalRecords {
+//	    // process global record for a projection
+//	}
+//
+// Returns an `event.GlobalRecords` iterator.
 func (p *Postgres) ReadAllEvents(
 	ctx context.Context,
 	globalSelector version.Selector,
