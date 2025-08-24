@@ -7,6 +7,25 @@ import (
 	"github.com/DeluxeOwl/chronicle/version"
 )
 
+// SnapshotStrategy defines the policy for when to create a snapshot of an aggregate.
+// Implementations of this interface allow for flexible and domain-specific rules
+// to decide if a snapshot is wanted after a successful save operation.
+//
+// Usage:
+//
+//	// This interface is used when configuring a repository with snapshotting.
+//	type myCustomStrategy struct {}
+//	func (s *myCustomStrategy) ShouldSnapshot(...) bool {
+//		// custom logic
+//		return true
+//	}
+//
+//	repoWithSnaps, _ := chronicle.NewEventSourcedRepositoryWithSnapshots(
+//	    baseRepo,
+//	    snapStore,
+//	    snapshotter,
+//	    &myCustomStrategy{},
+//	)
 type SnapshotStrategy[TID ID, E event.Any, R Root[TID, E]] interface {
 	ShouldSnapshot(
 		// The current context of the Save operation.
@@ -24,6 +43,15 @@ type SnapshotStrategy[TID ID, E event.Any, R Root[TID, E]] interface {
 
 type strategyBuilder[TID ID, E event.Any, R Root[TID, E]] struct{}
 
+// SnapStrategyFor provides a fluent builder for creating common snapshot strategies.
+//
+// Usage:
+//
+//	// Create a strategy that snapshots every 10 events.
+//	strategy := aggregate.SnapStrategyFor[*account.Account]().EveryNEvents(10)
+//
+//	// Create a composite strategy.
+//	strategy2 := aggregate.SnapStrategyFor[*account.Account]().AnyOf(...)
 func SnapStrategyFor[R Root[TID, E], TID ID, E event.Any]() *strategyBuilder[TID, E, R] {
 	return &strategyBuilder[TID, E, R]{}
 }
@@ -45,6 +73,13 @@ func (s *everyNEventsStrategy[TID, E, R]) ShouldSnapshot(
 	return uint64(newVersion) >= nextSnapshotVersion
 }
 
+// EveryNEvents creates a strategy that takes a snapshot every `n` events.
+// For example, if n is 100, a snapshot will be taken when the aggregate's
+// version crosses 100, 200, 300, and so on.
+//
+// Usage:
+//
+//	strategy := aggregate.SnapStrategyFor[*account.Account]().EveryNEvents(100)
 func (b *strategyBuilder[TID, E, R]) EveryNEvents(n uint64) *everyNEventsStrategy[TID, E, R] {
 	return &everyNEventsStrategy[TID, E, R]{N: n}
 }
@@ -68,6 +103,16 @@ func (s *onEventsStrategy[TID, E, R]) ShouldSnapshot(
 	return false
 }
 
+// OnEvents creates a strategy that takes a snapshot only if at least one of the
+// specified event types (by name) was part of the committed batch.
+//
+// Usage:
+//
+//	// Snapshot when an account is closed or a large withdrawal occurs.
+//	strategy := aggregate.SnapStrategyFor[*account.Account]().OnEvents(
+//	    "account/closed",
+//	    "account/large_withdrawal_made",
+//	)
 func (b *strategyBuilder[TID, E, R]) OnEvents(eventNames ...string) *onEventsStrategy[TID, E, R] {
 	eventsToMatch := make(map[string]struct{}, len(eventNames))
 	for _, name := range eventNames {
@@ -102,6 +147,17 @@ func (s *customStrategy[TID, E, R]) ShouldSnapshot(
 	return s.shouldSnapshot(ctx, root, previousVersion, newVersion, committedEvents)
 }
 
+// Custom creates a strategy that gives you complete control by taking a function.
+// This function receives the full context of the save operation and returns a boolean.
+//
+// Usage:
+//
+//	strategy := aggregate.SnapStrategyFor[*account.Account]().Custom(
+//	    func(ctx context.Context, root *account.Account, _, _ version.Version, _ aggregate.CommittedEvents[account.AccountEvent]) bool {
+//	        // Only snapshot if the account balance is a multiple of 1000.
+//	        return root.Balance() % 1000 == 0
+//	    },
+//	)
 func (b *strategyBuilder[TID, E, R]) Custom(shouldSnapshot func(
 	ctx context.Context,
 	root R,
@@ -126,6 +182,12 @@ func (s *afterCommit[TID, E, R]) ShouldSnapshot(
 	return len(committedEvents) > 0
 }
 
+// AfterCommit creates a strategy that takes a snapshot after every successful save.
+// This is aggressive and should be used with caution, as it can be inefficient.
+//
+// Usage:
+//
+//	strategy := aggregate.SnapStrategyFor[*account.Account]().AfterCommit()
 func (b *strategyBuilder[TID, E, R]) AfterCommit() *afterCommit[TID, E, R] {
 	return &afterCommit[TID, E, R]{}
 }
@@ -149,6 +211,15 @@ func (s *anyOf[TID, E, R]) ShouldSnapshot(
 	return false
 }
 
+// AnyOf creates a composite strategy that triggers if *any* of its child strategies would trigger.
+// It acts as a logical OR.
+//
+// Usage:
+//
+//	// Snapshot every 50 events OR if the account is closed.
+//	every50 := aggregate.SnapStrategyFor[*account.Account]().EveryNEvents(50)
+//	onClose := aggregate.SnapStrategyFor[*account.Account]().OnEvents("account/closed")
+//	strategy := aggregate.SnapStrategyFor[*account.Account]().AnyOf(every50, onClose)
 func (b *strategyBuilder[TID, E, R]) AnyOf(
 	strategies ...SnapshotStrategy[TID, E, R],
 ) *anyOf[TID, E, R] {
@@ -177,6 +248,15 @@ func (s *allOf[TID, E, R]) ShouldSnapshot(
 	return true
 }
 
+// AllOf creates a composite strategy that triggers only if *all* of its child strategies would trigger.
+// It acts as a logical AND.
+//
+// Usage:
+//
+//	// A contrived example: snapshot only when a withdrawal happens AND the version is a multiple of 10.
+//	onWithdrawal := aggregate.SnapStrategyFor[*account.Account]().OnEvents("account/money_withdrawn")
+//	every10 := aggregate.SnapStrategyFor[*account.Account]().EveryNEvents(10)
+//	strategy := aggregate.SnapStrategyFor[*account.Account]().AllOf(onWithdrawal, every10)
 func (b *strategyBuilder[TID, E, R]) AllOf(
 	strategies ...SnapshotStrategy[TID, E, R],
 ) *allOf[TID, E, R] {
