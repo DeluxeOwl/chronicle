@@ -10,6 +10,7 @@ import (
 	"github.com/DeluxeOwl/chronicle/aggregate"
 	"github.com/DeluxeOwl/chronicle/event"
 	"github.com/DeluxeOwl/chronicle/eventlog"
+	"github.com/DeluxeOwl/chronicle/internal/testutils"
 	"github.com/DeluxeOwl/chronicle/serde"
 	"github.com/DeluxeOwl/chronicle/snapshotstore"
 
@@ -179,23 +180,30 @@ func createPerson(t *testing.T) *Person {
 func Test_Person(t *testing.T) {
 	ctx := t.Context()
 
+	pg, clean := testutils.SetupPostgres(t)
+	defer clean()
+
 	p := createPerson(t)
 
-	memlog := eventlog.NewMemory()
-
-	_, err := chronicle.NewTransactionalRepository(
-		memlog,
-		NewEmpty,
-		nil,
-		&TransactionalAggregateProcessorMock[eventlog.MemTx, PersonID, PersonEvent, *Person]{
-			ProcessFunc: func(ctx context.Context, tx eventlog.MemTx, root *Person, events aggregate.CommittedEvents[PersonEvent]) error {
-				return nil
-			},
-		},
-	)
+	// memlog := eventlog.NewMemory()
+	memlog, err := eventlog.NewPostgres(pg)
 	require.NoError(t, err)
 
-	snapstore := snapshotstore.NewMemoryStore(NewSnapshot)
+	// _, err = chronicle.NewTransactionalRepository(
+	// 	memlog,
+	// 	NewEmpty,
+	// 	nil,
+	// 	&TransactionalAggregateProcessorMock[eventlog.MemTx, PersonID, PersonEvent, *Person]{
+	// 		ProcessFunc: func(ctx context.Context, tx eventlog.MemTx, root *Person, events aggregate.CommittedEvents[PersonEvent]) error {
+	// 			return nil
+	// 		},
+	// 	},
+	// )
+	// require.NoError(t, err)
+
+	// snapstore := snapshotstore.NewMemoryStore(NewSnapshot)
+	snapstore, err := snapshotstore.NewPostgresStore(pg, NewSnapshot)
+	require.NoError(t, err)
 	registry := chronicle.NewAnyEventRegistry()
 
 	esRepo, err := chronicle.NewEventSourcedRepository(
