@@ -14,6 +14,8 @@ import (
 	"github.com/DeluxeOwl/chronicle/version"
 )
 
+// ID is a constraint for an aggregate's identifier.
+// Any type used as an ID must implement the `fmt.Stringer` interface.
 type ID interface {
 	fmt.Stringer
 }
@@ -22,22 +24,30 @@ type IDer[TID ID] interface {
 	ID() TID
 }
 
+// Aggregate defines the core behavior of an event-sourced aggregate.
+// It must be able to change its state by applying an event and must provide its unique ID.
 type Aggregate[TID ID, E event.Any] interface {
 	Apply(E) error
 	IDer[TID]
 }
 
+// Versioner is an interface for any type that can be versioned.
+// This is typically implemented by embedding the `aggregate.Base` struct.
 type Versioner interface {
 	Version() version.Version
 }
 
+// Root represents the complete contract for an aggregate root in this framework.
+// It combines the `Aggregate`, `Versioner`, and `event.EventFuncCreator` interfaces,
+// along with internal methods for event handling.
+// The easiest way to satisfy this interface is to embed `aggregate.Base` in your struct.
 type (
 	Root[TID ID, E event.Any] interface {
 		Aggregate[TID, E]
 		Versioner
 		event.EventFuncCreator[E]
 
-		// Base implements these, so you *have* to embed Base.
+		// The following methods are provided by embedding `aggregate.Base`.
 		flushUncommittedEvents() flushedUncommittedEvents
 		setVersion(version.Version)
 		recordThat(anyEventApplier, ...event.Any) error
@@ -50,12 +60,16 @@ type anyApplier[TID ID, E event.Any] struct {
 	internalRoot Root[TID, E]
 }
 
+// asAnyApplier wraps a generic aggregate Root in a non-generic `anyApplier`.
+// This is an internal helper used by `RecordEvent`.
 func asAnyApplier[TID ID, E event.Any](root Root[TID, E]) *anyApplier[TID, E] {
 	return &anyApplier[TID, E]{
 		internalRoot: root,
 	}
 }
 
+// Apply performs a type assertion to convert the `event.Any` back to the
+// concrete event type `E` before calling the aggregate's `Apply` method.
 func (a *anyApplier[TID, E]) Apply(evt event.Any) error {
 	if evt == nil {
 		return errors.New("nil event")
@@ -73,10 +87,44 @@ func (a *anyApplier[TID, E]) Apply(evt event.Any) error {
 	return a.internalRoot.Apply(anyEvt)
 }
 
+// RecordEvent is the primary function for recording a new event against an aggregate.
+// It first applies the event to the aggregate to update its state, and upon success,
+// adds the event to an internal list of uncommitted events to be persisted later.
+//
+// A recommended pattern is to create a private, type-safe wrapper for this function
+// on your aggregate. This improves type safety and autocompletion within your
+// command methods.
+//
+// Usage:
+//
+//	// 1. Define a private helper method on your aggregate that calls RecordEvent.
+//	//    Notice the parameter is `AccountEvent`, your specific event sum type.
+//	func (a *Account) recordThat(event AccountEvent) error {
+//		return aggregate.RecordEvent(a, event)
+//	}
+//
+//	// 2. Use this helper in your command methods. The Go compiler will now ensure
+//	//    you only pass valid AccountEvent types.
+//	func (a *Account) DepositMoney(amount int) error {
+//		if amount <= 0 {
+//			return errors.New("amount must be positive")
+//		}
+//		return a.recordThat(&moneyDeposited{Amount: amount})
+//	}
+//
+// Returns an error if the aggregate's `Apply` method returns an error.
 func RecordEvent[TID ID, E event.Any](root Root[TID, E], e E) error {
 	return root.recordThat(asAnyApplier(root), e)
 }
 
+// RecordEvents is a convenience function to record multiple events in a single call.
+// Each event is applied and recorded sequentially.
+//
+// Usage (inside a command method on your aggregate):
+//
+//	return aggregate.RecordEvents(a, &eventOne{}, &eventTwo{})
+//
+// Returns an error if any of the `Apply` calls fail.
 func RecordEvents[TID ID, E event.Any](root Root[TID, E], events ...E) error {
 	evs := make([]event.Any, len(events))
 	for i := range events {
@@ -86,6 +134,16 @@ func RecordEvents[TID ID, E event.Any](root Root[TID, E], events ...E) error {
 	return root.recordThat(asAnyApplier(root), evs...)
 }
 
+// ReadAndLoadFromStore is a framework helper that orchestrates loading an aggregate.
+// It reads event records from the event store and uses them to hydrate a new instance
+// of an aggregate root.
+//
+// Usage (typically inside a repository's Get method):
+//
+//	err := aggregate.ReadAndLoadFromStore(ctx, root, store, registry, ser, transformers, id, selector)
+//
+// Returns an error if reading from the store, deserializing, or applying any event fails.
+// Returns an error if the aggregate is not found (i.e., has no events).
 func ReadAndLoadFromStore[TID ID, E event.Any](
 	ctx context.Context,
 	root Root[TID, E],
@@ -110,6 +168,15 @@ func ReadAndLoadFromStore[TID ID, E event.Any](
 	return nil
 }
 
+// LoadFromRecords hydrates an aggregate root from an iterator of event records.
+// For each record, it deserializes the data into a concrete event type, applies any
+// transformations, and then applies the event to the root.
+//
+// Usage (used by `ReadAndLoadFromStore` and snapshot loading logic):
+//
+//	err := aggregate.LoadFromRecords(ctx, root, registry, ser, transformers, records)
+//
+// Returns an error if deserialization, transformation, or application of an event fails.
 func LoadFromRecords[TID ID, E event.Any](
 	ctx context.Context,
 	root Root[TID, E],
@@ -162,10 +229,20 @@ func LoadFromRecords[TID ID, E event.Any](
 	return nil
 }
 
+// UncommittedEvents represents a strongly-typed slice of events that have been
+// recorded on an aggregate but not yet persisted to the event log.
 type (
 	UncommittedEvents[E event.Any] []E
 )
 
+// FlushUncommittedEvents clears the pending events from an aggregate and returns them
+// as a strongly-typed slice. This is the first step in the `Save` process.
+//
+// Usage (called by `CommitEvents`):
+//
+//	uncommitted := aggregate.FlushUncommittedEvents(root)
+//
+// Returns a slice of the uncommitted events.
 func FlushUncommittedEvents[TID ID, E event.Any, R Root[TID, E]](
 	root R,
 ) UncommittedEvents[E] {
@@ -184,6 +261,15 @@ func FlushUncommittedEvents[TID ID, E event.Any, R Root[TID, E]](
 	return uncommitted
 }
 
+// RawEventsFromUncommitted converts a slice of strongly-typed uncommitted events
+// into a slice of `event.Raw` events. It applies write-side transformers
+// and serializes the event data during this process.
+//
+// Usage (called by `CommitEvents`):
+//
+//	rawEvents, err := aggregate.RawEventsFromUncommitted(ctx, serializer, transformers, uncommitted)
+//
+// Returns a slice of `event.Raw` ready for storage, or an error if transformation or serialization fails.
 func RawEventsFromUncommitted[E event.Any](
 	ctx context.Context,
 	serializer serde.BinarySerializer,
@@ -217,6 +303,8 @@ func RawEventsFromUncommitted[E event.Any](
 	return rawEvents, nil
 }
 
+// CommittedEvents represents a strongly-typed slice of events that have been
+// successfully persisted to the event log.
 type CommittedEvents[E event.Any] []E
 
 func (committed CommittedEvents[E]) All() iter.Seq[E] {
@@ -229,9 +317,17 @@ func (committed CommittedEvents[E]) All() iter.Seq[E] {
 	}
 }
 
-// CommitEvents takes a root aggregate, flushes its uncommitted events, and appends them
-// to the provided event log. It's a reusable helper for implementing any
-// custom Repository's Save method.
+// CommitEvents orchestrates the process of persisting an aggregate's pending changes.
+// It is a reusable helper for implementing a repository's `Save` method.
+// It flushes events, calculates the expected version, prepares them for storage,
+// and appends them to the event log.
+//
+// Usage (inside a repository's `Save` method):
+//
+//	newVersion, committed, err := aggregate.CommitEvents(ctx, store, serializer, transformers, root)
+//
+// Returns the new version of the aggregate, a slice of the events that were just committed,
+// and an error if persistence fails (e.g., `version.ConflictError`).
 func CommitEvents[TID ID, E event.Any, R Root[TID, E]](
 	ctx context.Context,
 	store event.Log,
@@ -266,6 +362,17 @@ func CommitEvents[TID ID, E event.Any, R Root[TID, E]](
 	return newVersion, CommittedEvents[E](uncommittedEvents), nil
 }
 
+// CommitEventsWithTX is a transactional version of `CommitEvents`.
+// It saves aggregate events and invokes a `TransactionalAggregateProcessor` within the
+// same database transaction, ensuring atomicity. This is ideal for updating read models
+// or handling outbox patterns.
+//
+// Usage (inside a transactional repository's `Save` method):
+//
+//	newVersion, committed, err := aggregate.CommitEventsWithTX(
+//	    ctx, transactor, txLog, processor, serializer, transformers, root)
+//
+// Returns the new aggregate version, the committed events, and an error if the transaction fails.
 func CommitEventsWithTX[TX any, TID ID, E event.Any, R Root[TID, E]](
 	ctx context.Context,
 	transactor event.Transactor[TX],
