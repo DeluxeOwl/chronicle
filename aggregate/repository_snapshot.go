@@ -12,6 +12,13 @@ var _ Repository[testAggID, testAggEvent, *testAgg] = (*ESRepoWithSnapshots[test
 	nil,
 )
 
+// ESRepoWithSnapshots is a decorator for a Repository that adds a snapshotting
+// capability to improve performance for aggregates with long event histories.
+//
+// When retrieving an aggregate, it first attempts to load from a recent snapshot
+// and then replays only the events that occurred since. When saving, it commits
+// events and then, based on a configured strategy, creates and stores a new
+// snapshot of the aggregate's state.
 type ESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]] struct {
 	internal Repository[TID, E, R]
 
@@ -23,9 +30,38 @@ type ESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]] 
 	snapshotSaveEnabled bool
 }
 
-// Note: this is a function, in case the user wants to customize the behavior of returning an error.
+// OnSnapshotErrFunc defines the signature for a function that handles errors
+// occurring during the saving of a snapshot.
+//
+// Since snapshots are a performance optimization and not the source of truth,
+// it is often acceptable to log the error and continue without returning it,
+// preventing a snapshot failure from failing the entire operation.
+//
+// Usage:
+//
+//	// Configure the repository to log snapshot errors but not fail the Save operation.
+//	option := aggregate.OnSnapshotError(func(ctx context.Context, err error) error {
+//	    log.Printf("Warning: failed to save snapshot: %v", err)
+//	    return nil // Returning nil ignores the error.
+//	})
 type OnSnapshotErrFunc = func(ctx context.Context, err error) error
 
+// NewESRepoWithSnapshots creates a new repository decorator that adds snapshotting functionality.
+//
+// Usage:
+//
+//	// baseRepo is a standard event-sourced repository.
+//	// snapStore is an implementation of aggregate.SnapshotStore.
+//	// snapshotter is an implementation of aggregate.Snapshotter.
+//	repoWithSnaps, err := aggregate.NewESRepoWithSnapshots(
+//		baseRepo,
+//		snapStore,
+//		snapshotter,
+//		aggregate.SnapStrategyFor[...].EveryNEvents(50), // Snapshot every 50 events.
+//	)
+//
+// Returns a new repository equipped with snapshotting capabilities, or an error if
+// the configuration is invalid.
 func NewESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]](
 	esRepo Repository[TID, E, R],
 	snapstore SnapshotStore[TID, TS],
@@ -51,6 +87,17 @@ func NewESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID
 	return esr, nil
 }
 
+// Get retrieves an aggregate's state. It first attempts to load the aggregate from
+// the most recent snapshot. If a snapshot is found, it then replays only the events
+// that occurred after that snapshot's version. If no snapshot is found, it falls
+// back to replaying the aggregate's entire event history.
+//
+// Usage:
+//
+//	// The repository will automatically use a snapshot if available.
+//	account, err := repo.Get(ctx, accountID)
+//
+// Returns the fully constituted aggregate root and an error if loading fails.
 func (esr *ESRepoWithSnapshots[TID, E, R, TS]) Get(ctx context.Context, id TID) (R, error) {
 	var empty R
 
@@ -89,8 +136,18 @@ func (esr *ESRepoWithSnapshots[TID, E, R, TS]) LoadAggregate(
 	return esr.internal.LoadAggregate(ctx, root, id, selector)
 }
 
-// Save persists the uncommitted events of an aggregate and, if the policy dictates,
-// creates and saves a new snapshot of the aggregate's state.
+// Save persists the uncommitted events of an aggregate. After successfully saving
+// the events, it runs the configured SnapshotStrategy to determine whether
+// a new snapshot of the aggregate's state should also be saved.
+//
+// Usage:
+//
+//	account.DepositMoney(100)
+//	// Events are saved, and a snapshot may be created and saved.
+//	_, _, err := repo.Save(ctx, account)
+//
+// Returns the new version of the aggregate, the list of committed events, and an
+// error if either event persistence or (if configured to) snapshot persistence fails.
 func (esr *ESRepoWithSnapshots[TID, E, R, TS]) Save(
 	ctx context.Context,
 	root R,
@@ -156,13 +213,35 @@ type esRepoWithSnapshotsConfigurator interface {
 
 type ESRepoWithSnapshotsOption func(esRepoWithSnapshotsConfigurator)
 
+// OnSnapshotError provides an option to set a custom handler for snapshot save errors.
+//
+// Usage:
+//
+//	// Configure the repository to log and ignore snapshot save errors
+//	repo, err := aggregate.NewESRepoWithSnapshots(
+//	    ...,
+//	    aggregate.OnSnapshotError(func(ctx context.Context, err error) error {
+//	        log.Printf("Failed to save snapshot: %v", err)
+//	        return nil // nil means the error is handled and won't be returned by Save
+//	    }),
+//	)
 func OnSnapshotError(fn OnSnapshotErrFunc) ESRepoWithSnapshotsOption {
 	return func(c esRepoWithSnapshotsConfigurator) {
 		c.setOnSnapshotErr(fn)
 	}
 }
 
-// In case you don't want the snapshot to be saved here (and you're saving the snapshot in another place).
+// SnapshotSaveEnabled provides an option to enable or disable the saving of snapshots.
+// This can be useful for diagnostics or for scenarios where snapshotting is controlled
+// by a separate process. The default is true.
+//
+// Usage:
+//
+//	// Disable snapshot saving for this repository instance.
+//	repo, err := aggregate.NewESRepoWithSnapshots(
+//	    ...,
+//	    aggregate.SnapshotSaveEnabled(false),
+//	)
 func SnapshotSaveEnabled(enabled bool) ESRepoWithSnapshotsOption {
 	return func(c esRepoWithSnapshotsConfigurator) {
 		c.setSnapshotSaveEnabled(enabled)
