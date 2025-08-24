@@ -12,20 +12,58 @@ import (
 
 //go:generate go run github.com/matryer/moq@latest -pkg aggregate_test -skip-ensure -rm -out repository_mock_test.go . Repository TransactionalAggregateProcessor
 
+// Getter is responsible for retrieving the latest state of an aggregate root.
+// It loads all events for the given ID and replays them to reconstruct the aggregate.
+//
+// Usage:
+//
+//	// repo implements Getter
+//	account, err := repo.Get(ctx, "account-123")
+//
+// Returns the fully hydrated aggregate root or an error if the aggregate is not found or loading fails.
 type Getter[TID ID, E event.Any, R Root[TID, E]] interface {
 	Get(ctx context.Context, id TID) (R, error)
 }
 
+// VersionedGetter is responsible for retrieving an aggregate root at a specific version.
+// It loads and replays events up to the version specified in the selector.
+//
+// Usage:
+//
+//	// repo implements VersionedGetter
+//	// Get the state of the account after its 5th event
+//	account, err := repo.GetVersion(ctx, "account-123", version.Selector{From: 1, To: 5})
+//
+// Returns the hydrated aggregate root at the specified version or an error.
 type VersionedGetter[TID ID, E event.Any, R Root[TID, E]] interface {
 	GetVersion(ctx context.Context, id TID, selector version.Selector) (R, error)
 }
 
+// Saver is responsible for persisting the uncommitted events of an aggregate root.
+//
+// Usage:
+//
+//	// repo implements Saver
+//	newVersion, committedEvents, err := repo.Save(ctx, myAccount)
+//
+// Returns the new version of the aggregate, the events that were committed, and an
+// error if saving fails (e.g., a `version.ConflictError`).
 type Saver[TID ID, E event.Any, R Root[TID, E]] interface {
 	Save(ctx context.Context, root R) (version.Version, CommittedEvents[E], error)
 }
 
-// This is needed for the snapshot to be able to hydrate an aggregate in case
-// we found an older snapshot and we need to replay the events starting with the next version
+// AggregateLoader is an interface for loading events and applying them to an *existing*
+// instance of an aggregate root. This is primarily used by the snapshotting mechanism,
+// which first creates an aggregate from a snapshot, then uses this interface to load
+// and apply only the new events that occurred after the snapshot was taken.
+//
+// Usage (internal, used by repository with snapshots):
+//
+//	// repo implements AggregateLoader
+//	// root is an aggregate created from a snapshot at version 10
+//	err := repo.LoadAggregate(ctx, root, "id-123", version.Selector{From: 11})
+//
+// Returns an error if loading or applying subsequent events fails.
 type AggregateLoader[TID ID, E event.Any, R Root[TID, E]] interface {
 	LoadAggregate(
 		ctx context.Context,
@@ -35,6 +73,8 @@ type AggregateLoader[TID ID, E event.Any, R Root[TID, E]] interface {
 	) error
 }
 
+// Repository combines the core operations for loading and saving an aggregate root.
+// It is the primary interface for interacting with aggregates.
 type Repository[TID ID, E event.Any, R Root[TID, E]] interface {
 	AggregateLoader[TID, E, R]
 	VersionedGetter[TID, E, R]
@@ -42,9 +82,21 @@ type Repository[TID ID, E event.Any, R Root[TID, E]] interface {
 	Saver[TID, E, R]
 }
 
-// FusedRepo is a convenience type that can be used to fuse together
-// different implementations for the Getter and Saver Repository interface components.
-// Useful for wrapping the Save method with a retry for optimistic concurrency control.
+// FusedRepo is a convenience type that implements the Repository interface by
+// composing its constituent parts. It is useful for creating repository decorators,
+// such as a retry wrapper, where you might only want to override one behavior (like Save)
+// while keeping the others.
+//
+// Usage:
+//
+//	// Wrap a standard repository's Save method with a custom retry mechanism
+//	baseRepo := ...
+//	repoWithRetry := &FusedRepo[...]{
+//	    AggregateLoader: baseRepo,
+//	    VersionedGetter: baseRepo,
+//	    Getter:          baseRepo,
+//	    Saver:           &MyCustomSaverWithRetry{saver: baseRepo},
+//	}
 type FusedRepo[TID ID, E event.Any, R Root[TID, E]] struct {
 	AggregateLoader[TID, E, R]
 	VersionedGetter[TID, E, R]
@@ -56,6 +108,9 @@ var _ Repository[testAggID, testAggEvent, *testAgg] = (*ESRepo[testAggID, testAg
 	nil,
 )
 
+// ESRepo is the standard event-sourced repository implementation.
+// It orchestrates loading and saving aggregates by interacting with an event log
+// and an event registry. By default, it uses JSON for serialization.
 type ESRepo[TID ID, E event.Any, R Root[TID, E]] struct {
 	registry   event.Registry[E]
 	serde      serde.BinarySerde
@@ -67,8 +122,20 @@ type ESRepo[TID ID, E event.Any, R Root[TID, E]] struct {
 	shouldRegisterRoot bool
 }
 
-// An implementation of the repo, uses a global type registry and a json serializer.
-// It also performs the side effect of registering the root aggregate into the registry (use the option to not do that if you wish).
+// NewESRepo creates a new event sourced repository.
+// It requires an event log for storage, a factory function to create new aggregate
+// instances, and an optional slice of event transformers. By default, it uses a JSON
+// serializer and automatically registers the aggregate's events.
+//
+// Usage:
+//
+//	repo, err := NewESRepo(
+//	    eventlog.NewMemory(),
+//	    account.NewEmpty,     // func() *account.Account
+//	    nil,                  // No transformers
+//	)
+//
+// Returns a fully initialized ESRepo or an error if event registration fails.
 func NewESRepo[TID ID, E event.Any, R Root[TID, E]](
 	eventLog event.Log,
 	createRoot func() R,
@@ -98,6 +165,8 @@ func NewESRepo[TID ID, E event.Any, R Root[TID, E]](
 	return esr, nil
 }
 
+// LoadAggregate loads events from the store and applies them to an existing aggregate instance.
+// See `AggregateLoader` for more details.
 func (repo *ESRepo[TID, E, R]) LoadAggregate(
 	ctx context.Context,
 	root R,
@@ -116,10 +185,13 @@ func (repo *ESRepo[TID, E, R]) LoadAggregate(
 	)
 }
 
+// Get retrieves the latest state of an aggregate by creating a new instance
+// and replaying all of its events.
 func (repo *ESRepo[TID, E, R]) Get(ctx context.Context, id TID) (R, error) {
 	return repo.GetVersion(ctx, id, version.SelectFromBeginning)
 }
 
+// GetVersion retrieves the state of an aggregate at a specific version.
 func (repo *ESRepo[TID, E, R]) GetVersion(
 	ctx context.Context,
 	id TID,
@@ -135,6 +207,7 @@ func (repo *ESRepo[TID, E, R]) GetVersion(
 	return root, nil
 }
 
+// Save commits all uncommitted events from the aggregate to the event log.
 func (repo *ESRepo[TID, E, R]) Save(
 	ctx context.Context,
 	root R,
@@ -171,20 +244,43 @@ type esRepoConfigurator interface {
 	setAnyRegistry(anyRegistry event.Registry[event.Any])
 }
 
+// ESRepoOption is a function that configures an ESRepo instance.
+// It is used with `NewESRepo` to customize its behavior.
 type ESRepoOption func(esRepoConfigurator)
 
+// EventSerializer provides an option to override the default JSON serializer
+// with a custom implementation. See the `serde` package.
+//
+// Usage:
+//
+//	repo, err := NewESRepo(..., aggregate.EventSerializer(myCustomSerializer))
 func EventSerializer(serializer serde.BinarySerde) ESRepoOption {
 	return func(c esRepoConfigurator) {
 		c.setSerializer(serializer)
 	}
 }
 
+// DontRegisterRoot provides an option to prevent the repository from automatically
+// registering the aggregate's events. This is useful when you manage event registration
+// centrally or use a shared registry.
+//
+// Usage:
+//
+//	repo, err := NewESRepo(..., aggregate.DontRegisterRoot())
 func DontRegisterRoot() ESRepoOption {
 	return func(c esRepoConfigurator) {
 		c.setShouldRegisterRoot(false)
 	}
 }
 
+// AnyEventRegistry provides an option to use a shared, global event registry.
+// This allows multiple repositories to share a single registry, preventing duplicate
+// event name registrations across different aggregates.
+//
+// Usage:
+//
+//	globalRegistry := event.NewRegistry[event.Any]()
+//	repo, err := NewESRepo(..., aggregate.AnyEventRegistry(globalRegistry))
 func AnyEventRegistry(anyRegistry event.Registry[event.Any]) ESRepoOption {
 	return func(c esRepoConfigurator) {
 		c.setAnyRegistry(anyRegistry)
