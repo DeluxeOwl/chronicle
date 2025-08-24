@@ -14,6 +14,11 @@ var _ Repository[testAggID, testAggEvent, *testAgg] = (*TransactionalRepository[
 	nil,
 )
 
+// TransactionalRepository is a repository implementation that ensures that saving an aggregate's events
+// and processing them (e.g., for updating projections) occur within a single, atomic transaction.
+// It orchestrates operations using an `event.Transactor` and an `event.TransactionalLog`, and can
+// execute a type-safe `TransactionalAggregateProcessor` as part of the same transaction.
+// This is the useful for implementing strongly consistent read models or the transactional outbox pattern.
 type TransactionalRepository[T any, TID ID, E event.Any, R Root[TID, E]] struct {
 	transactor event.Transactor[T]
 	txLog      event.TransactionalLog[T]
@@ -30,7 +35,21 @@ type TransactionalRepository[T any, TID ID, E event.Any, R Root[TID, E]] struct 
 }
 
 // NewTransactionalRepository creates a repository that manages operations within an atomic transaction.
-// It requires a Transactor and a TransactionalLog to control the transaction boundary.
+// This constructor is a convenience for when the event log implementation (like the provided Postgres or Sqlite logs)
+// also serves as the transaction manager by implementing `event.TransactionalEventLog`.
+//
+// Usage:
+//
+//	// postgresLog implements event.TransactionalEventLog[*sql.Tx]
+//	// myProcessor implements aggregate.TransactionalAggregateProcessor for *sql.Tx
+//	repo, err := aggregate.NewTransactionalRepository(
+//	    postgresLog,
+//	    account.NewEmpty,
+//	    nil, // no transformers
+//	    myProcessor,
+//	)
+//
+// Returns a new `*TransactionalRepository` configured for atomic operations, or an error if setup fails.
 func NewTransactionalRepository[TX any, TID ID, E event.Any, R Root[TID, E]](
 	log event.TransactionalEventLog[TX],
 	createRoot func() R,
@@ -63,6 +82,23 @@ func NewTransactionalRepository[TX any, TID ID, E event.Any, R Root[TID, E]](
 	return repo, nil
 }
 
+// NewTransactionalRepositoryWithTransactor creates a transactional repository with a separate transactor and log.
+// This constructor provides more flexibility by decoupling the transaction management from the event storage logic.
+// It is useful in advanced scenarios where you might use a generic transaction coordinator.
+//
+// Usage:
+//
+//	// myTransactor implements event.Transactor[*sql.Tx]
+//	// myTxLog implements event.TransactionalLog[*sql.Tx]
+//	repo, err := aggregate.NewTransactionalRepositoryWithTransactor(
+//	    myTransactor,
+//	    myTxLog,
+//	    account.NewEmpty,
+//	    nil, // no transformers
+//	    myProcessor,
+//	)
+//
+// Returns a new `*TransactionalRepository`, or an error if setup fails.
 func NewTransactionalRepositoryWithTransactor[TX any, TID ID, E event.Any, R Root[TID, E]](
 	transactor event.Transactor[TX],
 	txLog event.TransactionalLog[TX],
@@ -95,8 +131,21 @@ func NewTransactionalRepositoryWithTransactor[TX any, TID ID, E event.Any, R Roo
 	return repo, nil
 }
 
-// Save atomically persists the aggregate's events and executes any configured
-// transactional processors within a single database transaction.
+// Save atomically persists the aggregate's uncommitted events and executes the configured
+// transactional processor within a single database transaction. If any part of the process fails,
+// the entire transaction is rolled back, ensuring data consistency.
+//
+// Usage:
+//
+//	// acc is an aggregate with uncommitted events
+//	newVersion, committedEvents, err := transactionalRepo.Save(ctx, acc)
+//	if err != nil {
+//	    // The transaction was rolled back.
+//	    // Handle the conflict or transient error.
+//	}
+//
+// Returns the aggregate's new version and the list of committed events on success.
+// Returns an error if saving the events or executing the processor fails.
 func (repo *TransactionalRepository[TX, TID, E, R]) Save(
 	ctx context.Context,
 	root R,
