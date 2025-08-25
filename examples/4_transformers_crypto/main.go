@@ -42,7 +42,6 @@ func main() {
 	}
 	fmt.Printf("Account for '%s' saved successfully.\n", acc.HolderName())
 
-	// 4. Load the account again to verify decryption
 	reloadedAcc, err := accountRepo.Get(ctx, accID)
 	if err != nil {
 		panic(err)
