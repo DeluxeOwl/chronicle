@@ -10,6 +10,9 @@
 - [Snapshots](#snapshots)
 	- [Snapshot strategies](#snapshot-strategies)
 - [Ordering: Event log \& Global event log](#ordering-event-log--global-event-log)
+- [Storage backends](#storage-backends)
+	- [Event logs](#event-logs)
+	- [Snapshot stores](#snapshot-stores)
 
 
 ## Quickstart
@@ -954,3 +957,41 @@ type GlobalReader interface {
 - **Key-Value Stores**: A store like Pebble can also implement `GlobalLog` by maintaining a secondary index for the global order. While reading from this index is fast, the provided `Pebble` implementation makes a trade-off for simplicity: it uses a global lock during writes to safely assign the next `global_version`. This serializes all writes to the event store, which can become a performance bottleneck under high concurrent load.
 
 Chronicle's separate interfaces acknowledge this reality, allowing you to choose a backend that fits your application's consistency and projection requirements. If you need to build projections that rely on the precise, system-wide order of events, you should choose a backend that supports `event.GlobalLog`.
+
+## Storage backends
+
+### Event logs
+
+- **In-Memory**: `eventlog.NewMemory()`
+    - The simplest implementation. It stores all events in memory.
+    - **Use Case**: Ideal for quickstarts, examples, and running tests.
+    - **Tradeoff**: It is not persistent. All data is lost when the application restarts. It can only be used within a single process.
+- **Pebble**: `eventlog.NewPebble(db)`
+    - A persistent, file-based key-value store - developed by Cockroach Labs.
+    - **Use Case**: Where you need persistence without the overhead of a full database server.
+    - **Tradeoff**: Like the in-memory store, it is intended for use by a single process at a time. Concurrently writing to the same database files from different processes will lead to corruption. This happens because pebble doesn't have a read-then-write atomic primitive.
+- **SQLite & PostgreSQL**: `eventlog.NewSqlite(db)` and `eventlog.NewPostgres(db)`
+    - These are robust, production-ready implementations that leverage SQL databases for persistence. PostgreSQL is ideal for distributed, high-concurrency applications, while SQLite is a great choice for single-server deployments.
+    - **Use Case**: Most of them.
+    - **Tradeoff**: It requires you to deal with scaling - so they might not be the best if you're dealing with billions of events per second.
+
+A key feature of these SQL-based logs is how they handle optimistic concurrency. Instead of relying on application-level checks, they use **database triggers** to enforce version consistency.
+
+When you try to append an event, a trigger fires inside the database. It atomically checks if the new event's version is exactly one greater than the stream's current maximum version.
+
+If the versions don't line up, the database transaction itself fails and raises an exception, preventing race conditions.
+
+> [!NOTE] To ensure the framework can correctly identify a conflict regardless of the database driver used, the triggers are designed to raise a specific error message: `_chronicle_version_conflict: <actual_version>`. The framework parses this string to create a `version.ConflictError`, making the conflict driver agnostic.
+
+### Snapshot stores
+
+- **In-Memory**: `snapshotstore.NewMemoryStore(...)`
+    - Stores snapshots in a simple map. Perfect for testing.
+    - **Tradeoff**: Single process only, lost on restart.
+- **PostgreSQL**: `snapshotstore.NewPostgresStore(...)`
+    - A persistent implementation that stores snapshots in a PostgreSQL table using an atomic `INSERT ... ON CONFLICT DO UPDATE` statement.
+    - **Use Case**: When you need durable snapshots.
+
+You can create your own snapshot store for other databases (like SQLite or Redis) by implementing the `aggregate.SnapshotStore` interface.
+
+Saving a snapshot is usually an "UPSERT" (update or insert) operation.
