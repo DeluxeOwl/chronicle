@@ -42,6 +42,18 @@ type pebbleGlobalEventData struct {
 	Version   version.Version `json:"version"`
 }
 
+// Pebble provides a Pebble-backed implementation of an event log.
+//
+// It is safe for concurrent use by multiple goroutines within a single process.
+// A global mutex serializes all write operations to ensure the atomicity of
+// version updates (especially the global version for `ReadAllEvents`).
+//
+// Because writes are serialized, this implementation can become a performance
+// bottleneck under high concurrent write loads, effectively behaving like a single-writer system.
+//
+// IMPORTANT: It is NOT safe for multiple processes to share the same Pebble
+// database directory. The mutex that guarantees correctness only exists in the
+// memory of a single process.
 type Pebble struct {
 	db *pebble.DB
 	mu sync.Mutex
@@ -203,6 +215,18 @@ func (p *Pebble) WithinTx(
 	return nil
 }
 
+// ReadEvents returns an iterator for the events of a specific aggregate.
+// This is an efficient operation that performs a ranged scan on the database
+// using the `e/{logID}/` key prefix.
+//
+// Usage:
+//
+//	records := pebbleLog.ReadEvents(ctx, "account-123", version.SelectFromBeginning)
+//	for record, err := range records {
+//	    // process record
+//	}
+//
+// Returns a `event.Records` iterator.
 func (p *Pebble) ReadEvents(
 	ctx context.Context,
 	id event.LogID,
@@ -255,6 +279,23 @@ func (p *Pebble) ReadEvents(
 	}
 }
 
+// ReadAllEvents returns an iterator for all events in the store, in the order
+// they were globally committed. It works by scanning a dedicated global event index
+// (`ge/` prefix), where keys are ordered by the global version number.
+//
+// Note: Maintaining the global index required by this method serializes all write
+// operations (`AppendEvents`) to the event store via a lock. This can be a
+// performance bottleneck under high write contention. The read operation itself is an
+// efficient index scan.
+//
+// Usage:
+//
+//	globalRecords := pebbleLog.ReadAllEvents(ctx, version.Selector{ From: 100 })
+//	for gRecord, err := range globalRecords {
+//	    // process global record
+//	}
+//
+// Returns a `event.GlobalRecords` iterator.
 func (p *Pebble) ReadAllEvents(
 	ctx context.Context,
 	globalSelector version.Selector,
