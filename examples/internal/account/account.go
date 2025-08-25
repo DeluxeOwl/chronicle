@@ -140,3 +140,7 @@ func (a *Account) WithdrawMoney(amount int) (int, error) {
 func (a *Account) Balance() int {
 	return a.balance
 }
+
+func (a *Account) HolderName() string {
+	return a.holderName
+}

@@ -54,7 +54,7 @@ func NewEventSourcedRepository[TID aggregate.ID, E event.Any, R aggregate.Root[T
 	transformers []event.Transformer[E],
 	opts ...aggregate.ESRepoOption,
 ) (*aggregate.ESRepo[TID, E, R], error) {
-	return aggregate.NewESRepo(eventlog, createRoot, nil, opts...)
+	return aggregate.NewESRepo(eventlog, createRoot, transformers, opts...)
 }
 
 // NewEventSourcedRepositoryWithSnapshots creates a new repository decorator that adds snapshotting functionality.
