@@ -57,13 +57,31 @@ func main() {
 	deletedKey := []byte("a-very-deleted-key-1234567891234")
 	cryptoTransformer = account.NewCryptoTransformer(deletedKey)
 
+	loggingTransformer := &LoggingTransformer{}
+
 	forgottenRepo, _ := chronicle.NewEventSourcedRepository(
 		memoryEventLog,
 		account.NewEmpty,
-		[]event.Transformer[account.AccountEvent]{cryptoTransformer},
+		[]event.Transformer[account.AccountEvent]{
+			cryptoTransformer,
+			event.AnyTransformerToTyped[account.AccountEvent](loggingTransformer),
+		},
 	)
 	_, err = forgottenRepo.Get(context.Background(), accID)
 	if err != nil {
 		fmt.Printf("Success! The data is unreadable. Error: %v\n", err)
 	}
+}
+
+type LoggingTransformer struct{}
+
+// This transformer works with any event type (`event.Any`).
+func (t *LoggingTransformer) TransformForWrite(_ context.Context, e event.Any) (event.Any, error) {
+	fmt.Printf("[LOG] Writing event: %s\n", e.EventName())
+	return e, nil
+}
+
+func (t *LoggingTransformer) TransformForRead(_ context.Context, e event.Any) (event.Any, error) {
+	fmt.Printf("[LOG] Reading event: %s\n", e.EventName())
+	return e, nil
 }

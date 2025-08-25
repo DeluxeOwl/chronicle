@@ -15,6 +15,7 @@
 	- [Snapshot stores](#snapshot-stores)
 - [Event transformers](#event-transformers)
 	- [Example: Crypto shedding for GDPR](#example-crypto-shedding-for-gdpr)
+	- [Global Transformers with `AnyTransformerToTyped`](#global-transformers-with-anytransformertotyped)
 
 
 ## Quickstart
@@ -1214,4 +1215,49 @@ Account reloaded. Holder name is correctly decrypted: 'John Smith'
 Holder name before decoding: +hWTqlo9VQBUXBJGFsfJouv5eL3PziMwd+gWhVkbtYbaH1CDbLw=
 Holder name before decryption: ���Z=UT\F�ɢ��x���#0w��Y��P�l�
 Success! The data is unreadable. Error: repo get version 0: read and load from store: load from records: read transform for event "account/opened" (version 1) failed: failed to decrypt holder name: cipher: message authentication failed
+```
+
+### Global Transformers with `AnyTransformerToTyped`
+
+While the `CryptoTransformer` is specific to `account.AccountEvent`, you might want to create a generic transformer that can operate on events from any aggregate. For example, a global logging mechanism.
+
+This is where `event.AnyTransformer` is useful. It is a type alias for `event.Transformer[event.Any]`, allowing it to process any event in the system as long as it satisfies the base `event.Any` interface.
+
+Let's create a simple transformer that logs every event being written to or read from the event log.
+```go
+// in examples/4_transformers/main.go
+
+type LoggingTransformer struct{}
+
+// This transformer works with any event type (`event.Any`).
+func (t *LoggingTransformer) TransformForWrite(_ context.Context, e event.Any) (event.Any, error) {
+	fmt.Printf("[LOG] Writing event: %s\n", e.EventName())
+	return e, nil
+}
+
+func (t *LoggingTransformer) TransformForRead(_ context.Context, e event.Any) (event.Any, error) {
+	fmt.Printf("[LOG] Reading event: %s\n", e.EventName())
+	return e, nil
+}
+```
+
+However, a repository for a specific aggregate, like our `accountRepo`, expects a `[]event.Transformer[account.AccountEvent]`, not a `[]event.Transformer[event.Any]`. A direct assignment will fail due to Go's type system.
+
+`AnyTransformerToTyped` is a helper function that solves this. It's an adapter that takes your generic `AnyTransformer` and makes it compatible with a specific aggregate's repository.
+
+Here is how you would use both our specific `CryptoTransformer` and our global `LoggingTransformer` for the account repository.
+
+```go
+	cryptoTransformer = account.NewCryptoTransformer(deletedKey)
+
+	loggingTransformer := &LoggingTransformer{}
+
+	forgottenRepo, _ := chronicle.NewEventSourcedRepository(
+		memoryEventLog,
+		account.NewEmpty,
+		[]event.Transformer[account.AccountEvent]{
+			cryptoTransformer,
+			event.AnyTransformerToTyped[account.AccountEvent](loggingTransformer),
+		},
+	)
 ```
