@@ -12,6 +12,7 @@ type Snapshot struct {
 	AccountID        AccountID       `json:"id"`
 	OpenedAt         time.Time       `json:"openedAt"`
 	Balance          int             `json:"balance"`
+	HolderName       string          `json:"holderName"`
 	AggregateVersion version.Version `json:"version"`
 }
 
@@ -30,6 +31,7 @@ func (s *Snapshotter) ToSnapshot(acc *Account) (*Snapshot, error) {
 		AccountID:        acc.ID(), // Important: save the aggregate's id
 		OpenedAt:         acc.openedAt,
 		Balance:          acc.balance,
+		HolderName:       acc.holderName,
 		AggregateVersion: acc.Version(), // Important: save the aggregate's version
 	}, nil
 }
@@ -40,6 +42,7 @@ func (s *Snapshotter) FromSnapshot(snap *Snapshot) (*Account, error) {
 	acc.id = snap.ID()
 	acc.openedAt = snap.OpenedAt
 	acc.balance = snap.Balance
+	acc.holderName = snap.HolderName
 
 	// ⚠️ The repository will set the correct version on the aggregate's Base
 	return acc, nil

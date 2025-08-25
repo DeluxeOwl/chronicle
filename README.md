@@ -83,8 +83,9 @@ The event methods (`EventName`, `isAccountEvent`) **MUST** have pointer receiver
 ```go
 // We say an account is "opened", not "created"
 type accountOpened struct {
-	ID       AccountID `json:"id"`
-	OpenedAt time.Time `json:"openedAt"`
+	ID         AccountID `json:"id"`
+	OpenedAt   time.Time `json:"openedAt"`
+	HolderName string    `json:"holderName"`
 }
 
 func (*accountOpened) EventName() string { return "account/opened" }
@@ -138,8 +139,9 @@ type Account struct {
 
 	id AccountID
 
-	openedAt time.Time
-	balance  int // we need to know how much money an account has
+	openedAt   time.Time
+	balance    int // we need to know how much money an account has
+	holderName string
 }
 ```
 
@@ -156,6 +158,7 @@ func (a *Account) Apply(evt AccountEvent) error {
 	case *accountOpened:
 		a.id = event.ID
 		a.openedAt = event.OpenedAt
+		a.holderName = event.HolderName
 	case *moneyWithdrawn:
 		a.balance -= event.Amount
 	case *moneyDeposited:
@@ -215,8 +218,9 @@ func Open(id AccountID, currentTime time.Time) (*Account, error) {
 
 	// Note: this is type safe, you'll get autocomplete for the events
 	if err := a.recordThat(&accountOpened{
-		ID:       id,
-		OpenedAt: currentTime,
+		ID:         id,
+		OpenedAt:   currentTime,
+		HolderName: holderName,
 	}); err != nil {
 		return nil, fmt.Errorf("open account: %w", err)
 	}
@@ -296,7 +300,7 @@ We continue by creating the repository for the accounts:
 We create the account and interact with it
 ```go
 	// Create an account
-	acc, err := account.Open(AccountID("123"), time.Now())
+	acc, err := account.Open(AccountID("123"), time.Now(), "John Smith")
 	if err != nil {
 		panic(err)
 	}
@@ -341,6 +345,7 @@ version: 3
 &main.accountOpened{
   ID: "123",
   OpenedAt: time.Time{}, // Note: litter omits private fields for brevity
+  HolderName: "John Smith",
 }
 &main.moneyDeposited{
   Amount: 200,
@@ -513,7 +518,7 @@ We're gonna use the `Account` example from the `examples/internal/account` packa
 
 We're gonna open an account and deposit some money
 ```go
-	acc, _ := account.Open(accID, time.Now())
+	acc, _ := account.Open(accID, time.Now(), "John Smith")
 	_ = acc.DepositMoney(200) // balance: 200
 
 	_, _, _ = accountRepo.Save(ctx, acc)
@@ -739,6 +744,7 @@ type Snapshot struct {
 	AccountID        AccountID       `json:"id"`
 	OpenedAt         time.Time       `json:"openedAt"`
 	Balance          int             `json:"balance"`
+	HolderName       string          `json:"holderName"`
 	AggregateVersion version.Version `json:"version"`
 }
 
@@ -767,6 +773,7 @@ func (s *Snapshotter) ToSnapshot(acc *Account) (*Snapshot, error) {
 		AccountID:        acc.ID(), // Important: save the aggregate's id
 		OpenedAt:         acc.openedAt,
 		Balance:          acc.balance,
+		HolderName:       acc.holderName,
 		AggregateVersion: acc.Version(), // Important: save the aggregate's version
 	}, nil
 }
@@ -777,6 +784,7 @@ func (s *Snapshotter) FromSnapshot(snap *Snapshot) (*Account, error) {
 	acc.id = snap.ID()
 	acc.openedAt = snap.OpenedAt
 	acc.balance = snap.Balance
+	acc.holderName = snap.HolderName
 
 	// ⚠️ The repository will set the correct version on the aggregate's Base
 	return acc, nil
@@ -849,7 +857,7 @@ Let's issue some commands:
 	ctx := context.Background()
 	accID := account.AccountID("snap-123")
 
-	acc, err := account.Open(accID, time.Now()) // version 1
+	acc, err := account.Open(accID, time.Now(), "John Smith") // version 1
 	if err != nil {
 		panic(err)
 	}
@@ -884,7 +892,7 @@ We can also get the snapshot from the store to check:
 		panic(err)
 	}
 	fmt.Printf("Found snapshot: %t: %+v\n", found, snap)
-	// Found snapshot: true: &{AccountID:snap-123 OpenedAt:2025-08-22 15:35:31.622177 +0300 EEST Balance:200 AggregateVersion:3}
+	// Found snapshot: true: &{AccountID:snap-123 OpenedAt:2025-08-25 10:53:57.970965 +0300 EEST Balance:200 HolderName:John Smith AggregateVersion:3}
 ```
 
 ### Snapshot strategies

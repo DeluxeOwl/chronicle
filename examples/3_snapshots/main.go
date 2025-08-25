@@ -39,7 +39,7 @@ func main() {
 	ctx := context.Background()
 	accID := account.AccountID("snap-123")
 
-	acc, err := account.Open(accID, time.Now()) // version 1
+	acc, err := account.Open(accID, time.Now(), "John Smith") // version 1
 	if err != nil {
 		panic(err)
 	}

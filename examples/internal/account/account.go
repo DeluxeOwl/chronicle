@@ -18,8 +18,9 @@ type Account struct {
 
 	id AccountID
 
-	openedAt time.Time
-	balance  int // we need to know how much money an account has
+	openedAt   time.Time
+	balance    int // we need to know how much money an account has
+	holderName string
 }
 
 func (a *Account) ID() AccountID {
@@ -34,8 +35,9 @@ type AccountEvent interface {
 
 // We say an account is "opened", not "created"
 type accountOpened struct {
-	ID       AccountID `json:"id"`
-	OpenedAt time.Time `json:"openedAt"`
+	ID         AccountID `json:"id"`
+	OpenedAt   time.Time `json:"openedAt"`
+	HolderName string    `json:"holderName"`
 }
 
 func (*accountOpened) EventName() string { return "account/opened" }
@@ -70,6 +72,7 @@ func (a *Account) Apply(evt AccountEvent) error {
 	case *accountOpened:
 		a.id = event.ID
 		a.openedAt = event.OpenedAt
+		a.holderName = event.HolderName
 	case *moneyWithdrawn:
 		a.balance -= event.Amount
 	case *moneyDeposited:
@@ -85,7 +88,7 @@ func NewEmpty() *Account {
 	return new(Account)
 }
 
-func Open(id AccountID, currentTime time.Time) (*Account, error) {
+func Open(id AccountID, currentTime time.Time, holderName string) (*Account, error) {
 	if currentTime.Weekday() == time.Sunday {
 		return nil, errors.New("sorry, you can't open an account on Sunday ¯\\_(ツ)_/¯")
 	}
@@ -94,8 +97,9 @@ func Open(id AccountID, currentTime time.Time) (*Account, error) {
 
 	// Note: this is type safe, you'll get autocomplete for the events
 	if err := a.recordThat(&accountOpened{
-		ID:       id,
-		OpenedAt: currentTime,
+		ID:         id,
+		OpenedAt:   currentTime,
+		HolderName: holderName,
 	}); err != nil {
 		return nil, fmt.Errorf("open account: %w", err)
 	}

@@ -37,7 +37,7 @@ func main() {
 	ctx := context.Background()
 	accID := account.AccountID("acc-123")
 
-	acc, _ := account.Open(accID, time.Now())
+	acc, _ := account.Open(accID, time.Now(), "John Smith")
 	_ = acc.DepositMoney(200) // balance: 200
 
 	// The account starts at version 0, `Open` is event 1, `Deposit` is event 2.

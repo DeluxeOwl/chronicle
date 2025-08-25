@@ -26,7 +26,7 @@ func main() {
 	}
 
 	// Create an acc
-	acc, err := account.Open(account.AccountID("123"), time.Now())
+	acc, err := account.Open(account.AccountID("123"), time.Now(), "John Smith")
 	if err != nil {
 		panic(err)
 	}
