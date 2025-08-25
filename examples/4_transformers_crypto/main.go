@@ -51,4 +51,19 @@ func main() {
 		"Account reloaded. Holder name is correctly decrypted: '%s'\n\n",
 		reloadedAcc.HolderName(),
 	)
+
+	fmt.Println("!!!! Simulating GDPR request: Deleting the encryption key. !!!!")
+
+	deletedKey := []byte("a-very-deleted-key-1234567891234")
+	cryptoTransformer = account.NewCryptoTransformer(deletedKey)
+
+	forgottenRepo, _ := chronicle.NewEventSourcedRepository(
+		memoryEventLog,
+		account.NewEmpty,
+		[]event.Transformer[account.AccountEvent]{cryptoTransformer},
+	)
+	_, err = forgottenRepo.Get(context.Background(), accID)
+	if err != nil {
+		fmt.Printf("Success! The data is unreadable. Error: %v\n", err)
+	}
 }

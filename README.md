@@ -1168,14 +1168,50 @@ Create an account and deposit some money:
 	fmt.Printf("Account reloaded. Holder name is correctly decrypted: '%s'\n\n", reloadedAcc.HolderName())
 ```
 
-Running the example prints the following:
+Running the example prints:
 ```go
 ❯ go run examples/4_transformers_crypto/main.go
 Received "accountOpened" event
-Holder name after encryption and encoding: We/RoC+kXivfm+zokuwJ8Jkz+hn3JX+YyR6ImuR+ueEOU9vHoo8=
+Holder name after encryption and encoding: +hWTqlo9VQBUXBJGFsfJouv5eL3PziMwd+gWhVkbtYbaH1CDbLw=
 Account for 'John Smith' saved successfully.
-Holder name before decoding: We/RoC+kXivfm+zokuwJ8Jkz+hn3JX+YyR6ImuR+ueEOU9vHoo8=
-Holder name before decryption: Y�Ѡ/�^+ߛ���      �3��%�����~��S�Ǣ�
+Holder name before decoding: +hWTqlo9VQBUXBJGFsfJouv5eL3PziMwd+gWhVkbtYbaH1CDbLw=
+Holder name before decryption: ���Z=UT\F�ɢ��x���#0w��Y��P�l�
 Holder name after decryption: John Smith
 Account reloaded. Holder name is correctly decrypted: 'John Smith'
+```
+
+Finally, let's simulate a GDPR "right to be forgotten" request. We'll "delete" the key and create a new repository with a new transformer using a different key. Attempting to load the aggregate will now fail because the data cannot be decrypted.
+
+```go
+	fmt.Println("!!!! Simulating GDPR request: Deleting the encryption key. !!!!")
+
+	deletedKey := []byte("a-very-deleted-key-1234567891234")
+	cryptoTransformer = account.NewCryptoTransformer(deletedKey)
+
+	forgottenRepo, _ := chronicle.NewEventSourcedRepository(
+		memoryEventLog,
+		account.NewEmpty,
+		[]event.Transformer[account.AccountEvent]{cryptoTransformer},
+	)
+	_, err = forgottenRepo.Get(context.Background(), accID)
+	if err != nil {
+		fmt.Printf("Success! The data is unreadable. Error: %v\n", err)
+	}
+```
+
+Running the example again prints:
+```go
+❯ go run examples/4_transformers_crypto/main.go
+Received "accountOpened" event
+Holder name after encryption and encoding: +hWTqlo9VQBUXBJGFsfJouv5eL3PziMwd+gWhVkbtYbaH1CDbLw=
+Account for 'John Smith' saved successfully.
+Holder name before decoding: +hWTqlo9VQBUXBJGFsfJouv5eL3PziMwd+gWhVkbtYbaH1CDbLw=
+Holder name before decryption: ���Z=UT\F�ɢ��x���#0w��Y��P�l�
+Holder name after decryption: John Smith
+Account reloaded. Holder name is correctly decrypted: 'John Smith'
+
+!!!! Simulating GDPR request: Deleting the encryption key. !!!!
+Holder name before decoding: +hWTqlo9VQBUXBJGFsfJouv5eL3PziMwd+gWhVkbtYbaH1CDbLw=
+Holder name before decryption: ���Z=UT\F�ɢ��x���#0w��Y��P�l�
+Success! The data is unreadable. Error: repo get version 0: read and load from store: load from records: read transform for event "account/opened" (version 1) failed: failed to decrypt holder name: cipher: message authentication failed
 ```
