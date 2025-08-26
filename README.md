@@ -1751,4 +1751,4 @@ Other resources for my event sourcing journey in no particular order:
 - https://zitadel.com/docs/concepts/architecture/software
 	- https://zitadel.com/docs/concepts/eventstore/implementation
 
-I found that none of them were as flexible as I liked - a lot of them were only tied to specific storage (like postgres) or were **very** cumbersome to read (talking mostly about the java/dotnet ones here).
+I found that none of them were as flexible as I'd like - a lot of them were only tied to specific storage (like postgres) or were **very** cumbersome to read (talking mostly about the java/dotnet ones here).
