@@ -520,7 +520,7 @@ Reasons **NOT** to use event sourcing:
 - **Some constraints are harder to enforce.**
     - e.g. requiring unique usernames, see TODO
 - **Data deletion and privacy require complex workarounds.**
-    - e.g. the event log being immutable makes it hard to implement GDPR compliance, requiring things like crypto shedding, see [crypto-shedding](./README.md#example-crypto-shedding-for-gdpr)
+    - e.g. the event log being immutable makes it hard to implement GDPR compliance, requiring things like crypto shedding, see [crypto shedding.](https://github.com/DeluxeOwl/chronicle?tab=readme-ov-file#example-crypto-shedding-for-gdpr)
 - **It has a high learning curve.** Most developers are not familiar with this pattern.
     - Forcing it on an unprepared team can lead to slower development and team friction.
 - **You cannot directly query the current state;** you must build and rely on projections for all queries.
