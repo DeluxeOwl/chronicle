@@ -21,6 +21,11 @@
 	- [Pluggable Implementations](#pluggable-implementations)
 	- [Package Dependencies](#package-dependencies)
 	- [Testing](#testing)
+- [Implementing a custom `event.Log`](#implementing-a-custom-eventlog)
+	- [The `event.Reader` interface](#the-eventreader-interface)
+	- [The `event.Appender` interface](#the-eventappender-interface)
+	- [Global Event Log (the `event.GlobalReader` interface)](#global-event-log-the-eventglobalreader-interface)
+	- [Transactional Event Log](#transactional-event-log)
 
 
 ## Quickstart
@@ -1344,3 +1349,162 @@ This framework uses `go:generate` with the [`moq`](https://github.com/matryer/mo
 // in aggregate/repository.go
 //go:generate go run github.com/matryer/moq@latest -pkg aggregate_test -skip-ensure -rm -out repository_mock_test.go . Repository
 ```
+
+## Implementing a custom `event.Log`
+
+This framework is designed to be storage-agnostic. You can create your own to work with any database or storage system by implementing some interfaces from the `event` package.  
+
+I recommend taking a look at the [./eventlog/postgres.go](./eventlog/postgres.go) and [./eventlog/sqlite.go](./eventlog/sqlite.go) implementations as a reference.
+
+The core of any event log is the `event.Log` interface, which is a combination of two smaller interfaces: `event.Reader` and `event.Appender`.
+
+```go
+package event
+
+type Log interface {
+	Reader
+	Appender
+}
+```
+
+### The `event.Reader` interface
+The `Reader` is responsible for fetching an aggregate's event history. Its `ReadEvents` method takes an aggregate's `LogID` and a `version.Selector` and returns an `event.Records` iterator. 
+
+An sql implementation is usually a db query.
+
+```go
+// A SQL-based implementation might look like this:
+SELECT version, event_name, data
+FROM my_events_table
+WHERE log_id = ? AND version >= ?
+ORDER BY version ASC;
+```
+
+`ReadEvents` returns an iterator, which plays really well with how `database/sql` expects you to read rows:
+```go
+for rows.Next() {
+	// ...
+	if err := rows.Scan(...) {
+		// ...
+	}
+	if !yield(record, nil) {
+		// ...
+	}
+}
+```
+
+### The `event.Appender` interface
+
+The `Appender` interface is responsible for writing new events, and its implementation is critical for correctness.
+
+```go
+type Appender interface {
+	AppendEvents(
+		ctx context.Context,
+		id LogID,
+		expected version.Check,
+		events RawEvents,
+	) (version.Version, error)
+}
+```
+
+The most important rule for `AppendEvents` is that the entire operation must be **atomic**. 
+
+Checking the expected version and inserting new events either happens together or not at all.
+
+The `AppendEvents` method receives `event.RawEvents`, which is a slice of events that have already been serialized into bytes. Your job is to persist them.
+
+The overall structure of an `AppendEvents` implementation is nearly identical across different databases. Example for SQL databases:
+
+1. **Start a transaction.**
+2. **Get the current version.** Within the transaction, query the database for the highest `version` for the given `log_id`. If no events exist, the current version is `0`.
+3. **Perform the concurrency check.** Compare the `actual` version from the database with the `expected` version from the `version.Check` parameter.
+4. **Handle conflicts.** If the versions do not match, you must immediately abort the transaction and return a `version.ConflictError`. The `eventlog.parseConflictError` helper can help if you make your database trigger or check constraint produce a specific error message.
+    ```go
+    if actualVersion != expectedVersion {
+        return version.Zero, version.NewConflictError(expectedVersion, actualVersion)
+    }
+    ```
+5. **Prepare records for insertion.** If the check passes, use the `events.ToRecords` helper function. It takes the incoming `RawEvents` and the current version, and it returns a slice of `*event.Record` structs with the correct, incrementing version numbers assigned.
+    ```go
+    // If actual version is 5, these records will be for versions 6, 7, ...
+    recordsToInsert := events.ToRecords(id, actualVersion)
+    ```
+6. **Insert the new records.** Loop through the slice returned by `ToRecords` and insert each `*event.Record` into your events table. A record has the following exported methods available:
+   ```go
+	// EventName returns the name of the event from the record.
+	func (re *Record) EventName() string
+
+	// Data returns the serialized event payload from the record.
+	func (re *Record) Data() []byte
+
+	// LogID returns the identifier of the event stream this record belongs to.
+	func (re *Record) LogID() LogID
+
+	// Version returns the sequential version of this event within its log stream.
+	func (re *Record) Version() version.Version
+   ```
+   Note: If your users must follow a specific schema, like [cloudevents](https://cloudevents.io/), you need to enforce it at the serializer (see the `serde` package) and at the events level (maybe by having a "base" event type). Then you can work with the `[]byte` however you want.
+7. **Commit the transaction.**
+8. **Return the new version.** The new version will be `actualVersion` plus the number of events you just inserted.
+	```go
+	newStreamVersion := version.Version(exp) + version.Version(len(events))
+	```
+
+### Global Event Log (the `event.GlobalReader` interface)
+
+For building system-wide projections, you can implement the `event.GlobalLog` interface, which adds `GlobalReader`.
+
+```go
+type GlobalReader interface {
+	ReadAllEvents(ctx context.Context, globalSelector version.Selector) GlobalRecords
+}
+```
+
+To support this, your backing store needs to be able to assign a globally monotonic id (like `global_version BIGINT GENERATED ALWAYS AS IDENTITY` in postgres). 
+
+This is cumbersome and not recommended for stores like kafka which don't have a globally ordered log. This is a tradeoff you must be aware of.
+
+You save this global ID along with the other event data. The `ReadAllEvents` implementation can then simply query the table ordered by this key. 
+
+The returned `GlobalRecords` is the same as normal `Records` but each event has an additional `func (gr *GlobalRecord) GlobalVersion() version.Version` method.
+
+### Transactional Event Log
+
+The framework supports atomically saving events and updating read models or an outbox table within the same transaction. To enable this for your custom log, you need to implement two additional interfaces: `event.Transactor` and `event.TransactionalLog`.
+
+`Transactor`'s job is to manage the transaction lifecycle. For a standard SQL database, this is straightforward.
+
+```go
+// Example skeleton for a SQL-based Transactor
+func (m *MySQLEventLog) WithinTx(ctx context.Context, fn func(ctx context.Context, tx *sql.Tx) error) error {
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err // Failed to start transaction
+	}
+	defer tx.Rollback() // Rollback is a no-op if the transaction is committed
+
+	if err := fn(ctx, tx); err != nil {
+		return err // The function failed, so we'll rollback
+	}
+
+	return tx.Commit() // Success
+}
+```
+
+The `TransactionalLog` interface provides a version of `AppendEvents` that works with an existing transaction handle instead of creating a new one.
+
+```go
+type TransactionalLog[TX any] interface {
+	AppendInTx(
+		ctx context.Context,
+		tx TX, // The transaction handle
+		id LogID,
+		expected version.Check,
+		events RawEvents,
+	) (version.Version, []*event.Record, error)
+	Reader // A transactional log must also be a reader
+}
+```
+
+The logic inside `AppendInTx` is identical to the `AppendEvents` flow described above, except it uses the provided transaction handle (`tx TX`) instead of creating a new one. You can look at `eventlog/postgres.go` or `eventlog/sqlite.go` for concrete examples.
