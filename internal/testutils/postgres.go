@@ -1,6 +1,7 @@
 package testutils
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"testing"
@@ -14,9 +15,9 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-func SetupPostgres(t *testing.T) (*sql.DB, func()) {
+func SetupPostgres(t testing.TB) (*sql.DB, func()) {
 	t.Helper()
-	ctx := t.Context()
+	ctx := context.Background()
 
 	user := "user"
 	password := "password"
