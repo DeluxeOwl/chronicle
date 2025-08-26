@@ -39,6 +39,10 @@ tasks:
     cmds:
       - go test -v -count=1 ./...
 
+  bench-eventlogs:
+    cmds:
+      - go test ./eventlog -bench=. -benchmem -run=^$ ./...
+
   llm-copy:
     desc: Copies the go files for LLMs. Uses pbcopy (mac only).
     cmds:
