@@ -16,6 +16,11 @@
 - [Event transformers](#event-transformers)
 	- [Example: Crypto shedding for GDPR](#example-crypto-shedding-for-gdpr)
 	- [Global Transformers with `AnyTransformerToTyped`](#global-transformers-with-anytransformertotyped)
+- [How the codebase is structured](#how-the-codebase-is-structured)
+	- [Core Packages](#core-packages)
+	- [Pluggable Implementations](#pluggable-implementations)
+	- [Package Dependencies](#package-dependencies)
+	- [Testing](#testing)
 
 
 ## Quickstart
@@ -1260,4 +1265,82 @@ Here is how you would use both our specific `CryptoTransformer` and our global `
 			event.AnyTransformerToTyped[account.AccountEvent](loggingTransformer),
 		},
 	)
+```
+
+## How the codebase is structured
+
+### Core Packages
+
+These packages define the core abstractions and contracts of the framework.
+
+* `chronicle`: The top level package re-exports the repositories and event registries for ease of use.
+* `aggregate/`: Contains the building blocks for your domain models, like `aggregate.Base` and `aggregate.Root`. It also provides the main `Repository` interfaces for loading and saving your aggregates.
+* `event/`: This package defines the contracts (interfaces) for fundamental concepts. It includes `event.Any` (the base for all events), `event.Log` (the interface for any event store), and `event.Registry`.
+* `version/`: This package defines `version.Version` and the `version.ConflictError` that is returned on write conflicts.
+* `serde/`: This package (serde = **ser**ializer/**de**serializer) provides the interface and default JSON implementation for converting your event structs into a storable format and back again.
+* `examples/`: This package contains the examples from this README.
+
+### Pluggable Implementations
+
+These packages provide concrete implementations for the interfaces defined in the core packages. You can choose the ones that exist or create your own.
+
+* `eventlog`: Contains implementations of the `event.Log` interface. The framework ships with several ready to use:
+    * `eventlog.NewMemory()`
+    * `eventlog.NewSqlite(...)`
+    * `eventlog.NewPostgres(...)`
+    * `eventlog.NewPebble(...)`
+* `snapshotstore`: Contains implementations of the `aggregate.SnapshotStore` interface.
+    * `snapshotstore.NewMemoryStore(...)`
+    * `snapshotstore.NewPostgresStore(...)`
+
+### Package Dependencies
+
+The dependencies are structured to flow from high level abstractions down to low level details. Your application code depends on `aggregate` or `chronicle` (which re-exports stuff from `aggregate`), which in turn depends on the `event` contracts. The concrete `eventlog` implementations satisfy these contracts.
+
+This design means your domain logic (the aggregate) is completely decoupled from the persistence mechanism (the database).
+
+A simplified view of the dependency flow looks like this:
+
+```
+  Your Application Code (e.g., account.Account)
+              │
+              ▼
+┌───────────────────────────┐
+│     aggregate/chronicle   │ (Repository, Root, Base, Snapshotter)
+└─────────────┬─────────────┘
+              │
+              ▼
+┌───────────────────────────┐
+│           event           │ (Log, Any, Registry, Transformer)
+└─────────────┬─────────────┘
+              │
+              ▼
+┌───────────────────────────┐
+│          version          │ (Version, ConflictError)
+└───────────────────────────┘
+```
+
+The `eventlog` and `snapshotstore` packages implement interfaces from `event` and `aggregate`:
+
+```
+┌───────────────────────┐         ┌───────────────────────────┐
+│ eventlog.Postgres     ├────implements───▶ event.Log        │
+└───────────────────────┘         └───────────────────────────┘
+
+┌───────────────────────┐         ┌─────────────────────────────────┐
+│ snapshotstore.Postgres├────implements──▶ aggregate.SnapshotStore │
+└───────────────────────┘         └─────────────────────────────────┘
+```
+
+### Testing
+
+The event logs are tested all at once (since they satisfy the same interface) in [./eventlog/eventlog_test.go](./eventlog/eventlog_test.go).
+
+A sample aggregate is used for testing in [./aggregate/aggregate_test.go](./aggregate/aggregate_test.go).
+
+This framework uses `go:generate` with the [`moq`](https://github.com/matryer/moq) library to create mock implementations of the core interfaces. You can see this in files like [./aggregate/repository.go](./aggregate/repository.go).
+
+```go
+// in aggregate/repository.go
+//go:generate go run github.com/matryer/moq@latest -pkg aggregate_test -skip-ensure -rm -out repository_mock_test.go . Repository
 ```
