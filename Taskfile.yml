@@ -2,7 +2,7 @@ version: "3"
 
 tasks:
   check-if-in-devbox:
-    desc: Checks if the user is in a devbox shell
+    desc: Checks if the user is in a devbox shell - used in lefthook
     silent: true
     cmds:
       - |
@@ -20,7 +20,7 @@ tasks:
       - golangci-lint run
 
   gen:
-    desc: Generates go code.
+    desc: Runs the code generation - mostly for moq
     cmds:
       - go generate ./...
 
@@ -30,10 +30,12 @@ tasks:
       - go run github.com/dkorunic/betteralign/cmd/betteralign@latest -apply ./...
 
   test:
+    desc: Runs all go tests
     cmds:
       - go test ./...
 
   test-no-cache:
+    desc: Runs all go tests without caching
     cmds:
       - go test -v -count=1 ./...
 
@@ -41,9 +43,3 @@ tasks:
     desc: Copies the go files for LLMs. Uses pbcopy (mac only).
     cmds:
       - yek README.md ./**/*.go --ignore-patterns "*_mock*" --ignore-patterns "*_test.go" | pbcopy
-
-  gen-diagrams:
-    desc: Generates the d2 gen-diagrams
-    dir: assets
-    cmds:
-      - for f in *.d2; do d2 "$f" "${f%.d2}.svg"; done

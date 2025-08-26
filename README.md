@@ -28,6 +28,10 @@
 	- [Transactional Event Log](#transactional-event-log)
 - [Implementing a custom `aggregate.Repository`](#implementing-a-custom-aggregaterepository)
 	- [Using an `aggregate.FusedRepo`](#using-an-aggregatefusedrepo)
+- [Contributing](#contributing)
+	- [Devbox](#devbox)
+	- [Automation](#automation)
+	- [Workflow](#workflow)
 
 
 ## Quickstart
@@ -1652,3 +1656,60 @@ loggingRepo := &aggregate.FusedRepo[...]{
     Saver:           &LoggingSaver[...]{saver: baseRepo},
 }
 ```
+
+## Contributing
+
+Contributions and feedback are more than welcome to `chronicle`.
+
+### Devbox
+This project uses Devbox (https://www.jetify.com/docs/devbox/quickstart/) to manage the dev environment - ensuring everyone who contributes has the same tooling and depndencies.
+
+See the [official installation instructions](https://www.jetify.com/docs/devbox/quickstart/).
+
+```
+git clone https://github.com/DeluxeOwl/chronicle
+cd chronicle
+
+devbox shell
+```
+
+This will automatically install and configure all required development tools:
+- Go 1.24
+- Go language server (gopls)
+- Linting tools (golangci-lint)
+- Code formatting (golines)
+- Task runner (go-task)
+- Git hooks (lefthook)
+- Commit linting (commitlint-rs) - using semantic commits
+- Code extraction tool (yek)
+
+### Automation
+We use https://taskfile.dev/ for automating various tasks:
+```
+task --list
+task: Available tasks for this project:
+* align-apply:              Runs struct alignment for efficiency.
+* check-if-in-devbox:       Checks if the user is in a devbox shell - used in lefthook
+* gen:                      Runs the code generation - mostly for moq
+* lint:                     Runs the linters and formatters
+* llm-copy:                 Copies the go files for LLMs. Uses pbcopy (mac only).
+* test:                     Runs all go tests
+* test-no-cache:            Runs all go tests without caching
+```
+
+### Workflow
+
+1. Always work in a devbox shell
+```
+devbox shell
+```
+
+2. After making changes:
+```
+task lint
+task test
+```
+
+3. Before commiting
+- git hooks (via `lefthook`) run some checks automatically
+- commits must follow conventional commit format (enforced by `commitlint-rs`)

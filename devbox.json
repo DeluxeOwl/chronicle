@@ -8,8 +8,7 @@
     "commitlint-rs@latest",
     "go@1.24",
     "lefthook@latest",
-    "yek@latest",
-    "d2@latest"
+    "yek@latest"
   ],
   "shell": {
     "init_hook": [
