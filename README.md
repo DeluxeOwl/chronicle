@@ -17,11 +17,6 @@
 - [Event transformers](#event-transformers)
 	- [Example: Crypto shedding for GDPR](#example-crypto-shedding-for-gdpr)
 	- [Global Transformers with `AnyTransformerToTyped`](#global-transformers-with-anytransformertotyped)
-- [How the codebase is structured](#how-the-codebase-is-structured)
-	- [Core Packages](#core-packages)
-	- [Pluggable Implementations](#pluggable-implementations)
-	- [Package Dependencies](#package-dependencies)
-	- [Testing](#testing)
 - [Implementing a custom `event.Log`](#implementing-a-custom-eventlog)
 	- [The `event.Reader` interface](#the-eventreader-interface)
 	- [The `event.Appender` interface](#the-eventappender-interface)
@@ -33,8 +28,13 @@
 	- [Devbox](#devbox)
 	- [Automation](#automation)
 	- [Workflow](#workflow)
-- [Acknowledgements](#acknowledgements)
+- [How the codebase is structured](#how-the-codebase-is-structured)
+	- [Core Packages](#core-packages)
+	- [Pluggable Implementations](#pluggable-implementations)
+	- [Package Dependencies](#package-dependencies)
+	- [Testing](#testing)
 - [Benchmarks](#benchmarks)
+- [Acknowledgements](#acknowledgements)
 
 
 ## Quickstart
@@ -520,7 +520,7 @@ Reasons **NOT** to use event sourcing:
 - **Some constraints are harder to enforce.**
     - e.g. requiring unique usernames, see TODO
 - **Data deletion and privacy require complex workarounds.**
-    - e.g. the event log being immutable makes it hard to implement GDPR compliance, requiring things like crypto shedding, see TODO
+    - e.g. the event log being immutable makes it hard to implement GDPR compliance, requiring things like crypto shedding, see [crypto-shedding](./README.md#example-crypto-shedding-for-gdpr)
 - **It has a high learning curve.** Most developers are not familiar with this pattern.
     - Forcing it on an unprepared team can lead to slower development and team friction.
 - **You cannot directly query the current state;** you must build and rely on projections for all queries.
@@ -1282,84 +1282,6 @@ Here is how you would use both our specific `CryptoTransformer` and our global `
 	)
 ```
 
-## How the codebase is structured
-
-### Core Packages
-
-These packages define the core abstractions and contracts of the framework.
-
-* `chronicle`: The top level package re-exports the repositories and event registries for ease of use.
-* `aggregate/`: Contains the building blocks for your domain models, like `aggregate.Base` and `aggregate.Root`. It also provides the main `Repository` interfaces for loading and saving your aggregates.
-* `event/`: This package defines the contracts (interfaces) for fundamental concepts. It includes `event.Any` (the base for all events), `event.Log` (the interface for any event store), and `event.Registry`.
-* `version/`: This package defines `version.Version` and the `version.ConflictError` that is returned on write conflicts.
-* `serde/`: This package (serde = **ser**ializer/**de**serializer) provides the interface and default JSON implementation for converting your event structs into a storable format and back again.
-* `examples/`: This package contains the examples from this README.
-
-### Pluggable Implementations
-
-These packages provide concrete implementations for the interfaces defined in the core packages. You can choose the ones that exist or create your own.
-
-* `eventlog`: Contains implementations of the `event.Log` interface. The framework ships with several ready to use:
-    * `eventlog.NewMemory()`
-    * `eventlog.NewSqlite(...)`
-    * `eventlog.NewPostgres(...)`
-    * `eventlog.NewPebble(...)`
-* `snapshotstore`: Contains implementations of the `aggregate.SnapshotStore` interface.
-    * `snapshotstore.NewMemoryStore(...)`
-    * `snapshotstore.NewPostgresStore(...)`
-
-### Package Dependencies
-
-The dependencies are structured to flow from high level abstractions down to low level details. Your application code depends on `aggregate` or `chronicle` (which re-exports stuff from `aggregate`), which in turn depends on the `event` contracts. The concrete `eventlog` implementations satisfy these contracts.
-
-This design means your domain logic (the aggregate) is completely decoupled from the persistence mechanism (the database).
-
-A simplified view of the dependency flow looks like this:
-
-```
-  Your Application Code (e.g., account.Account)
-              │
-              ▼
-┌───────────────────────────┐
-│     aggregate/chronicle   │ (Repository, Root, Base, Snapshotter)
-└─────────────┬─────────────┘
-              │
-              ▼
-┌───────────────────────────┐
-│           event           │ (Log, Any, Registry, Transformer)
-└─────────────┬─────────────┘
-              │
-              ▼
-┌───────────────────────────┐
-│          version          │ (Version, ConflictError)
-└───────────────────────────┘
-```
-
-The `eventlog` and `snapshotstore` packages implement interfaces from `event` and `aggregate`:
-
-```
-┌───────────────────────┐         ┌───────────────────────────┐
-│ eventlog.Postgres     ├────implements───▶ event.Log        │
-└───────────────────────┘         └───────────────────────────┘
-
-┌───────────────────────┐         ┌─────────────────────────────────┐
-│ snapshotstore.Postgres├────implements──▶ aggregate.SnapshotStore │
-└───────────────────────┘         └─────────────────────────────────┘
-```
-
-### Testing
-
-The event logs are tested all at once (since they satisfy the same interface) in [./eventlog/eventlog_test.go](./eventlog/eventlog_test.go).
-
-A sample aggregate is used for testing in [./aggregate/aggregate_test.go](./aggregate/aggregate_test.go).
-
-This framework uses `go:generate` with the [`moq`](https://github.com/matryer/moq) library to create mock implementations of the core interfaces. You can see this in files like [./aggregate/repository.go](./aggregate/repository.go).
-
-```go
-// in aggregate/repository.go
-//go:generate go run github.com/matryer/moq@latest -pkg aggregate_test -skip-ensure -rm -out repository_mock_test.go . Repository
-```
-
 ## Implementing a custom `event.Log`
 
 This framework is designed to be storage-agnostic. You can create your own to work with any database or storage system by implementing some interfaces from the `event` package.  
@@ -1718,43 +1640,83 @@ task test
 - git hooks (via `lefthook`) run some checks automatically
 - commits must follow conventional commit format (enforced by `commitlint-rs`)
 
-## Acknowledgements
+## How the codebase is structured
 
-I took a lot of inspiration from the following repos:
-- https://github.com/get-eventually/go-eventually - many thanks to this one
-- https://github.com/eugene-khyst/postgresql-event-sourcing
-- https://github.com/hallgren/eventsourcing
-	- https://github.com/hallgren/wtf
-- https://github.com/thefabric-io/eventsourcing
-	- https://github.com/thefabric-io/eventsourcing.example
+### Core Packages
 
-Other resources for my event sourcing journey in no particular order:
-- https://threedots.tech
-- [Every System is a Log: Avoiding coordination in distributed applications](https://news.ycombinator.com/item?id=42813049)
-- Implementing Domain-driven Design by Vaughn Vernon
-- https://khalilstemmler.com/articles/categories/domain-driven-design/
-- https://blog.devgenius.io/go-golang-clean-architecture-repositories-vs-transactions-9b3b7c953463
-- [Martin Fowler - Modularizing react apps](https://martinfowler.com/articles/modularizing-react-apps.html) - yes I also write a lot of react typescript
-- https://refactoring.com/catalog/replaceConditionalWithPolymorphism.html
-- https://watermill.io/advanced/forwarder/
-- https://github.com/Sairyss/domain-driven-hexagon
-- https://martendb.io/introduction.html
-- https://getakka.net/articles/persistence/event-sourcing.html
-- https://github.com/oskardudycz/EventSourcing.NetCore
-	- https://domaincentric.net/blog/event-sourcing-projections
-	- https://event-driven.io/en/dealing_with_eventual_consistency_and_idempotency_in_mongodb_projections
-		- https://event-driven.io/en/projections_and_read_models_in_event_driven_architecture/
-- https://github.com/AxonFramework/AxonFramework
-- https://occurrent.org/
-- https://dewdrop.events/
-- https://docs.kurrent.io/getting-started/features.html
-	- https://docs.kurrent.io/getting-started/concepts.html#event-stream
-	- https://docs.kurrent.io/server/v25.0/features/projections/
-- https://github.com/eugene-khyst/postgresql-event-sourcing
-- https://zitadel.com/docs/concepts/architecture/software
-	- https://zitadel.com/docs/concepts/eventstore/implementation
+These packages define the core abstractions and contracts of the framework.
 
-I found that none of them were as flexible as I'd like - a lot of them were only tied to specific storage (like postgres) or were **very** cumbersome to read (talking mostly about the java/dotnet ones here).
+* `chronicle`: The top level package re-exports the repositories and event registries for ease of use.
+* `aggregate/`: Contains the building blocks for your domain models, like `aggregate.Base` and `aggregate.Root`. It also provides the main `Repository` interfaces for loading and saving your aggregates.
+* `event/`: This package defines the contracts (interfaces) for fundamental concepts. It includes `event.Any` (the base for all events), `event.Log` (the interface for any event store), and `event.Registry`.
+* `version/`: This package defines `version.Version` and the `version.ConflictError` that is returned on write conflicts.
+* `serde/`: This package (serde = **ser**ializer/**de**serializer) provides the interface and default JSON implementation for converting your event structs into a storable format and back again.
+* `examples/`: This package contains the examples from this README.
+
+### Pluggable Implementations
+
+These packages provide concrete implementations for the interfaces defined in the core packages. You can choose the ones that exist or create your own.
+
+* `eventlog`: Contains implementations of the `event.Log` interface. The framework ships with several ready to use:
+    * `eventlog.NewMemory()`
+    * `eventlog.NewSqlite(...)`
+    * `eventlog.NewPostgres(...)`
+    * `eventlog.NewPebble(...)`
+* `snapshotstore`: Contains implementations of the `aggregate.SnapshotStore` interface.
+    * `snapshotstore.NewMemoryStore(...)`
+    * `snapshotstore.NewPostgresStore(...)`
+
+### Package Dependencies
+
+The dependencies are structured to flow from high level abstractions down to low level details. Your application code depends on `aggregate` or `chronicle` (which re-exports stuff from `aggregate`), which in turn depends on the `event` contracts. The concrete `eventlog` implementations satisfy these contracts.
+
+This design means your domain logic (the aggregate) is completely decoupled from the persistence mechanism (the database).
+
+A simplified view of the dependency flow looks like this:
+
+```
+  Your Application Code (e.g., account.Account)
+              │
+              ▼
+┌───────────────────────────┐
+│     aggregate/chronicle   │ (Repository, Root, Base, Snapshotter)
+└─────────────┬─────────────┘
+              │
+              ▼
+┌───────────────────────────┐
+│           event           │ (Log, Any, Registry, Transformer)
+└─────────────┬─────────────┘
+              │
+              ▼
+┌───────────────────────────┐
+│          version          │ (Version, ConflictError)
+└───────────────────────────┘
+```
+
+The `eventlog` and `snapshotstore` packages implement interfaces from `event` and `aggregate`:
+
+```
+┌───────────────────────┐         ┌───────────────────────────┐
+│ eventlog.Postgres     ├────implements───▶ event.Log        │
+└───────────────────────┘         └───────────────────────────┘
+
+┌───────────────────────┐         ┌─────────────────────────────────┐
+│ snapshotstore.Postgres├────implements──▶ aggregate.SnapshotStore │
+└───────────────────────┘         └─────────────────────────────────┘
+```
+
+### Testing
+
+The event logs are tested all at once (since they satisfy the same interface) in [./eventlog/eventlog_test.go](./eventlog/eventlog_test.go).
+
+A sample aggregate is used for testing in [./aggregate/aggregate_test.go](./aggregate/aggregate_test.go).
+
+This framework uses `go:generate` with the [`moq`](https://github.com/matryer/moq) library to create mock implementations of the core interfaces. You can see this in files like [./aggregate/repository.go](./aggregate/repository.go).
+
+```go
+// in aggregate/repository.go
+//go:generate go run github.com/matryer/moq@latest -pkg aggregate_test -skip-ensure -rm -out repository_mock_test.go . Repository
+```
 
 ## Benchmarks
 
@@ -1817,3 +1779,41 @@ BenchmarkReadAllEvents/Total10000_Events/pebble-12           124           90215
 BenchmarkReadAllEvents/Total10000_Events/sqlite-12            57          21337020 ns/op         5088790 B/op     186170 allocs/op
 BenchmarkReadAllEvents/Total10000_Events/postgres-12         198           6017864 ns/op         3489125 B/op     166171 allocs/op
 ```
+
+## Acknowledgements
+
+I took a lot of inspiration from the following repos:
+- https://github.com/get-eventually/go-eventually - many thanks to this one
+- https://github.com/eugene-khyst/postgresql-event-sourcing
+- https://github.com/hallgren/eventsourcing
+	- https://github.com/hallgren/wtf
+- https://github.com/thefabric-io/eventsourcing
+	- https://github.com/thefabric-io/eventsourcing.example
+
+Other resources for my event sourcing journey in no particular order:
+- https://threedots.tech
+- [Every System is a Log: Avoiding coordination in distributed applications](https://news.ycombinator.com/item?id=42813049)
+- Implementing Domain-driven Design by Vaughn Vernon
+- https://khalilstemmler.com/articles/categories/domain-driven-design/
+- https://blog.devgenius.io/go-golang-clean-architecture-repositories-vs-transactions-9b3b7c953463
+- [Martin Fowler - Modularizing react apps](https://martinfowler.com/articles/modularizing-react-apps.html) - yes I also write a lot of react typescript
+- https://refactoring.com/catalog/replaceConditionalWithPolymorphism.html
+- https://watermill.io/advanced/forwarder/
+- https://github.com/Sairyss/domain-driven-hexagon
+- https://martendb.io/introduction.html
+- https://getakka.net/articles/persistence/event-sourcing.html
+- https://github.com/oskardudycz/EventSourcing.NetCore
+	- https://domaincentric.net/blog/event-sourcing-projections
+	- https://event-driven.io/en/dealing_with_eventual_consistency_and_idempotency_in_mongodb_projections
+		- https://event-driven.io/en/projections_and_read_models_in_event_driven_architecture/
+- https://github.com/AxonFramework/AxonFramework
+- https://occurrent.org/
+- https://dewdrop.events/
+- https://docs.kurrent.io/getting-started/features.html
+	- https://docs.kurrent.io/getting-started/concepts.html#event-stream
+	- https://docs.kurrent.io/server/v25.0/features/projections/
+- https://github.com/eugene-khyst/postgresql-event-sourcing
+- https://zitadel.com/docs/concepts/architecture/software
+	- https://zitadel.com/docs/concepts/eventstore/implementation
+
+I found that none of them were as flexible as I'd like - a lot of them were only tied to specific storage (like postgres) or were **very** cumbersome to read (talking mostly about the java/dotnet ones here).
