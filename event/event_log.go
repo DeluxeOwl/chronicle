@@ -28,7 +28,7 @@ type Reader interface {
 	ReadEvents(ctx context.Context, id LogID, selector version.Selector) Records
 }
 
-// Appender is responsible for writing new events to an aggregate's log.
+// Appender is responsible for writing new events to an aggregate's log atomically.
 // It uses an optimistic concurrency check via the `expected` version parameter to
 // prevent race conditions.
 //
