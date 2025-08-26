@@ -5,6 +5,7 @@
 - [Optimistic Concurrency \& Conflict Errors](#optimistic-concurrency--conflict-errors)
 	- [Handling conflict errors](#handling-conflict-errors)
 	- [Retry with backoff](#retry-with-backoff)
+	- [Custom retry](#custom-retry)
 	- [How is this different from SQL transactions?](#how-is-this-different-from-sql-transactions)
 	- [Will conflicts be a bottleneck?](#will-conflicts-be-a-bottleneck)
 - [Snapshots](#snapshots)
@@ -647,8 +648,9 @@ You can wrap the repository with `chronicle.NewEventSourcedRepositoryWithRetry`,
 	)
 ```
 
-<details>
-<summary>Example of wrapping a repository with a custom `Save` method with retries</summary>
+### Custom retry
+
+Example of wrapping a repository with a custom `Save` method with retries:
 
 ```go
 type SaveResult struct {
@@ -704,7 +706,7 @@ func (s *SaverWithRetry) Save(ctx context.Context, root *account.Account) (versi
 		},
 	}
 ```
-</details>
+
 
 ### How is this different from SQL transactions?
 
