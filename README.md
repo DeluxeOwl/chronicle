@@ -26,6 +26,8 @@
 	- [The `event.Appender` interface](#the-eventappender-interface)
 	- [Global Event Log (the `event.GlobalReader` interface)](#global-event-log-the-eventglobalreader-interface)
 	- [Transactional Event Log](#transactional-event-log)
+- [Implementing a custom `aggregate.Repository`](#implementing-a-custom-aggregaterepository)
+	- [Using an `aggregate.FusedRepo`](#using-an-aggregatefusedrepo)
 
 
 ## Quickstart
@@ -1508,3 +1510,145 @@ type TransactionalLog[TX any] interface {
 ```
 
 The logic inside `AppendInTx` is identical to the `AppendEvents` flow described above, except it uses the provided transaction handle (`tx TX`) instead of creating a new one. You can look at `eventlog/postgres.go` or `eventlog/sqlite.go` for concrete examples.
+
+## Implementing a custom `aggregate.Repository`
+
+While `chronicle` provides ready to use repository implementations (`NewEventSourcedRepository`, `NewTransactionalRepository`, etc.), you might encounter scenarios where you need to build your own. 
+
+This could be to integrate with a different kind of storage, add custom caching, or implement specific transactional behavior not covered by the defaults.
+
+`chronicle` provides a set of reusable helper functions that handle the most complex parts of the event sourcing workflow. Implementing a repository is often just a matter of wiring these components together.
+
+First, you'll define your repository struct. It needs dependencies to function: an `event.Log` for storage, a factory function `createRoot` to instantiate your aggregate, an `event.Registry` to map event names to types, and a `serde.BinarySerde` for serialization.
+
+```go
+import (
+	"github.com/DeluxeOwl/chronicle/aggregate"
+	"github.com/DeluxeOwl/chronicle/event"
+	"github.com/DeluxeOwl/chronicle/serde"
+	// ...
+)
+
+type CustomRepository[TID ID, E event.Any, R Root[TID, E]] struct {
+	eventlog   event.Log
+	createRoot func() R
+	registry   event.Registry[E]
+	serde      serde.BinarySerde
+
+	// Optional: for encrypting, compressing, or upcasting events
+	transformers []event.Transformer[E]
+}
+```
+
+Next, you need a constructor. An optional step here is to **register the aggregate's events**. The repository must know how to deserialize event data from the log back into concrete Go types. 
+
+You can also tell your users to ensure that events are registered beforehand, but that is error-prone.
+
+This is done by calling `registry.RegisterEvents()`, which populates the registry using the `EventFuncs()` method on your aggregate.
+
+```go
+func NewCustomRepository[...](
+	eventLog event.Log,
+	createRoot func() R,
+	// ...
+) (*CustomRepository[...], error) {
+	repo := &CustomRepository[...]{
+		eventlog:   eventLog,
+		createRoot: createRoot,
+		registry:   event.NewRegistry[E](),
+		serde:      serde.NewJSONBinary(), // Default to JSON, you can also change this.
+	}
+
+	err := repo.registry.RegisterEvents(createRoot())
+	if err != nil {
+		return nil, fmt.Errorf("new custom repository: %w", err)
+	}
+
+	return repo, nil
+}
+```
+
+To implement the `Get` method for loading an aggregate, you can use the `aggregate.ReadAndLoadFromStore` helper. This function orchestrates the entire loading process: it queries the `event.Log`, then uses the registry and serde to deserialize and apply each event to a fresh aggregate instance.
+
+```go
+func (r *CustomRepository[...]) Get(ctx context.Context, id TID) (R, error) {
+	root := r.createRoot() // Create a new, empty aggregate instance.
+
+	// This helper does all the heavy lifting of loading.
+	err := aggregate.ReadAndLoadFromStore(
+		ctx,
+		root,
+		r.eventlog,
+		r.registry,
+		r.serde,
+		r.transformers,
+		id,
+		version.SelectFromBeginning, // Load all events
+	)
+	if err != nil {
+		var empty R // return zero value for the root
+		return empty, fmt.Errorf("custom repo get: %w", err)
+	}
+
+	return root, nil
+}
+```
+
+If you need more fine grained control over the loading process, you can look at the implementation of `ReadAndLoadFromStore`, which in turn uses `aggregate.LoadFromRecords`. 
+
+This lower level helper takes an iterator of `event.Record` instances and handles the core loop of deserializing event data, applying read-side transformers, and calling the aggregate's `Apply` method for each event.
+
+For the `Save` method, the framework provides the `aggregate.CommitEvents` helper. It handles flushing uncommitted events from the aggregate, applying write-side transformers, serializing the events, and appending them to the event log with the correct optimistic concurrency check.
+
+```go
+func (r *CustomRepository[...]) Save(
+	ctx context.Context,
+	root R,
+) (version.Version, aggregate.CommittedEvents[E], error) {
+	
+	// This helper handles flushing, transforming, serializing, and committing.
+	newVersion, committedEvents, err := aggregate.CommitEvents(
+		ctx,
+		r.eventlog,
+		r.serde,
+		r.transformers,
+		root,
+	)
+	if err != nil {
+		return version.Zero, nil, fmt.Errorf("custom repo save: %w", err)
+	}
+
+	return newVersion, committedEvents, nil
+}
+```
+
+### Using an `aggregate.FusedRepo`
+
+What if you only need to change one part of the repository's behavior, like `Save`, while keeping the default loading logic? For this, the framework provides `aggregate.FusedRepo`. 
+
+It is a convenience type that implements the `Repository` interface by composing its individual parts (`Getter`, `Saver`, `AggregateLoader`, etc.), making it perfect for creating decorators.
+
+For example, you could create a custom `Saver` that adds logging, and then "fuse" it with a standard repository's loading capabilities:
+
+```go
+// A custom Saver that adds logging before saving.
+type LoggingSaver[TID ID, E event.Any, R Root[TID, E]] struct {
+    // The "real" saver
+    saver aggregate.Saver[TID, E, R]
+}
+
+func (s *LoggingSaver[...]) Save(ctx context.Context, root R) (version.Version, aggregate.CommittedEvents[E], error) {
+    log.Printf("Attempting to save aggregate %s", root.ID())
+    return s.saver.Save(ctx, root)
+}
+
+baseRepo, _ := chronicle.NewEventSourcedRepository(...)
+
+// Create a new repository that uses the standard Get but our custom Save.
+loggingRepo := &aggregate.FusedRepo[...]{
+    AggregateLoader: baseRepo,
+    VersionedGetter: baseRepo,
+    Getter:          baseRepo,
+    Saver:           &LoggingSaver[...]{saver: baseRepo},
+}
+```
