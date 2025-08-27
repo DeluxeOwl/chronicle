@@ -2105,7 +2105,7 @@ And in our `accountv2.Open`:
 	// ...
 	// Print the events
 	for ev := range memoryEventLog.ReadAllEvents(ctx, version.SelectFromBeginning) {
-		fmt.Println(string(ev.Data()))
+		fmt.Println(ev.EventName() + " " + string(ev.Data()))
 	}
 ```
 
@@ -2114,8 +2114,9 @@ Running the example:
 go run examples/5_event_metadata/main.go
 
 Loaded account from snapshot. Version: 3
-Found snapshot: true: &{AccountID:snap-123 OpenedAt:2100-08-27 11:17:58.56522 +0300 EEST Balance:200 HolderName:John Smith AggregateVersion:3}
-{"eventID":"03bff835-4925-7af4-814d-834004f8e43f","occuredAt":"2100-08-27T11:17:58.565301+03:00","id":"snap-123","openedAt":"2100-08-27T11:17:58.56522+03:00","holderName":"John Smith"}
-{"eventID":"03bff835-4925-7af5-b26b-3eab8e01bf2c","occuredAt":"2100-08-27T11:17:58.565313+03:00","amount":100}
-{"eventID":"03bff835-4925-7af6-800f-ee4c5f662709","occuredAt":"2100-08-27T11:17:58.565314+03:00","amount":100}
+Found snapshot: true: &{AccountID:snap-123 OpenedAt:2100-08-27 11:20:56.239593 +0300 EEST Balance:200 HolderName:John Smith AggregateVersion:3}
+
+account/opened {"eventID":"03bff837-ff2f-7d26-a69e-1a75693570ab","occuredAt":"2100-08-27T11:20:56.239656+03:00","id":"snap-123","openedAt":"2100-08-27T11:20:56.239593+03:00","holderName":"John Smith"}
+account/money_deposited {"eventID":"03bff837-ff2f-7d27-a50b-a81c5f7a33eb","occuredAt":"2100-08-27T11:20:56.239665+03:00","amount":100}
+account/money_deposited {"eventID":"03bff837-ff2f-7d28-8c54-9594563b48b4","occuredAt":"2100-08-27T11:20:56.239666+03:00","amount":100}
 ```

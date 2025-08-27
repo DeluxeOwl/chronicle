@@ -71,15 +71,15 @@ func main() {
 		panic(err)
 	}
 
-	fmt.Printf("Loaded account from snapshot. Version: %d\n", reloadedAcc.Version())
+	fmt.Printf("\nLoaded account from snapshot. Version: %d\n", reloadedAcc.Version())
 
 	snap, found, err := accountSnapshotStore.GetSnapshot(ctx, accID)
 	if err != nil {
 		panic(err)
 	}
-	fmt.Printf("Found snapshot: %t: %+v\n", found, snap)
+	fmt.Printf("Found snapshot: %t: %+v\n\n", found, snap)
 
 	for ev := range memoryEventLog.ReadAllEvents(ctx, version.SelectFromBeginning) {
-		fmt.Println(string(ev.Data()))
+		fmt.Println(ev.EventName() + " " + string(ev.Data()))
 	}
 }
