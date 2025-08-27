@@ -36,6 +36,7 @@
 	- [Testing](#testing)
 - [Benchmarks](#benchmarks)
 - [Acknowledgements](#acknowledgements)
+- [Projections](#projections)
 
 
 ## Quickstart
@@ -2126,3 +2127,15 @@ Other resources for my event sourcing journey in no particular order:
 
 I found that none of them were as flexible as I'd like - a lot of them were only tied to specific storage (like postgres) or were **very** cumbersome to read (talking mostly about the java/dotnet ones here).
 
+## Projections
+
+- lots of ways to do projections, lib is not opinionated
+- projection using in memory pub sub (an interface)
+  - explain idempotency, at least once
+- explain outbox
+- example with sqlite
+- example with polling
+- immediate (in the same tx) vs eventual
+  - notify with refetch
+- example with keeping track of all ids (kafka has a native way to do this, materialized queries, select distinct etc.)
+- mention watermill
