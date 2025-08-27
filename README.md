@@ -1023,9 +1023,13 @@ type TimeProvider interface {
 	Now() time.Time
 }
 
-type RealTimeProvider struct{}
+var RealTimeProvider = sync.OnceValue(func() *realTimeProvider {
+	return &realTimeProvider{}
+})
 
-func (r *RealTimeProvider) Now() time.Time {
+type realTimeProvider struct{}
+
+func (r *realTimeProvider) Now() time.Time {
 	return time.Now()
 }
 ```

@@ -8,7 +8,7 @@ import (
 )
 
 func Test_NewMeta(t *testing.T) {
-	gen := shared.NewEventMetaGenerator(timeutils.NewRealTimeProvider())
+	gen := shared.NewEventMetaGenerator(timeutils.RealTimeProvider())
 	meta := gen.NewEventMeta()
 
 	t.Log(meta.EventID)
