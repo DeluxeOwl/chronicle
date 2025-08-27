@@ -17,6 +17,8 @@ type EventMetadata struct {
 	OccuredAt time.Time `json:"occuredAt"`
 }
 
+func (em *EventMetadata) isEventMeta() {}
+
 // We're getting the timestamp from the id
 // An easier way would be to return the OccuredAt field
 func (em *EventMetadata) Time() time.Time {
@@ -34,9 +36,7 @@ func (em *EventMetadata) Time() time.Time {
 	return time
 }
 
-func (em *EventMetadata) isEventMeta() {}
-
-func NewEventMetaCreator(provider timeutils.TimeProvider) *EventMetaGenerator {
+func NewEventMetaGenerator(provider timeutils.TimeProvider) *EventMetaGenerator {
 	return &EventMetaGenerator{
 		gen: func() EventMetadata {
 			now := provider.Now()

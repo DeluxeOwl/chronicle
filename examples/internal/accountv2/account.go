@@ -7,6 +7,8 @@ import (
 
 	"github.com/DeluxeOwl/chronicle/aggregate"
 	"github.com/DeluxeOwl/chronicle/event"
+	"github.com/DeluxeOwl/chronicle/examples/internal/shared"
+	"github.com/DeluxeOwl/chronicle/pkg/timeutils"
 )
 
 type AccountID string
@@ -21,6 +23,10 @@ type Account struct {
 	openedAt   time.Time
 	balance    int // we need to know how much money an account has
 	holderName string
+
+	// technical dependencies
+	timeProvider  timeutils.TimeProvider
+	metaGenerator *shared.EventMetaGenerator
 }
 
 func (a *Account) ID() AccountID {
@@ -30,11 +36,13 @@ func (a *Account) ID() AccountID {
 //sumtype:decl
 type AccountEvent interface {
 	event.Any
+	shared.EventMeta
 	isAccountEvent()
 }
 
 // We say an account is "opened", not "created"
 type accountOpened struct {
+	shared.EventMetadata
 	ID         AccountID `json:"id"`
 	OpenedAt   time.Time `json:"openedAt"`
 	HolderName string    `json:"holderName"`
@@ -44,6 +52,7 @@ func (*accountOpened) EventName() string { return "account/opened" }
 func (*accountOpened) isAccountEvent()   {}
 
 type moneyDeposited struct {
+	shared.EventMetadata
 	Amount int `json:"amount"` // Note: In a real-world application, you would use a dedicated money type instead of an int to avoid precision issues.
 }
 
@@ -52,6 +61,7 @@ func (*moneyDeposited) EventName() string { return "account/money_deposited" }
 func (*moneyDeposited) isAccountEvent()   {}
 
 type moneyWithdrawn struct {
+	shared.EventMetadata
 	Amount int `json:"amount"`
 }
 
@@ -84,22 +94,32 @@ func (a *Account) Apply(evt AccountEvent) error {
 	return nil
 }
 
-func NewEmpty() *Account {
-	return new(Account)
+func NewEmptyMaker(timeProvider timeutils.TimeProvider) func() *Account {
+	return func() *Account {
+		//nolint:exhaustruct // not needed.
+		return &Account{
+			timeProvider:  timeProvider,
+			metaGenerator: shared.NewEventMetaGenerator(timeProvider),
+		}
+	}
 }
 
-func Open(id AccountID, currentTime time.Time, holderName string) (*Account, error) {
+func Open(id AccountID, timeProvider timeutils.TimeProvider, holderName string) (*Account, error) {
+	makeEmptyAccount := NewEmptyMaker(timeProvider)
+	a := makeEmptyAccount()
+
+	currentTime := a.timeProvider.Now()
+
 	if currentTime.Weekday() == time.Sunday {
 		return nil, errors.New("sorry, you can't open an account on Sunday ¯\\_(ツ)_/¯")
 	}
 
-	a := NewEmpty()
-
 	// Note: this is type safe, you'll get autocomplete for the events
 	if err := a.recordThat(&accountOpened{
-		ID:         id,
-		OpenedAt:   currentTime,
-		HolderName: holderName,
+		ID:            id,
+		OpenedAt:      currentTime,
+		HolderName:    holderName,
+		EventMetadata: a.metaGenerator.NewEventMeta(),
 	}); err != nil {
 		return nil, fmt.Errorf("open account: %w", err)
 	}
@@ -117,7 +137,8 @@ func (a *Account) DepositMoney(amount int) error {
 	}
 
 	return a.recordThat(&moneyDeposited{
-		Amount: amount,
+		Amount:        amount,
+		EventMetadata: a.metaGenerator.NewEventMeta(),
 	})
 }
 
@@ -128,7 +149,8 @@ func (a *Account) WithdrawMoney(amount int) (int, error) {
 	}
 
 	err := a.recordThat(&moneyWithdrawn{
-		Amount: amount,
+		Amount:        amount,
+		EventMetadata: a.metaGenerator.NewEventMeta(),
 	})
 	if err != nil {
 		return 0, fmt.Errorf("error during withdrawal: %w", err)

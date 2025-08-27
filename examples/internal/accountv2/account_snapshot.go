@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/DeluxeOwl/chronicle/aggregate"
+	"github.com/DeluxeOwl/chronicle/pkg/timeutils"
 	"github.com/DeluxeOwl/chronicle/version"
 )
 
@@ -24,7 +25,9 @@ func (s *Snapshot) Version() version.Version {
 	return s.AggregateVersion
 }
 
-type Snapshotter struct{}
+type Snapshotter struct {
+	TimeProvider timeutils.TimeProvider
+}
 
 func (s *Snapshotter) ToSnapshot(acc *Account) (*Snapshot, error) {
 	return &Snapshot{
@@ -38,7 +41,7 @@ func (s *Snapshotter) ToSnapshot(acc *Account) (*Snapshot, error) {
 
 func (s *Snapshotter) FromSnapshot(snap *Snapshot) (*Account, error) {
 	// Recreate the aggregate from the snapshot's data
-	acc := NewEmpty()
+	acc := NewEmptyMaker(s.TimeProvider)()
 	acc.id = snap.ID()
 	acc.openedAt = snap.OpenedAt
 	acc.balance = snap.Balance
