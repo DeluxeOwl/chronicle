@@ -40,7 +40,7 @@
 ## Quickstart
 
 > [!WARNING]
-> I recommend going through the quickstart, since all examples use the `Account` struct from below.
+> I recommend going through the quickstart, since all examples use the `Account` struct used below from the `account` package.
 
 Install the library
 ```sh
@@ -379,6 +379,8 @@ version: 3
 
 You can find this example in [./examples/1_quickstart](./examples/1_quickstart).
 You can find the implementation of the account in [./examples/internal/account/account.go](./examples/internal/account/account.go).
+
+**Note:** you will see an additional `accountv2` package that is 95% identical to the `account` package + shared event metadata. You can ignore this package as most examples except TODO assume the `account` package.
 
 ## What is event sourcing?
 
