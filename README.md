@@ -2707,4 +2707,26 @@ I found that none of them were as flexible as I'd like - a lot of them were only
 
 ## Miscellaneous
 
-If you're interested in throwing the whole lib (without tests) into an LLM
+If you're interested in throwing the whole lib (without tests) into an LLM, use `devbox run -- task llm-copy`. It's about 75k tokens.
+
+```
+❯ scc .
+───────────────────────────────────────────────────────────────────────────────
+Language                 Files     Lines   Blanks  Comments     Code Complexity
+───────────────────────────────────────────────────────────────────────────────
+Go                          57      9482     1268      2053     6161        702
+YAML                         4       358       10         6      342          0
+JSON                         3        69        0         0       69          0
+BASH                         1         9        3         5        1          0
+License                      1        11        5         0        6          0
+Markdown                     1      2710      584         0     2126          0
+───────────────────────────────────────────────────────────────────────────────
+Total                       67     12639     1870      2064     8705        702
+───────────────────────────────────────────────────────────────────────────────
+Estimated Cost to Develop (organic) $262,030
+Estimated Schedule Effort (organic) 8.27 months
+Estimated People Required (organic) 2.82
+───────────────────────────────────────────────────────────────────────────────
+Processed 393255 bytes, 0.393 megabytes (SI)
+───────────────────────────────────────────────────────────────────────────────
+```
