@@ -39,11 +39,11 @@ func SqliteTableName(tableName string) SqliteOption {
 		s.qCreateTable = fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
 			global_version INTEGER PRIMARY KEY AUTOINCREMENT,
-			logID          TEXT    NOT NULL,
+			log_id          TEXT    NOT NULL,
 			version        INTEGER NOT NULL,
 			event_name     TEXT    NOT NULL,
 			data           BLOB,
-			UNIQUE (logID, version)
+			UNIQUE (log_id, version)
 		);`, tableName)
 
 		s.qCreateTrigger = fmt.Sprintf(`
@@ -52,24 +52,24 @@ func SqliteTableName(tableName string) SqliteOption {
         FOR EACH ROW
         BEGIN
             -- This custom message is key for our driver-agnostic error check.
-            SELECT RAISE(ABORT, '%s' || (SELECT COALESCE(MAX(version), 0) FROM %s WHERE logID = NEW.logID))
+            SELECT RAISE(ABORT, '%s' || (SELECT COALESCE(MAX(version), 0) FROM %s WHERE log_id = NEW.log_id))
             WHERE NEW.version != (
                 SELECT COALESCE(MAX(version), 0) + 1
                 FROM %s
-                WHERE logID = NEW.logID
+                WHERE log_id = NEW.log_id
             );
         END;`, tableName, conflictErrorPrefix, tableName, tableName)
 
 		s.qInsertEvent = fmt.Sprintf(
-			"INSERT INTO %s (logID, version, event_name, data) VALUES (?, ?, ?, ?)",
+			"INSERT INTO %s (log_id, version, event_name, data) VALUES (?, ?, ?, ?)",
 			tableName,
 		)
 		s.qReadEvents = fmt.Sprintf(
-			"SELECT version, event_name, data FROM %s WHERE logID = ? AND version >= ? ORDER BY version ASC",
+			"SELECT version, event_name, data FROM %s WHERE log_id = ? AND version >= ? ORDER BY version ASC",
 			tableName,
 		)
 		s.qReadAllEvents = fmt.Sprintf(
-			"SELECT global_version, version, logID, event_name, data FROM %s WHERE global_version >= ? ORDER BY global_version ASC",
+			"SELECT global_version, version, log_id, event_name, data FROM %s WHERE global_version >= ? ORDER BY global_version ASC",
 			tableName,
 		)
 	}
