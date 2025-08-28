@@ -1,10 +1,11 @@
 <div align="center">
-    <!-- <img alt="revenut" src="docs/assets/logo-128x128.png" width="128" height="128"> -->
+    <img alt="chronicle" src="assets/logo.png" width="128" height="128">
     <h1>Chronicle</h1>
 </div>
 
 <div align="center">
   <h3 align="center">A pragmatic and type-safe toolkit for <br/>modern event sourcing in Go.</h3>
+  <a href="mailto:andreisurugiu.tm@gmail.com"><i>Want to hire me?</i></a>
 </div>
 
 - [Quickstart](#quickstart)
