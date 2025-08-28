@@ -2704,6 +2704,7 @@ I found that none of them were as flexible as I'd like - a lot of them were only
   - idempotency helpers, dlq
 - ci/cd & more tests
 - observability
+- things like joins, maybe differential dataflow
 
 ## Miscellaneous
 
