@@ -2694,6 +2694,7 @@ I found that none of them were as flexible as I'd like - a lot of them were only
 - system wide constraints: like unique usernames
 - event deletion/compaction - or archiving
 - first class support for sagas/workflows (maybe a separate package)
+- jobs? that might be out of scope but could work as a separate project
 - event versioning + upcasting events
 	- MultiTransformer that extends Transformer -> upcast to multiple events
 - a projection package: subscribe to GLobalLog and manage state, checkpointing, replay, idempotency & retry
