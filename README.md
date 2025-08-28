@@ -1300,7 +1300,8 @@ type GlobalReader interface {
 }
 ```
 
-> [!IMPORTANT] This distinction exists because not all storage backends can efficiently provide a strict global ordering.
+> [!IMPORTANT] 
+> This distinction exists because not all storage backends can efficiently provide a strict global ordering.
 
 - **SQL Databases**: A database like PostgreSQL or SQLite can easily generate a global order using an `IDENTITY` or `AUTOINCREMENT` primary key on the events table. The provided SQL-based logs implement `event.GlobalLog`.
 - **Distributed Systems**: A distributed message queue like Apache Kafka guarantees strict ordering only _within a topic partition_. If each aggregate ID were mapped to a partition, you would have perfect per-aggregate order, but no simple, built-in global order. An event log built on kafka would likely only implement the base `event.Log` interface.
@@ -1331,7 +1332,8 @@ When you try to append an event, a trigger fires inside the database. It atomica
 
 If the versions don't line up, the database transaction itself fails and raises an exception, preventing race conditions.
 
-> [!NOTE] To ensure the framework can correctly identify a conflict regardless of the database driver used, the triggers are designed to raise a specific error message: `_chronicle_version_conflict: <actual_version>`. The framework parses this string to create a `version.ConflictError`, making the conflict driver agnostic.
+> [!NOTE] 
+> To ensure the framework can correctly identify a conflict regardless of the database driver used, the triggers are designed to raise a specific error message: `_chronicle_version_conflict: <actual_version>`. The framework parses this string to create a `version.ConflictError`, making the conflict driver agnostic.
 
 ### Snapshot stores
 
@@ -1469,7 +1471,8 @@ func main() {
 }
 ```
 
-> [!WARNING] In a real production system, you must manage encryption keys securely using a Key Management Service (KMS) like AWS KMS, Google Cloud KMS, HashiCorp Vault or OpenBao. The key should never be hardcoded. You'd also manage one encryption key per aggregate ideally, in our simple example, we're using a hardcoded key for all accounts.
+> [!WARNING] 
+> In a real production system, you must manage encryption keys securely using a Key Management Service (KMS) like AWS KMS, Google Cloud KMS, HashiCorp Vault or OpenBao. The key should never be hardcoded. You'd also manage one encryption key per aggregate ideally, in our simple example, we're using a hardcoded key for all accounts.
 
 Add the transformer:
 ```go
@@ -1827,7 +1830,8 @@ All events:
 
 ### Example with outbox
 
-> [!NOTE] For a production environment, take a look at https://watermill.io/advanced/forwarder/ .
+> [!NOTE] 
+> For a production environment, take a look at https://watermill.io/advanced/forwarder/ .
 
 While strongly-consistent projections (like the one above) are powerful, you often need to notify external systems about events that have occurred. This could involve publishing to a message broker like Kafka/RabbitMQ, calling a third-party webhook, or sending an email. 
 
@@ -2021,7 +2025,8 @@ As you can see, the outbox table was populated atomically when the aggregates we
 
 ### Types of projections
 
-> [!WARNING] Wall of text ahead 😴
+> [!WARNING] 
+> Wall of text ahead 😴
 
 There's a lot of projection types, choosing which fits you best requires some consideration
 
