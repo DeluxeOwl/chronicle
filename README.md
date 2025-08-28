@@ -2698,3 +2698,4 @@ I found that none of them were as flexible as I'd like - a lot of them were only
 - event versioning + upcasting events
 	- MultiTransformer that extends Transformer -> upcast to multiple events
 - a projection package: subscribe to GLobalLog and manage state, checkpointing, replay, idempotency & retry
+- ci/cd & more tests
