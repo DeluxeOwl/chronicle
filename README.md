@@ -1,12 +1,10 @@
 <div align="center">
-  <a href="https://github.com/DeluxeOwl/chronicle" style="color: black;">
     <!-- <img alt="revenut" src="docs/assets/logo-128x128.png" width="128" height="128"> -->
     <h1>Chronicle</h1>
-  </a>
 </div>
 
 <div align="center">
-  <h3 align="center">A pragmatic and type-safe toolkit for modern event sourcing in Go.</h3>
+  <h3 align="center">A pragmatic and type-safe toolkit for <br/>modern event sourcing in Go.</h3>
 </div>
 
 - [Quickstart](#quickstart)
