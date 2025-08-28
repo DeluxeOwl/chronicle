@@ -57,7 +57,8 @@
 	- [Testing](#testing)
 - [Benchmarks](#benchmarks)
 - [Acknowledgements](#acknowledgements)
-- [TODOs](#todos)
+- [TODOs \& day 2](#todos--day-2)
+- [Miscellaneous](#miscellaneous)
 
 
 ## Quickstart
@@ -2687,7 +2688,7 @@ Other resources for my event sourcing journey in no particular order:
 
 I found that none of them were as flexible as I'd like - a lot of them were only tied to specific storage (like postgres) or were **very** cumbersome to read (talking mostly about the java/dotnet ones here).
 
-## TODOs
+## TODOs & day 2
 
 - cqrs example
 - a "prod ready" sink with postgres, maybe with NATS
@@ -2698,4 +2699,12 @@ I found that none of them were as flexible as I'd like - a lot of them were only
 - event versioning + upcasting events
 	- MultiTransformer that extends Transformer -> upcast to multiple events
 - a projection package: subscribe to GLobalLog and manage state, checkpointing, replay, idempotency & retry
+  - lifecycle management
+  - parallel replay
+  - idempotency helpers, dlq
 - ci/cd & more tests
+- observability
+
+## Miscellaneous
+
+If you're interested in throwing the whole lib (without tests) into an LLM
