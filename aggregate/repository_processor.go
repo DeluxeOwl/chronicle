@@ -78,3 +78,29 @@ type TransactionalAggregateProcessor[TX any, TID ID, E event.Any, R Root[TID, E]
 	// rolled back, including the saving of the events. Returns nil on success.
 	Process(ctx context.Context, tx TX, root R, events CommittedEvents[E]) error
 }
+
+type ProcessorChain[TX any, TID ID, E event.Any, R Root[TID, E]] struct {
+	processors []TransactionalAggregateProcessor[TX, TID, E, R]
+}
+
+func NewProcessorChain[TX any, TID ID, E event.Any, R Root[TID, E]](
+	processors ...TransactionalAggregateProcessor[TX, TID, E, R],
+) ProcessorChain[TX, TID, E, R] {
+	return ProcessorChain[TX, TID, E, R]{
+		processors: processors,
+	}
+}
+
+func (fp ProcessorChain[TX, TID, E, R]) Process(
+	ctx context.Context,
+	tx TX,
+	root R,
+	events CommittedEvents[E],
+) error {
+	for _, processor := range fp.processors {
+		if err := processor.Process(ctx, tx, root, events); err != nil {
+			return err
+		}
+	}
+	return nil
+}
