@@ -18,6 +18,17 @@
 - [Event transformers](#event-transformers)
 	- [Example: Crypto shedding for GDPR](#example-crypto-shedding-for-gdpr)
 	- [Global Transformers with `AnyTransformerToTyped`](#global-transformers-with-anytransformertotyped)
+- [Projections](#projections)
+	- [`event.TransactionalEventLog` and `aggregate.TransactionalRepository`](#eventtransactionaleventlog-and-aggregatetransactionalrepository)
+	- [Example](#example)
+	- [Example with outbox](#example-with-outbox)
+	- [Types of projections](#types-of-projections)
+		- [By Scope](#by-scope)
+		- [By Behavior](#by-behavior)
+		- [By Data Transformation](#by-data-transformation)
+		- [By Consistency Guarantees](#by-consistency-guarantees)
+		- [By How Often You Update](#by-how-often-you-update)
+		- [By Mechanism of Updating](#by-mechanism-of-updating)
 - [Implementing a custom `event.Log`](#implementing-a-custom-eventlog)
 	- [The `event.Reader` interface](#the-eventreader-interface)
 	- [The `event.Appender` interface](#the-eventappender-interface)
@@ -36,17 +47,6 @@
 	- [Testing](#testing)
 - [Benchmarks](#benchmarks)
 - [Acknowledgements](#acknowledgements)
-- [Projections](#projections)
-	- [`event.TransactionalEventLog` and `aggregate.TransactionalRepository`](#eventtransactionaleventlog-and-aggregatetransactionalrepository)
-	- [Example](#example)
-	- [Example with outbox](#example-with-outbox)
-	- [Types of projections](#types-of-projections)
-		- [By Scope](#by-scope)
-		- [By Behavior](#by-behavior)
-		- [By Data Transformation](#by-data-transformation)
-		- [By Consistency Guarantees](#by-consistency-guarantees)
-		- [By How Often You Update](#by-how-often-you-update)
-		- [By Mechanism of Updating](#by-mechanism-of-updating)
 
 
 ## Quickstart
@@ -1601,6 +1601,540 @@ Here is how you would use both our specific `CryptoTransformer` and our global `
 	)
 ```
 
+## Projections
+
+Projections are your read models, optimized for querying. See [the "what" section for more info](https://github.com/DeluxeOwl/chronicle?tab=readme-ov-file#what-is-event-sourcing).
+
+They are **derived** from your event log and can be rebuilt from it (the event log is the source of truth). So in short, projections are and should be treated as disposable.
+
+You generally want to have many specialized projections, instead of a big read model.
+
+This framework isn't opinionated in *how* you're creating projections but provides a few primitives that help.
+
+
+### `event.TransactionalEventLog` and `aggregate.TransactionalRepository`
+
+These are the two interfaces that help us create projections easier.
+
+Starting with `event.TransactionalEventLog`
+```go
+package event
+
+type TransactionalEventLog[TX any] interface {
+	TransactionalLog[TX]
+	Transactor[TX]
+}
+
+type Transactor[TX any] interface {
+	WithinTx(ctx context.Context, fn func(ctx context.Context, tx TX) error) error
+}
+
+type TransactionalLog[TX any] interface {
+	AppendInTx(
+		ctx context.Context,
+		tx TX,
+		id LogID,
+		expected version.Check,
+		events RawEvents,
+	) (version.Version, []*Record, error)
+	Reader
+}
+```
+
+This is an interface that defines an `Append` method that also provides the `TX` (transactional) type. It's implemented by the following event logs: postgres, sqlite, memory and pebble.
+
+An `aggregate.TransactionalRepository` uses this kind of event log to orchestrate processors.
+
+A processor is called inside an active transaction and provides us access to the root aggregate and to the committed events.
+
+```go
+type TransactionalAggregateProcessor[TX any, TID ID, E event.Any, R Root[TID, E]] interface {
+	// Process is called by the TransactionalRepository *inside* an active transaction,
+	// immediately after the aggregate's events have been successfully saved to the event log.
+	// It receives the transaction handle, the aggregate in its new state, and the
+	// strongly-typed events that were just committed.
+	//
+	// Returns an error if processing fails. This will cause the entire transaction to be
+	// rolled back, including the saving of the events. Returns nil on success.
+	Process(ctx context.Context, tx TX, root R, events CommittedEvents[E]) error
+}
+```
+
+
+### Example
+
+We're going to make use of `accountv2`. You can find this example in [examples/6_projections/main.go](./examples/6_projections/main.go) and [examples/internal/accountv2/account_processor.go](./examples/internal/accountv2/account_processor.go).
+
+We're going to create a simple projection that is very useful in most event sourced application: a table with the account log ids (that also contains the account holder's name).
+
+We're going to use `sqlite` as the backing event log and as the backing store for our projections.
+
+Why is it useful? Because it shows us a "quick view" of the accounts we have in the system.
+
+In `accountv2/account_processor.go`:
+```go
+type AccountsWithNameProcessor struct{}
+func (p *AccountsWithNameProcessor) Process(
+	ctx context.Context,
+	tx *sql.Tx,
+	root *Account,
+	events aggregate.CommittedEvents[AccountEvent],
+) error {
+	// ...
+	return nil
+}
+```
+
+This is the struct that satisfies our `aggregate.TransactionalAggregateProcessor` interface.
+
+We're going to use a real time, strongly consistent projection, which is possible because we use `sqlite` and the event log and the projections store is the same - which allows us to update the projection in the same transaction.
+
+But first, we need a table for our projection, we'll handle it in the constructor for the `AccountsWithNameProcessor` but can be done outside it as well.
+
+```go
+func NewAccountsWithNameProcessor(db *sql.DB) (*AccountsWithNameProcessor, error) {
+	_, err := db.Exec(`
+        CREATE TABLE IF NOT EXISTS projection_accounts (
+            account_id TEXT PRIMARY KEY,
+            holder_name TEXT NOT NULL
+        );
+    `)
+	if err != nil {
+		return nil, fmt.Errorf("new accounts with name processor: %w", err)
+	}
+
+	return &AccountsWithNameProcessor{}, nil
+}
+```
+
+Now what's left to do is to implement our processing logic. 
+
+We're only interested in `*accountOpened` events, from which we extract the root id and the `HolderName`:
+
+```go
+func (p *AccountsWithNameProcessor) Process(
+	ctx context.Context,
+	tx *sql.Tx,
+	root *Account,
+	events aggregate.CommittedEvents[AccountEvent],
+) error {
+	for evt := range events.All() {
+		// We only care about accountOpened events.
+		if opened, ok := evt.(*accountOpened); ok {
+			_, err := tx.ExecContext(ctx, `
+                INSERT INTO projection_accounts (account_id, holder_name) 
+                VALUES (?, ?)
+                ON CONFLICT(account_id) DO UPDATE SET 
+                    holder_name = excluded.holder_name
+            `, root.ID(), opened.HolderName)
+			if err != nil {
+				return fmt.Errorf("insert account: %w", err)
+			}
+		}
+	}
+
+	return nil
+}
+```
+
+Let's wire it up in `main`:
+```go
+func main() {
+	db, err := sql.Open("sqlite3", "file:memdb1?mode=memory&cache=shared")
+	// ...
+	sqlprinter := examplehelper.NewSQLPrinter(db) // We're using a helper to print the tables.
+
+	sqliteLog, err := eventlog.NewSqlite(db)
+	// ...
+}
+```
+
+We can create our processor
+```go
+	accountProcessor, err := accountv2.NewAccountsWithNameProcessor(db)
+```
+
+And hook it up in a `chronicle.NewTransactionalRepository`
+```go
+	accountRepo, err := chronicle.NewTransactionalRepository(
+			sqliteLog,
+			accountMaker,
+			nil,
+			aggregate.NewProcessorChain(
+				accountProcessor,
+			), // Our transactional processor.
+		)
+```
+
+`aggregate.NewProcessorChain` is a helper that runs multiple processors one after the other
+
+Let's open an account for Alice and Bob
+```go
+	// Alice's account
+	accA, _ := accountv2.Open(accountv2.AccountID("alice-account-01"), timeProvider, "Alice")
+	_ = accA.DepositMoney(100)
+	_ = accA.DepositMoney(50)
+	_, _, err = accountRepo.Save(ctx, accA)
+
+	// Bob's account
+	accB, _ := accountv2.Open(accountv2.AccountID("bob-account-02"), timeProvider, "Bob")
+	_ = accB.DepositMoney(200)
+	_, _, err = accountRepo.Save(ctx, accB)
+```
+
+And we can use our helper to print the projections table:
+```go
+sqlprinter.Query("SELECT account_id, holder_name FROM projection_accounts")
+
+┌──────────────────┬─────────────┐
+│    ACCOUNT ID    │ HOLDER NAME │
+├──────────────────┼─────────────┤
+│ alice-account-01 │ Alice       │
+│ bob-account-02   │ Bob         │
+└──────────────────┴─────────────┘
+```
+
+Pretty nice, huh? We can query the projection table however we like.
+
+We can also create materialized views in the database by querying the backing sqlite store. Here's an example of querying all events
+```go
+fmt.Println("All events:")
+sqlprinter.Query(
+	"SELECT global_version, log_id, version, event_name, json_extract(data, '$') as data FROM chronicle_events",
+)
+```
+
+**Note:** we're using JSON serialization and we're using `json_extract(data, '$')` to see the data (saved as `BLOB` in sqlite) in a readable format
+
+Running
+```bash
+go run examples/6_projections/main.go
+```
+
+Prints
+```bash
+All events:
+┌────────────────┬──────────────────┬─────────┬─────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ GLOBAL VERSION │      LOG ID      │ VERSION │       EVENT NAME        │                                                                                            DATA                                                                                             │
+├────────────────┼──────────────────┼─────────┼─────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ 1              │ alice-account-01 │ 1       │ account/opened          │ {"eventID":"0198f03e-4042-723c-884d-a9e84426eb9e","occuredAt":"2025-08-28T13:34:28.29074+03:00","id":"alice-account-01","openedAt":"2025-08-28T13:34:28.290625+03:00","holderName":"Alice"} │
+│ 2              │ alice-account-01 │ 2       │ account/money_deposited │ {"eventID":"0198f03e-4042-723d-a335-0f13b54c78cb","occuredAt":"2025-08-28T13:34:28.290757+03:00","amount":100}                                                                              │
+│ 3              │ alice-account-01 │ 3       │ account/money_deposited │ {"eventID":"0198f03e-4042-723e-a5e5-b127aec593f2","occuredAt":"2025-08-28T13:34:28.290758+03:00","amount":50}                                                                               │
+│ 4              │ bob-account-02   │ 1       │ account/opened          │ {"eventID":"0198f03e-4043-723e-874c-2095ca72515f","occuredAt":"2025-08-28T13:34:28.291034+03:00","id":"bob-account-02","openedAt":"2025-08-28T13:34:28.291034+03:00","holderName":"Bob"}    │
+│ 5              │ bob-account-02   │ 2       │ account/money_deposited │ {"eventID":"0198f03e-4043-723f-96db-0c01cbf57d70","occuredAt":"2025-08-28T13:34:28.291036+03:00","amount":200}                                                                              │
+└────────────────┴──────────────────┴─────────┴─────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Example with outbox
+
+> [!NOTE] For a production environment, take a look at https://watermill.io/advanced/forwarder/ .
+
+While strongly-consistent projections (like the one above) are powerful, you often need to notify external systems about events that have occurred. This could involve publishing to a message broker like Kafka/RabbitMQ, calling a third-party webhook, or sending an email. 
+
+A common pitfall is the dual-write problem: what happens if you successfully save the events to your database, but the subsequent call to the message broker fails? The system is now in an inconsistent state. The event happened, but the outside world was never notified.
+
+The Transactional Outbox pattern solves this by leveraging your database's ACID guarantees. The flow is: 
+1. Atomically write both the business events (e.g., `accountOpened`) and a corresponding "message to be sent" into your database in a single transaction.
+2. A separate, background process polls this "outbox" table for new messages.
+3. For each message, it publishes it to the external system (e.g., a message bus).
+4. Once successfully published, it deletes the message from the outbox table.
+
+This ensures **at-least-once** delivery. If the process crashes after publishing but before deleting, it will simply re-publish the message on the next run. This makes it a reliable way to integrate with external systems.
+
+We'll build a simple outbox, which will use an in-memory pub/sub channel to act as our message bus.
+
+You can find this example in [examples/7_outbox/main.go](./examples/7_outbox/main.go) and [examples/internal/accountv2/account_outbox_processor.go](./examples/internal/accountv2/account_outbox_processor.go).
+
+First, we create another `TransactionalAggregateProcessor`, the `AccountOutboxProcessor`. Its constructor creates a dedicated outbox table.
+
+```go
+func NewAccountOutboxProcessor(db *sql.DB) (*AccountOutboxProcessor, error) {
+	_, err := db.Exec(`
+        CREATE TABLE IF NOT EXISTS outbox_account_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            aggregate_id TEXT NOT NULL,
+            event_name TEXT NOT NULL,
+            payload BLOB NOT NULL
+        );
+    `)
+	if err != nil {
+		return nil, fmt.Errorf("new account outbox processor: could not create table: %w", err)
+	}
+	return &AccountOutboxProcessor{}, nil
+}
+```
+
+The Process logic is simple: it serializes each event to JSON and inserts it into the `outbox_account_events` table using the provided transaction `tx`. This guarantees atomicity with the event log persistence.
+
+```go
+// Process writes committed AccountEvents to the outbox table within the same transaction.
+func (p *AccountOutboxProcessor) Process(
+	ctx context.Context,
+	tx *sql.Tx,
+	root *Account,
+	committedEvents aggregate.CommittedEvents[AccountEvent],
+) error {
+	for _, event := range committedEvents {
+		payload, err := json.Marshal(event)
+		if err != nil {
+			return fmt.Errorf("outbox process: failed to marshal event: %w", err)
+		}
+
+		_, err = tx.ExecContext(ctx, `
+            INSERT INTO outbox_account_events (aggregate_id, event_name, payload) 
+            VALUES (?, ?, ?)
+        `, root.ID(), event.EventName(), payload)
+		if err != nil {
+			return fmt.Errorf("outbox process: insert event: %w", err)
+		}
+	}
+	return nil
+}
+```
+
+Now let's wire it up in `main`. We create the processor and add it to our `TransactionalRepository`.
+```go
+func main() {
+	db, err := sql.Open("sqlite3", "file:memdb1?mode=memory&cache=shared")
+	// ...
+
+	pubsub := examplehelper.NewPubSubMemory[OutboxMessage]()
+
+	outboxProcessor, err := accountv2.NewAccountOutboxProcessor(db)
+	// ...
+
+	sqliteLog, err := eventlog.NewSqlite(db)
+	// ...
+
+	repo, err := chronicle.NewTransactionalRepository(
+		sqliteLog,
+		accountMaker,
+		nil,
+		aggregate.NewProcessorChain(outboxProcessor), // The outbox processor
+	)
+	// ...
+}
+```
+
+Next, we need the two background components: a **poller** to read from the outbox and a **subscriber** to listen for published messages. For this example, we'll run them as simple goroutines. 
+
+The **subscriber** is easy—it just listens on a channel and prints what it receives: 
+```go
+	go func() {
+			fmt.Println("\nSubscriber started. Waiting for events...")
+			for msg := range subCh {
+				fmt.Printf(
+					"-> Subscriber received: %s for aggregate %s\n",
+					msg.EventName,
+					msg.AggregateID,
+				)
+				wg.Done()
+			}
+		}()
+```
+
+The **poller** is a loop that periodically checks the outbox table. In a single transaction, it reads one message, publishes it, and deletes it. 
+```go
+go func() {
+		ticker := time.NewTicker(100 * time.Millisecond)
+		
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				// 1. Begin transaction
+				tx, err := db.BeginTx(ctx, nil)
+				// ...
+
+				// 2. Select the oldest record
+				row := tx.QueryRowContext(ctx, "SELECT id, aggregate_id, event_name, payload FROM outbox_account_events ORDER BY id LIMIT 1")
+				// ... scan row
+
+				// 3. Publish the message to the bus
+				pubsub.Publish(msg)
+
+				// 4. Delete the record from the outbox
+				_, err = tx.ExecContext(ctx, "DELETE FROM outbox_account_events WHERE id = ?", msg.OutboxID)
+				// ...
+
+				// 5. Commit the transaction to atomically mark the event as processed.
+				if err := tx.Commit(); err != nil {
+					fmt.Printf("Error committing outbox transaction: %v", err)
+				}
+			}
+		}
+	}()
+```
+
+Finally, we save our aggregates as before. This action triggers the entire flow. 
+
+```go
+    // Save Alice's and Bob's accounts
+    accA, _ := accountv2.Open(...)
+    _ = accA.DepositMoney(100)
+    _ = accA.DepositMoney(50)
+    _, _, err = repo.Save(ctx, accA)
+
+    accB, _ := accountv2.Open(...)
+    _ = accB.DepositMoney(200)
+    _, _, err = repo.Save(ctx, accB)
+```
+
+Running the example shows the whole sequence in action
+```
+go run examples/7_transactional_outbox/main.go
+
+Saving aggregates... This will write to the outbox table.
+
+Subscriber started. Waiting for events...
+Polling goroutine started.
+
+State of 'outbox_account_events' table immediately after save:
+┌────┬──────────────────┬─────────────────────────┐
+│ ID │   AGGREGATE ID   │       EVENT NAME        │
+├────┼──────────────────┼─────────────────────────┤
+│ 1  │ alice-account-01 │ account/opened          │
+│ 2  │ alice-account-01 │ account/money_deposited │
+│ 3  │ alice-account-01 │ account/money_deposited │
+│ 4  │ bob-account-02   │ account/opened          │
+│ 5  │ bob-account-02   │ account/money_deposited │
+└────┴──────────────────┴─────────────────────────┘
+
+Waiting for subscriber to process all events from the pub/sub...
+-> Subscriber received: account/opened for aggregate alice-account-01
+-> Subscriber received: account/money_deposited for aggregate alice-account-01
+-> Subscriber received: account/money_deposited for aggregate alice-account-01
+-> Subscriber received: account/opened for aggregate bob-account-02
+-> Subscriber received: account/money_deposited for aggregate bob-account-02
+
+All events processed by subscriber.
+
+Outbox table:
+┌────┬──────────────┬────────────┐
+│ ID │ AGGREGATE ID │ EVENT NAME │
+└────┴──────────────┴────────────┘
+Polling goroutine stopping.
+```
+
+As you can see, the outbox table was populated atomically when the aggregates were saved. The poller then read each entry, published it, and deleted it, resulting in a reliably processed queue and an empty table at the end. 
+
+### Types of projections
+
+> [!WARNING] Wall of text ahead 😴
+
+There's a lot of projection types, choosing which fits you best requires some consideration
+
+#### By Scope
+
+1. **Per-aggregate projections**
+   * Build the current state of a single entity (aggregate root) by replaying its events.
+   * Example: reconstructing the current balance of one bank account.
+   * ⚠️ In `chronicle`:
+     * This kind of projection is handled by the `repo.Get` method
+
+2. **Global projections**
+   * Span across many aggregates to build a denormalized or system-wide view.
+   * Example: a leaderboard across all players in a game.
+   * ⚠️ In `chronicle`:
+     * This is handled by the `event.GlobalLog` interface, where you can `ReadAllEvents(...)`
+     * Can also be done by directly querying the backing store of the event log, as seen in [examples/6_projections/main.go](./examples/6_projections/main.go) - where it can be done via sql queries directly.
+
+#### By Behavior
+
+1. **Live / Continuous projections**
+   * Update in near-real-time as new events are appended.
+   * Example: a notification system that reacts to user actions instantly.
+   * ⚠️ In `chronicle`:
+     * If you don't require durability, you can wrap the `Save(...)` method on the repository to publish to a queue
+     * If you require durability, you can use an `*aggregate.TransactionalRepository` to ensure all writes are durable before publishing, or to update the projection directly etc.
+
+2. **On-demand / Ad-hoc projections**
+   * Rebuilt only when needed, often discarded afterward.
+   * Example: running an analytics query over a historic event stream.
+   * ⚠️ In `chronicle`:
+     * Can be done by directly querying the backing store or via an `event.GlobalLog`
+
+3. **Catch-up projections**
+   * Rebuild state by replaying past events until caught up with the live stream.
+   * Often used when adding new read models after the system is in production.
+   * ⚠️ In `chronicle`:
+     * Can be done by directly querying the backing store or via an `event.GlobalLog`
+     * It will probably require you to "remember" (possibly in a different store) the last processed id, version etc.
+     * You might also be interested in idempotency
+
+
+#### By Data Transformation
+
+1. **Aggregated projections**
+   * Summarize events into counts, totals, or other metrics.
+   * Example: total sales per day.
+   * ⚠️ In `chronicle`:
+     * This most definitely requires an `event.GlobalLog` or querying the backing store directly, since you need the events from a group of different aggregates
+
+2. **Materialized views (denormalized projections)**
+   * Store data in a form that’s ready for querying, often optimized for UI.
+   * Example: user profile with last login, recent purchases, and preferences.
+
+3. **Policy projections (process managers/sagas)**
+   * React to certain event sequences to drive workflows.
+   * Example: after "OrderPlaced" and "PaymentReceived," trigger "ShipOrder."
+
+#### By Consistency Guarantees
+
+1. **Eventually consistent projections**
+   * Most common - projections lag slightly behind the event stream.
+   * ⚠️ In `chronicle`:
+     * This happens if you're using the outbox pattern or have any kind of pub/sub mechanism in your code
+
+2. **Strongly consistent projections**
+   * Rare in event sourcing, but sometimes required for critical counters or invariants.
+   * ⚠️ In `chronicle`:
+     * This is done when the backing store is an `event.TransactionalLog` at it exposes the transaction AND you want to store your projections in the same store
+     * This is a reasonable and not expensive approach if you're using an SQL store (such as postgres)
+     * It also makes the system easier to work with
+
+#### By How Often You Update
+
+1. **Real-time (push-driven) projections**
+   * Updated immediately as each event arrives.
+   * Common when users expect low-latency updates (e.g., dashboards, notifications).
+   * Mechanism: event handlers/subscribers consume events as they are written.
+
+2. **Near-real-time (micro-batch)**
+   * Updated on a short interval (e.g., every few seconds or minutes).
+   * Useful when strict immediacy isn’t required but throughput matters.
+   * Mechanism: stream processors (like Kafka Streams, Kinesis, or NATS) that batch small sets of events.
+
+3. **Batch/offline projections**
+   * Rebuilt periodically (e.g., nightly jobs).
+   * Useful for reporting, analytics, or expensive transformations.
+   * Mechanism: ETL processes or big data jobs that replay a segment of the event log.
+
+4. **Ad-hoc/on-demand projections**
+   * Rebuilt only when explicitly requested.
+   * Useful when queries are rare or unique (e.g., debugging, exploratory analytics).
+   * Mechanism: fetch event history and compute the projection on the fly, often discarded afterward.
+
+#### By Mechanism of Updating
+
+1. **Event-synchronous (push)**
+   * Event store or message bus pushes new events to projection handlers.
+   * Each projection updates incrementally.
+   * Example: subscribing to an event stream and applying changes one by one.
+
+2. **Polling (pull)**
+   * Projection service periodically polls the event store for new events.
+   * Useful when the event store doesn’t support subscriptions or you want more control over load.
+
+3. **Replay / Rebuild**
+   * Projection is rebuilt from scratch by replaying all relevant events.
+   * Often used when introducing a new projection type or after schema changes.
+
+4. **Hybrid**
+   * Projection is initially rebuilt via a replay, then switches to real-time subscription.
+   * This is the common **catch-up projection** pattern.
+
 ## Implementing a custom `event.Log`
 
 This framework is designed to be storage-agnostic. You can create your own to work with any database or storage system by implementing some interfaces from the `event` package.  
@@ -2137,536 +2671,3 @@ Other resources for my event sourcing journey in no particular order:
 
 I found that none of them were as flexible as I'd like - a lot of them were only tied to specific storage (like postgres) or were **very** cumbersome to read (talking mostly about the java/dotnet ones here).
 
-## Projections
-
-Projections are your read models, optimized for querying. See [the "what" section for more info](https://github.com/DeluxeOwl/chronicle?tab=readme-ov-file#what-is-event-sourcing).
-
-They are **derived** from your event log and can be rebuilt from it (the event log is the source of truth). So in short, projections are and should be treated as disposable.
-
-You generally want to have many specialized projections, instead of a big read model.
-
-This framework isn't opinionated in *how* you're creating projections but provides a few primitives that help.
-
-
-### `event.TransactionalEventLog` and `aggregate.TransactionalRepository`
-
-These are the two interfaces that help us create projections easier.
-
-Starting with `event.TransactionalEventLog`
-```go
-package event
-
-type TransactionalEventLog[TX any] interface {
-	TransactionalLog[TX]
-	Transactor[TX]
-}
-
-type Transactor[TX any] interface {
-	WithinTx(ctx context.Context, fn func(ctx context.Context, tx TX) error) error
-}
-
-type TransactionalLog[TX any] interface {
-	AppendInTx(
-		ctx context.Context,
-		tx TX,
-		id LogID,
-		expected version.Check,
-		events RawEvents,
-	) (version.Version, []*Record, error)
-	Reader
-}
-```
-
-This is an interface that defines an `Append` method that also provides the `TX` (transactional) type. It's implemented by the following event logs: postgres, sqlite, memory and pebble.
-
-An `aggregate.TransactionalRepository` uses this kind of event log to orchestrate processors.
-
-A processor is called inside an active transaction and provides us access to the root aggregate and to the committed events.
-
-```go
-type TransactionalAggregateProcessor[TX any, TID ID, E event.Any, R Root[TID, E]] interface {
-	// Process is called by the TransactionalRepository *inside* an active transaction,
-	// immediately after the aggregate's events have been successfully saved to the event log.
-	// It receives the transaction handle, the aggregate in its new state, and the
-	// strongly-typed events that were just committed.
-	//
-	// Returns an error if processing fails. This will cause the entire transaction to be
-	// rolled back, including the saving of the events. Returns nil on success.
-	Process(ctx context.Context, tx TX, root R, events CommittedEvents[E]) error
-}
-```
-
-
-### Example
-
-We're going to make use of `accountv2`. You can find this example in [examples/6_projections/main.go](./examples/6_projections/main.go) and [examples/internal/accountv2/account_processor.go](./examples/internal/accountv2/account_processor.go).
-
-We're going to create a simple projection that is very useful in most event sourced application: a table with the account log ids (that also contains the account holder's name).
-
-We're going to use `sqlite` as the backing event log and as the backing store for our projections.
-
-Why is it useful? Because it shows us a "quick view" of the accounts we have in the system.
-
-In `accountv2/account_processor.go`:
-```go
-type AccountsWithNameProcessor struct{}
-func (p *AccountsWithNameProcessor) Process(
-	ctx context.Context,
-	tx *sql.Tx,
-	root *Account,
-	events aggregate.CommittedEvents[AccountEvent],
-) error {
-	// ...
-	return nil
-}
-```
-
-This is the struct that satisfies our `aggregate.TransactionalAggregateProcessor` interface.
-
-We're going to use a real time, strongly consistent projection, which is possible because we use `sqlite` and the event log and the projections store is the same - which allows us to update the projection in the same transaction.
-
-But first, we need a table for our projection, we'll handle it in the constructor for the `AccountsWithNameProcessor` but can be done outside it as well.
-
-```go
-func NewAccountsWithNameProcessor(db *sql.DB) (*AccountsWithNameProcessor, error) {
-	_, err := db.Exec(`
-        CREATE TABLE IF NOT EXISTS projection_accounts (
-            account_id TEXT PRIMARY KEY,
-            holder_name TEXT NOT NULL
-        );
-    `)
-	if err != nil {
-		return nil, fmt.Errorf("new accounts with name processor: %w", err)
-	}
-
-	return &AccountsWithNameProcessor{}, nil
-}
-```
-
-Now what's left to do is to implement our processing logic. 
-
-We're only interested in `*accountOpened` events, from which we extract the root id and the `HolderName`:
-
-```go
-func (p *AccountsWithNameProcessor) Process(
-	ctx context.Context,
-	tx *sql.Tx,
-	root *Account,
-	events aggregate.CommittedEvents[AccountEvent],
-) error {
-	for evt := range events.All() {
-		// We only care about accountOpened events.
-		if opened, ok := evt.(*accountOpened); ok {
-			_, err := tx.ExecContext(ctx, `
-                INSERT INTO projection_accounts (account_id, holder_name) 
-                VALUES (?, ?)
-                ON CONFLICT(account_id) DO UPDATE SET 
-                    holder_name = excluded.holder_name
-            `, root.ID(), opened.HolderName)
-			if err != nil {
-				return fmt.Errorf("insert account: %w", err)
-			}
-		}
-	}
-
-	return nil
-}
-```
-
-Let's wire it up in `main`:
-```go
-func main() {
-	db, err := sql.Open("sqlite3", "file:memdb1?mode=memory&cache=shared")
-	// ...
-	sqlprinter := examplehelper.NewSQLPrinter(db) // We're using a helper to print the tables.
-
-	sqliteLog, err := eventlog.NewSqlite(db)
-	// ...
-}
-```
-
-We can create our processor
-```go
-	accountProcessor, err := accountv2.NewAccountsWithNameProcessor(db)
-```
-
-And hook it up in a `chronicle.NewTransactionalRepository`
-```go
-	accountRepo, err := chronicle.NewTransactionalRepository(
-			sqliteLog,
-			accountMaker,
-			nil,
-			aggregate.NewProcessorChain(
-				accountProcessor,
-			), // Our transactional processor.
-		)
-```
-
-`aggregate.NewProcessorChain` is a helper that runs multiple processors one after the other
-
-Let's open an account for Alice and Bob
-```go
-	// Alice's account
-	accA, _ := accountv2.Open(accountv2.AccountID("alice-account-01"), timeProvider, "Alice")
-	_ = accA.DepositMoney(100)
-	_ = accA.DepositMoney(50)
-	_, _, err = accountRepo.Save(ctx, accA)
-
-	// Bob's account
-	accB, _ := accountv2.Open(accountv2.AccountID("bob-account-02"), timeProvider, "Bob")
-	_ = accB.DepositMoney(200)
-	_, _, err = accountRepo.Save(ctx, accB)
-```
-
-And we can use our helper to print the projections table:
-```go
-sqlprinter.Query("SELECT account_id, holder_name FROM projection_accounts")
-
-┌──────────────────┬─────────────┐
-│    ACCOUNT ID    │ HOLDER NAME │
-├──────────────────┼─────────────┤
-│ alice-account-01 │ Alice       │
-│ bob-account-02   │ Bob         │
-└──────────────────┴─────────────┘
-```
-
-Pretty nice, huh? We can query the projection table however we like.
-
-We can also create materialized views in the database by querying the backing sqlite store. Here's an example of querying all events
-```go
-fmt.Println("All events:")
-sqlprinter.Query(
-	"SELECT global_version, log_id, version, event_name, json_extract(data, '$') as data FROM chronicle_events",
-)
-```
-
-**Note:** we're using JSON serialization and we're using `json_extract(data, '$')` to see the data (saved as `BLOB` in sqlite) in a readable format
-
-Running
-```bash
-go run examples/6_projections/main.go
-```
-
-Prints
-```bash
-All events:
-┌────────────────┬──────────────────┬─────────┬─────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│ GLOBAL VERSION │      LOG ID      │ VERSION │       EVENT NAME        │                                                                                            DATA                                                                                             │
-├────────────────┼──────────────────┼─────────┼─────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ 1              │ alice-account-01 │ 1       │ account/opened          │ {"eventID":"0198f03e-4042-723c-884d-a9e84426eb9e","occuredAt":"2025-08-28T13:34:28.29074+03:00","id":"alice-account-01","openedAt":"2025-08-28T13:34:28.290625+03:00","holderName":"Alice"} │
-│ 2              │ alice-account-01 │ 2       │ account/money_deposited │ {"eventID":"0198f03e-4042-723d-a335-0f13b54c78cb","occuredAt":"2025-08-28T13:34:28.290757+03:00","amount":100}                                                                              │
-│ 3              │ alice-account-01 │ 3       │ account/money_deposited │ {"eventID":"0198f03e-4042-723e-a5e5-b127aec593f2","occuredAt":"2025-08-28T13:34:28.290758+03:00","amount":50}                                                                               │
-│ 4              │ bob-account-02   │ 1       │ account/opened          │ {"eventID":"0198f03e-4043-723e-874c-2095ca72515f","occuredAt":"2025-08-28T13:34:28.291034+03:00","id":"bob-account-02","openedAt":"2025-08-28T13:34:28.291034+03:00","holderName":"Bob"}    │
-│ 5              │ bob-account-02   │ 2       │ account/money_deposited │ {"eventID":"0198f03e-4043-723f-96db-0c01cbf57d70","occuredAt":"2025-08-28T13:34:28.291036+03:00","amount":200}                                                                              │
-└────────────────┴──────────────────┴─────────┴─────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-```
-
-### Example with outbox
-
-> [!NOTE] For a production environment, take a look at https://watermill.io/advanced/forwarder/ .
-
-While strongly-consistent projections (like the one above) are powerful, you often need to notify external systems about events that have occurred. This could involve publishing to a message broker like Kafka/RabbitMQ, calling a third-party webhook, or sending an email. 
-
-A common pitfall is the dual-write problem: what happens if you successfully save the events to your database, but the subsequent call to the message broker fails? The system is now in an inconsistent state. The event happened, but the outside world was never notified.
-
-The Transactional Outbox pattern solves this by leveraging your database's ACID guarantees. The flow is: 
-1. Atomically write both the business events (e.g., `accountOpened`) and a corresponding "message to be sent" into your database in a single transaction.
-2. A separate, background process polls this "outbox" table for new messages.
-3. For each message, it publishes it to the external system (e.g., a message bus).
-4. Once successfully published, it deletes the message from the outbox table.
-
-This ensures **at-least-once** delivery. If the process crashes after publishing but before deleting, it will simply re-publish the message on the next run. This makes it a reliable way to integrate with external systems.
-
-We'll build a simple outbox, which will use an in-memory pub/sub channel to act as our message bus.
-
-You can find this example in [examples/7_outbox/main.go](./examples/7_outbox/main.go) and [examples/internal/accountv2/account_outbox_processor.go](./examples/internal/accountv2/account_outbox_processor.go).
-
-First, we create another `TransactionalAggregateProcessor`, the `AccountOutboxProcessor`. Its constructor creates a dedicated outbox table.
-
-```go
-func NewAccountOutboxProcessor(db *sql.DB) (*AccountOutboxProcessor, error) {
-	_, err := db.Exec(`
-        CREATE TABLE IF NOT EXISTS outbox_account_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            aggregate_id TEXT NOT NULL,
-            event_name TEXT NOT NULL,
-            payload BLOB NOT NULL
-        );
-    `)
-	if err != nil {
-		return nil, fmt.Errorf("new account outbox processor: could not create table: %w", err)
-	}
-	return &AccountOutboxProcessor{}, nil
-}
-```
-
-The Process logic is simple: it serializes each event to JSON and inserts it into the `outbox_account_events` table using the provided transaction `tx`. This guarantees atomicity with the event log persistence.
-
-```go
-// Process writes committed AccountEvents to the outbox table within the same transaction.
-func (p *AccountOutboxProcessor) Process(
-	ctx context.Context,
-	tx *sql.Tx,
-	root *Account,
-	committedEvents aggregate.CommittedEvents[AccountEvent],
-) error {
-	for _, event := range committedEvents {
-		payload, err := json.Marshal(event)
-		if err != nil {
-			return fmt.Errorf("outbox process: failed to marshal event: %w", err)
-		}
-
-		_, err = tx.ExecContext(ctx, `
-            INSERT INTO outbox_account_events (aggregate_id, event_name, payload) 
-            VALUES (?, ?, ?)
-        `, root.ID(), event.EventName(), payload)
-		if err != nil {
-			return fmt.Errorf("outbox process: insert event: %w", err)
-		}
-	}
-	return nil
-}
-```
-
-Now let's wire it up in `main`. We create the processor and add it to our `TransactionalRepository`.
-```go
-func main() {
-	db, err := sql.Open("sqlite3", "file:memdb1?mode=memory&cache=shared")
-	// ...
-
-	pubsub := examplehelper.NewPubSubMemory[OutboxMessage]()
-
-	outboxProcessor, err := accountv2.NewAccountOutboxProcessor(db)
-	// ...
-
-	sqliteLog, err := eventlog.NewSqlite(db)
-	// ...
-
-	repo, err := chronicle.NewTransactionalRepository(
-		sqliteLog,
-		accountMaker,
-		nil,
-		aggregate.NewProcessorChain(outboxProcessor), // The outbox processor
-	)
-	// ...
-}
-```
-
-Next, we need the two background components: a **poller** to read from the outbox and a **subscriber** to listen for published messages. For this example, we'll run them as simple goroutines. 
-
-The **subscriber** is easy—it just listens on a channel and prints what it receives: 
-```go
-	go func() {
-			fmt.Println("\nSubscriber started. Waiting for events...")
-			for msg := range subCh {
-				fmt.Printf(
-					"-> Subscriber received: %s for aggregate %s\n",
-					msg.EventName,
-					msg.AggregateID,
-				)
-				wg.Done()
-			}
-		}()
-```
-
-The **poller** is a loop that periodically checks the outbox table. In a single transaction, it reads one message, publishes it, and deletes it. 
-```go
-go func() {
-		ticker := time.NewTicker(100 * time.Millisecond)
-		
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				// 1. Begin transaction
-				tx, err := db.BeginTx(ctx, nil)
-				// ...
-
-				// 2. Select the oldest record
-				row := tx.QueryRowContext(ctx, "SELECT id, aggregate_id, event_name, payload FROM outbox_account_events ORDER BY id LIMIT 1")
-				// ... scan row
-
-				// 3. Publish the message to the bus
-				pubsub.Publish(msg)
-
-				// 4. Delete the record from the outbox
-				_, err = tx.ExecContext(ctx, "DELETE FROM outbox_account_events WHERE id = ?", msg.OutboxID)
-				// ...
-
-				// 5. Commit the transaction to atomically mark the event as processed.
-				if err := tx.Commit(); err != nil {
-					fmt.Printf("Error committing outbox transaction: %v", err)
-				}
-			}
-		}
-	}()
-```
-
-Finally, we save our aggregates as before. This action triggers the entire flow. 
-
-```go
-    // Save Alice's and Bob's accounts
-    accA, _ := accountv2.Open(...)
-    _ = accA.DepositMoney(100)
-    _ = accA.DepositMoney(50)
-    _, _, err = repo.Save(ctx, accA)
-
-    accB, _ := accountv2.Open(...)
-    _ = accB.DepositMoney(200)
-    _, _, err = repo.Save(ctx, accB)
-```
-
-Running the example shows the whole sequence in action
-```
-go run examples/7_transactional_outbox/main.go
-
-Saving aggregates... This will write to the outbox table.
-
-Subscriber started. Waiting for events...
-Polling goroutine started.
-
-State of 'outbox_account_events' table immediately after save:
-┌────┬──────────────────┬─────────────────────────┐
-│ ID │   AGGREGATE ID   │       EVENT NAME        │
-├────┼──────────────────┼─────────────────────────┤
-│ 1  │ alice-account-01 │ account/opened          │
-│ 2  │ alice-account-01 │ account/money_deposited │
-│ 3  │ alice-account-01 │ account/money_deposited │
-│ 4  │ bob-account-02   │ account/opened          │
-│ 5  │ bob-account-02   │ account/money_deposited │
-└────┴──────────────────┴─────────────────────────┘
-
-Waiting for subscriber to process all events from the pub/sub...
--> Subscriber received: account/opened for aggregate alice-account-01
--> Subscriber received: account/money_deposited for aggregate alice-account-01
--> Subscriber received: account/money_deposited for aggregate alice-account-01
--> Subscriber received: account/opened for aggregate bob-account-02
--> Subscriber received: account/money_deposited for aggregate bob-account-02
-
-All events processed by subscriber.
-
-Outbox table:
-┌────┬──────────────┬────────────┐
-│ ID │ AGGREGATE ID │ EVENT NAME │
-└────┴──────────────┴────────────┘
-Polling goroutine stopping.
-```
-
-As you can see, the outbox table was populated atomically when the aggregates were saved. The poller then read each entry, published it, and deleted it, resulting in a reliably processed queue and an empty table at the end. 
-
-### Types of projections
-
-> [!WARNING] Wall of text ahead 😴
-
-There's a lot of projection types, choosing which fits you best requires some consideration
-
-#### By Scope
-
-1. **Per-aggregate projections**
-   * Build the current state of a single entity (aggregate root) by replaying its events.
-   * Example: reconstructing the current balance of one bank account.
-   * ⚠️ In `chronicle`:
-     * This kind of projection is handled by the `repo.Get` method
-
-2. **Global projections**
-   * Span across many aggregates to build a denormalized or system-wide view.
-   * Example: a leaderboard across all players in a game.
-   * ⚠️ In `chronicle`:
-     * This is handled by the `event.GlobalLog` interface, where you can `ReadAllEvents(...)`
-     * Can also be done by directly querying the backing store of the event log, as seen in [examples/6_projections/main.go](./examples/6_projections/main.go) - where it can be done via sql queries directly.
-
-#### By Behavior
-
-1. **Live / Continuous projections**
-   * Update in near-real-time as new events are appended.
-   * Example: a notification system that reacts to user actions instantly.
-   * ⚠️ In `chronicle`:
-     * If you don't require durability, you can wrap the `Save(...)` method on the repository to publish to a queue
-     * If you require durability, you can use an `*aggregate.TransactionalRepository` to ensure all writes are durable before publishing, or to update the projection directly etc.
-
-2. **On-demand / Ad-hoc projections**
-   * Rebuilt only when needed, often discarded afterward.
-   * Example: running an analytics query over a historic event stream.
-   * ⚠️ In `chronicle`:
-     * Can be done by directly querying the backing store or via an `event.GlobalLog`
-
-3. **Catch-up projections**
-   * Rebuild state by replaying past events until caught up with the live stream.
-   * Often used when adding new read models after the system is in production.
-   * ⚠️ In `chronicle`:
-     * Can be done by directly querying the backing store or via an `event.GlobalLog`
-     * It will probably require you to "remember" (possibly in a different store) the last processed id, version etc.
-     * You might also be interested in idempotency
-
-
-#### By Data Transformation
-
-1. **Aggregated projections**
-   * Summarize events into counts, totals, or other metrics.
-   * Example: total sales per day.
-   * ⚠️ In `chronicle`:
-     * This most definitely requires an `event.GlobalLog` or querying the backing store directly, since you need the events from a group of different aggregates
-
-2. **Materialized views (denormalized projections)**
-   * Store data in a form that’s ready for querying, often optimized for UI.
-   * Example: user profile with last login, recent purchases, and preferences.
-
-3. **Policy projections (process managers/sagas)**
-   * React to certain event sequences to drive workflows.
-   * Example: after "OrderPlaced" and "PaymentReceived," trigger "ShipOrder."
-
-#### By Consistency Guarantees
-
-1. **Eventually consistent projections**
-   * Most common - projections lag slightly behind the event stream.
-   * ⚠️ In `chronicle`:
-     * This happens if you're using the outbox pattern or have any kind of pub/sub mechanism in your code
-
-2. **Strongly consistent projections**
-   * Rare in event sourcing, but sometimes required for critical counters or invariants.
-   * ⚠️ In `chronicle`:
-     * This is done when the backing store is an `event.TransactionalLog` at it exposes the transaction AND you want to store your projections in the same store
-     * This is a reasonable and not expensive approach if you're using an SQL store (such as postgres)
-     * It also makes the system easier to work with
-
-#### By How Often You Update
-
-1. **Real-time (push-driven) projections**
-   * Updated immediately as each event arrives.
-   * Common when users expect low-latency updates (e.g., dashboards, notifications).
-   * Mechanism: event handlers/subscribers consume events as they are written.
-
-2. **Near-real-time (micro-batch)**
-   * Updated on a short interval (e.g., every few seconds or minutes).
-   * Useful when strict immediacy isn’t required but throughput matters.
-   * Mechanism: stream processors (like Kafka Streams, Kinesis, or NATS) that batch small sets of events.
-
-3. **Batch/offline projections**
-   * Rebuilt periodically (e.g., nightly jobs).
-   * Useful for reporting, analytics, or expensive transformations.
-   * Mechanism: ETL processes or big data jobs that replay a segment of the event log.
-
-4. **Ad-hoc/on-demand projections**
-   * Rebuilt only when explicitly requested.
-   * Useful when queries are rare or unique (e.g., debugging, exploratory analytics).
-   * Mechanism: fetch event history and compute the projection on the fly, often discarded afterward.
-
-#### By Mechanism of Updating
-
-1. **Event-synchronous (push)**
-   * Event store or message bus pushes new events to projection handlers.
-   * Each projection updates incrementally.
-   * Example: subscribing to an event stream and applying changes one by one.
-
-2. **Polling (pull)**
-   * Projection service periodically polls the event store for new events.
-   * Useful when the event store doesn’t support subscriptions or you want more control over load.
-
-3. **Replay / Rebuild**
-   * Projection is rebuilt from scratch by replaying all relevant events.
-   * Often used when introducing a new projection type or after schema changes.
-
-4. **Hybrid**
-   * Projection is initially rebuilt via a replay, then switches to real-time subscription.
-   * This is the common **catch-up projection** pattern.
