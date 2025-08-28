@@ -57,6 +57,7 @@
 	- [Testing](#testing)
 - [Benchmarks](#benchmarks)
 - [Acknowledgements](#acknowledgements)
+- [TODOs](#todos)
 
 
 ## Quickstart
@@ -2686,3 +2687,13 @@ Other resources for my event sourcing journey in no particular order:
 
 I found that none of them were as flexible as I'd like - a lot of them were only tied to specific storage (like postgres) or were **very** cumbersome to read (talking mostly about the java/dotnet ones here).
 
+## TODOs
+
+- cqrs example
+- a "prod ready" sink with postgres, maybe with NATS
+- system wide constraints: like unique usernames
+- event deletion/compaction - or archiving
+- first class support for sagas/workflows (maybe a separate package)
+- event versioning + upcasting events
+	- MultiTransformer that extends Transformer -> upcast to multiple events
+- a projection package: subscribe to GLobalLog and manage state, checkpointing, replay, idempotency & retry
