@@ -2771,7 +2771,8 @@ I found that none of them were as flexible as I'd like - a lot of them were only
 - cqrs example
 - a "prod ready" sink with postgres, maybe with NATS
 - handling system wide constraints: like unique usernames
-- event deletion/compaction - or archiving
+- event deletion/compaction ✅
+- archiving
 - first class support for sagas/workflows (maybe a separate package)
 - jobs? that might be out of scope but could work as a separate project
 - event versioning + upcasting events
