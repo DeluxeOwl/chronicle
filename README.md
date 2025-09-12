@@ -2155,7 +2155,8 @@ There's a lot of projection types, choosing which fits you best requires some co
 
 ## Event deletion
 
-> [!WARNING] Event deletion breaks the purity of the event log and pollutes your domain events. 
+> [!WARNING] 
+> Event deletion breaks the purity of the event log and pollutes your domain events. 
 > Event deletion can cause data loss or inconsistent state and should be carefully considered and tested.
 
 In an ideal world, an event log is append only and keeps the entire history of all events across all aggregates.
