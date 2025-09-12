@@ -454,3 +454,95 @@ func globalEventKeyFor(globalVersion version.Version) []byte {
 	key = binary.BigEndian.AppendUint64(key, uint64(globalVersion))
 	return key
 }
+
+// ⚠️⚠️⚠️ WARNING: Read carefully
+//
+// DangerouslyDeleteEventsUpTo permanently deletes all events for a specific
+// log ID up to and INCLUDING the specified version.
+//
+// This operation is irreversible and breaks the immutability of the event log.
+//
+// It is intended for use cases manually pruning
+// event streams, and should be used with extreme caution.
+//
+// Rebuilding aggregates or projections after this operation may lead to an inconsistent state.
+//
+// It is recommended to only use this after generating a snapshot event of your aggregate state before running this.
+// Remember to also invalidate projections that depend on deleted events and any snapshots older than the version you're calling this function with.
+//
+// **Performance Warning**: This function must scan the entire global event index
+// to find and remove the corresponding global event entries. This can be very
+// slow if the database is large. The deletion of the stream-specific events is,
+// by contrast, very fast.
+func (p *Pebble) DangerouslyDeleteEventsUpTo(
+	ctx context.Context,
+	id event.LogID,
+	v version.Version,
+) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	batch := p.db.NewBatch()
+	defer batch.Close()
+
+	// Delete from the global event index. This requires a full scan of the index to find
+	// which global versions correspond to the events being deleted.
+	//nolint:exhaustruct // Unnecessary.
+	iter, err := p.db.NewIter(&pebble.IterOptions{
+		LowerBound: globalEventKeyPrefix,
+		UpperBound: prefixEndKey(globalEventKeyPrefix),
+	})
+	if err != nil {
+		return fmt.Errorf(
+			"dangerously delete: create global events iterator for log '%s': %w", id, err,
+		)
+	}
+	defer iter.Close()
+
+	for iter.First(); iter.Valid(); iter.Next() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		var data pebbleGlobalEventData
+		if err := json.Unmarshal(iter.Value(), &data); err != nil {
+			return fmt.Errorf(
+				"dangerously delete: unmarshal global event data for key %q: %w", iter.Key(), err,
+			)
+		}
+
+		if data.LogID == id && data.Version <= v {
+			keyToDelete := make([]byte, len(iter.Key()))
+			copy(keyToDelete, iter.Key())
+
+			if err := batch.Delete(keyToDelete, pebble.NoSync); err != nil {
+				return fmt.Errorf(
+					"dangerously delete: add global event key %q to batch: %w", keyToDelete, err,
+				)
+			}
+		}
+	}
+	if err := iter.Error(); err != nil {
+		return fmt.Errorf(
+			"dangerously delete: global events iterator error for log '%s': %w",
+			id,
+			err,
+		)
+	}
+
+	// Delete the stream-specific events using a single, efficient range deletion.
+	// The range is [start, end), inclusive of start, exclusive of end.
+	startKey := eventKeyFor(id, 1) // Start from version 1.
+	endKey := eventKeyFor(id, v+1) // Go up to, but not including, version v+1.
+	if err := batch.DeleteRange(startKey, endKey, pebble.NoSync); err != nil {
+		return fmt.Errorf(
+			"dangerously delete: add event range to batch for log '%s': %w", id, err,
+		)
+	}
+
+	if err := batch.Commit(pebble.Sync); err != nil {
+		return fmt.Errorf("dangerously delete: commit batch for log '%s': %w", id, err)
+	}
+
+	return nil
+}

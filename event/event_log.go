@@ -123,6 +123,28 @@ type GlobalReader interface {
 	ReadAllEvents(ctx context.Context, globalSelector version.Selector) GlobalRecords
 }
 
+// ⚠️⚠️⚠️ WARNING: Read carefully
+//
+// DeleterLog permanently deletes all events for a specific
+// log ID up to and INCLUDING the specified version.
+//
+// This operation is irreversible and breaks the immutability of the event log.
+//
+// It is intended for use cases manually pruning
+// event streams, and should be used with extreme caution.
+//
+// Rebuilding aggregates or projections after this operation may lead to an inconsistent state.
+//
+// It is recommended to only use this after generating a snapshot event of your aggregate state before running this.
+// Remember to also invalidate projections that depend on deleted events and any snapshots older than the version you're calling this function with.
+type DeleterLog interface {
+	DangerouslyDeleteEventsUpTo(
+		ctx context.Context,
+		id LogID,
+		version version.Version,
+	) error
+}
+
 // GlobalRecords is an iterator for the global sequence of *GlobalRecord instances.
 // It allows for lazy processing of all events in the store, ordered by their global version.
 //

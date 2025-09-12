@@ -25,12 +25,13 @@ type Postgres struct {
 	db       *sql.DB
 	useByteA bool
 
-	qCreateTable    string
-	qCreateFunction string
-	qCreateTrigger  string
-	qInsertEvent    string
-	qReadEvents     string
-	qReadAllEvents  string
+	qCreateTable      string
+	qCreateFunction   string
+	qCreateTrigger    string
+	qInsertEvent      string
+	qReadEvents       string
+	qReadAllEvents    string
+	qDeleteEventsUpTo string
 }
 
 type PostgresOption func(*Postgres)
@@ -109,6 +110,10 @@ func PostgresTableName(tableName string) PostgresOption {
 		)
 		p.qReadAllEvents = fmt.Sprintf(
 			"SELECT global_version, version, log_id, event_name, data FROM %s WHERE global_version >= $1 ORDER BY global_version ASC",
+			tableName,
+		)
+		p.qDeleteEventsUpTo = fmt.Sprintf(
+			"DELETE FROM %s WHERE log_id = $1 AND version <= $2",
 			tableName,
 		)
 	}
@@ -427,4 +432,36 @@ func (p *Postgres) ReadAllEvents(
 			yield(nil, fmt.Errorf("read all events: rows error: %w", err))
 		}
 	}
+}
+
+// ⚠️⚠️⚠️ WARNING: Read carefully
+//
+// DangerouslyDeleteEventsUpTo permanently deletes all events for a specific
+// log ID up to and INCLUDING the specified version.
+//
+// This operation is irreversible and breaks the immutability of the event log.
+//
+// It is intended for use cases manually pruning
+// event streams, and should be used with extreme caution.
+//
+// Rebuilding aggregates or projections after this operation may lead to an inconsistent state.
+//
+// It is recommended to only use this after generating a snapshot event of your aggregate state before running this.
+// Remember to also invalidate projections that depend on deleted events and any snapshots older than the version you're calling this function with.
+func (p *Postgres) DangerouslyDeleteEventsUpTo(
+	ctx context.Context,
+	id event.LogID,
+	version version.Version,
+) error {
+	_, err := p.db.ExecContext(ctx, p.qDeleteEventsUpTo, id, version)
+	if err != nil {
+		return fmt.Errorf(
+			"dangerously delete events for log '%s' up to version %d: %w",
+			id,
+			version,
+			err,
+		)
+	}
+
+	return nil
 }

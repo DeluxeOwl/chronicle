@@ -44,6 +44,7 @@ func (p *Person) EventFuncs() event.FuncsFor[PersonEvent] {
 	return event.FuncsFor[PersonEvent]{
 		func() PersonEvent { return new(personWasBorn) },
 		func() PersonEvent { return new(personAgedOneYear) },
+		func() PersonEvent { return new(personSnapEvent) },
 	}
 }
 
@@ -62,6 +63,15 @@ type personAgedOneYear struct{}
 
 func (*personAgedOneYear) EventName() string { return "person/aged-one-year" }
 func (*personAgedOneYear) isPersonEvent()    {}
+
+type personSnapEvent struct {
+	ID   PersonID `json:"id"`
+	Name string   `json:"name"`
+	Age  int      `json:"age"`
+}
+
+func (*personSnapEvent) EventName() string { return "person/snapshot-event" }
+func (*personSnapEvent) isPersonEvent()    {}
 
 // Note: you'd add custom dependencies by returning a non-empty
 // instance, or creating a closure.
@@ -88,6 +98,10 @@ func New(id PersonID, name string) (*Person, error) {
 
 func (p *Person) Apply(evt PersonEvent) error {
 	switch event := evt.(type) {
+	case *personSnapEvent:
+		p.id = event.ID
+		p.age = event.Age
+		p.name = event.Name
 	case *personWasBorn:
 		p.id = event.ID
 		p.age = 0
@@ -103,6 +117,14 @@ func (p *Person) Apply(evt PersonEvent) error {
 
 func (p *Person) Age() error {
 	return p.recordThat(&personAgedOneYear{})
+}
+
+func (p *Person) GenerateSnapshotEvent() error {
+	return p.recordThat(&personSnapEvent{
+		ID:   p.id,
+		Name: p.name,
+		Age:  p.age,
+	})
 }
 
 func (p *Person) recordThat(event PersonEvent) error {
@@ -159,7 +181,7 @@ func CustomSnapshot(
 		switch evt.(type) {
 		case *personAgedOneYear:
 			return true
-		case *personWasBorn:
+		case *personWasBorn, *personSnapEvent:
 			continue
 		default:
 			continue
@@ -177,6 +199,63 @@ func createPerson(t *testing.T) *Person {
 	return p
 }
 
+func Test_EventDeletion(t *testing.T) {
+	eventLogs, closeDBs := testutils.SetupEventLogs(t)
+	defer closeDBs()
+
+	for _, el := range eventLogs {
+		t.Run(el.Name, func(t *testing.T) {
+			deleterLog, ok := el.Log.(event.DeleterLog)
+			if !ok {
+				t.Skipf("%s does not support deletion of events, skipping", el.Name)
+			}
+
+			ctx := t.Context()
+			p := createPerson(t)
+
+			esRepo, err := chronicle.NewEventSourcedRepository(
+				el.Log,
+				NewEmpty,
+				nil,
+			)
+			require.NoError(t, err)
+
+			for range 3999 {
+				p.Age()
+			}
+
+			// Version is 4000, 1 is from wasBorn
+			versionBeforeSnapshotEvent := 4000
+			// same as below
+			// versionBeforeSnapshotEvent := p.Version()
+
+			// Generate a "snapshot event", version is 4001
+			err = p.GenerateSnapshotEvent()
+			require.NoError(t, err)
+
+			// Age is 6000 now.
+			for range 2001 {
+				p.Age()
+			}
+
+			_, _, err = esRepo.Save(ctx, p)
+			require.NoError(t, err)
+
+			// It's up to the user to remember this version somehow.
+			err = deleterLog.DangerouslyDeleteEventsUpTo(
+				ctx,
+				event.LogID(p.ID()),
+				version.Version(versionBeforeSnapshotEvent),
+			)
+			require.NoError(t, err)
+
+			personAfterDelete, err := esRepo.Get(ctx, p.ID())
+			require.NoError(t, err)
+			require.Equal(t, 6000, personAfterDelete.age)
+		})
+	}
+}
+
 func Test_Person(t *testing.T) {
 	ctx := t.Context()
 
@@ -185,8 +264,8 @@ func Test_Person(t *testing.T) {
 
 	p := createPerson(t)
 
-	// memlog := eventlog.NewMemory()
-	memlog, err := eventlog.NewPostgres(pg)
+	// pglog := eventlog.NewMemory()
+	pglog, err := eventlog.NewPostgres(pg)
 	require.NoError(t, err)
 
 	// _, err = chronicle.NewTransactionalRepository(
@@ -207,7 +286,7 @@ func Test_Person(t *testing.T) {
 	registry := chronicle.NewAnyEventRegistry()
 
 	esRepo, err := chronicle.NewEventSourcedRepository(
-		memlog,
+		pglog,
 		NewEmpty,
 		nil,
 		aggregate.AnyEventRegistry(registry),

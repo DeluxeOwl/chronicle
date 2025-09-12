@@ -222,3 +222,32 @@ func (mem *Memory) ReadAllEvents(
 		}
 	}
 }
+
+func (mem *Memory) DangerouslyDeleteEventsUpTo(
+	ctx context.Context,
+	id event.LogID,
+	version version.Version,
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	mem.mu.Lock()
+	defer mem.mu.Unlock()
+
+	events, ok := mem.events[id]
+	if !ok {
+		return nil
+	}
+
+	n := 0
+	for _, rec := range events {
+		if rec.Version > version {
+			events[n] = rec
+			n++
+		}
+	}
+	mem.events[id] = events[:n]
+
+	return nil
+}
