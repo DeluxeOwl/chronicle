@@ -2191,7 +2191,7 @@ Event deletion is lossy and dangerous, because if you don't do it properly, it c
 
 **The critical difference from Snapshots**: Regular snapshots are a performance cache. The full event log is still the source of truth. With compaction, the original events are gone forever. You can no longer "time travel" to a state before the compaction. 
 
-You can take a look at the `Test_EventDeletion` test in [aggregate_test.go](./aggregate/aggregate_test.go).
+You can take a look at the `Test_EventDeletion` test in [aggregate_deletion_test.go](./aggregate/aggregate_deletion_test.go).
 
 A pattern for deleting events safely is generating a snapshot event (**not related to the snapshot store**):
 ```go

@@ -45,6 +45,10 @@ func (p *Person) EventFuncs() event.FuncsFor[PersonEvent] {
 		func() PersonEvent { return new(personWasBorn) },
 		func() PersonEvent { return new(personAgedOneYear) },
 		func() PersonEvent { return new(personSnapEvent) },
+		func() PersonEvent { return new(nameAndAgeSetV1) }, // For reading old data
+		func() PersonEvent { return new(nameSetV2) },
+		func() PersonEvent { return new(ageSetV2) },
+		func() PersonEvent { return new(multipleYearsAged) },
 	}
 }
 
@@ -73,6 +77,37 @@ type personSnapEvent struct {
 func (*personSnapEvent) EventName() string { return "person/snapshot-event" }
 func (*personSnapEvent) isPersonEvent()    {}
 
+// For the "splitting" (up-casting) test
+type nameAndAgeSetV1 struct {
+	Name string `json:"name"`
+	Age  int    `json:"age"`
+}
+
+func (*nameAndAgeSetV1) EventName() string { return "person/name-and-age-set-v1" }
+func (*nameAndAgeSetV1) isPersonEvent()    {}
+
+type nameSetV2 struct {
+	Name string `json:"name"`
+}
+
+func (*nameSetV2) EventName() string { return "person/name-set-v2" }
+func (*nameSetV2) isPersonEvent()    {}
+
+type ageSetV2 struct {
+	Age int `json:"age"`
+}
+
+func (*ageSetV2) EventName() string { return "person/age-set-v2" }
+func (*ageSetV2) isPersonEvent()    {}
+
+// For the "merging" (batching) test
+type multipleYearsAged struct {
+	Years int `json:"years"`
+}
+
+func (*multipleYearsAged) EventName() string { return "person/multiple-years-aged" }
+func (*multipleYearsAged) isPersonEvent()    {}
+
 // Note: you'd add custom dependencies by returning a non-empty
 // instance, or creating a closure.
 func NewEmpty() *Person {
@@ -96,6 +131,7 @@ func New(id PersonID, name string) (*Person, error) {
 	return p, nil
 }
 
+// Update Person.Apply() to handle the new events
 func (p *Person) Apply(evt PersonEvent) error {
 	switch event := evt.(type) {
 	case *personSnapEvent:
@@ -108,6 +144,16 @@ func (p *Person) Apply(evt PersonEvent) error {
 		p.name = event.BornName
 	case *personAgedOneYear:
 		p.age++
+	case *nameSetV2:
+		p.name = event.Name
+	case *ageSetV2:
+		p.age = event.Age
+	case *multipleYearsAged:
+		p.age += event.Years
+	// nameAndAgeSetV1 doesn't need a handler because it should never be applied directly;
+	// it will always be transformed into V2 events before Apply is called.
+	case *nameAndAgeSetV1:
+		return fmt.Errorf("should never be called: %T", event)
 	default:
 		return fmt.Errorf("unexpected event kind: %T", event)
 	}
@@ -181,7 +227,7 @@ func CustomSnapshot(
 		switch evt.(type) {
 		case *personAgedOneYear:
 			return true
-		case *personWasBorn, *personSnapEvent:
+		case *personWasBorn, *personSnapEvent, *ageSetV2, *multipleYearsAged, *nameAndAgeSetV1, *nameSetV2:
 			continue
 		default:
 			continue
@@ -197,63 +243,6 @@ func createPerson(t *testing.T) *Person {
 	require.NoError(t, err)
 	require.EqualValues(t, 1, p.Version())
 	return p
-}
-
-func Test_EventDeletion(t *testing.T) {
-	eventLogs, closeDBs := testutils.SetupEventLogs(t)
-	defer closeDBs()
-
-	for _, el := range eventLogs {
-		t.Run(el.Name, func(t *testing.T) {
-			deleterLog, ok := el.Log.(event.DeleterLog)
-			if !ok {
-				t.Skipf("%s does not support deletion of events, skipping", el.Name)
-			}
-
-			ctx := t.Context()
-			p := createPerson(t)
-
-			esRepo, err := chronicle.NewEventSourcedRepository(
-				el.Log,
-				NewEmpty,
-				nil,
-			)
-			require.NoError(t, err)
-
-			for range 3999 {
-				p.Age()
-			}
-
-			// Version is 4000, 1 is from wasBorn
-			versionBeforeSnapshotEvent := 4000
-			// same as below
-			// versionBeforeSnapshotEvent := p.Version()
-
-			// Generate a "snapshot event", version is 4001
-			err = p.GenerateSnapshotEvent()
-			require.NoError(t, err)
-
-			// Age is 6000 now.
-			for range 2001 {
-				p.Age()
-			}
-
-			_, _, err = esRepo.Save(ctx, p)
-			require.NoError(t, err)
-
-			// It's up to the user to remember this version somehow.
-			err = deleterLog.DangerouslyDeleteEventsUpTo(
-				ctx,
-				event.LogID(p.ID()),
-				version.Version(versionBeforeSnapshotEvent),
-			)
-			require.NoError(t, err)
-
-			personAfterDelete, err := esRepo.Get(ctx, p.ID())
-			require.NoError(t, err)
-			require.Equal(t, 6000, personAfterDelete.age)
-		})
-	}
 }
 
 func Test_Person(t *testing.T) {
@@ -500,202 +489,4 @@ func Test_LoadFromRecords(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, emptyPerson, p)
-}
-
-func Test_SnapshotRepo(t *testing.T) {
-	t.Run("should snapshot every 10 events", func(t *testing.T) {
-		ctx := t.Context()
-		p := createPerson(t)
-
-		memlog := eventlog.NewMemory()
-
-		var lastSnapshot *PersonSnapshot
-		snapstore := &SnapshotStoreMock[PersonID, *PersonSnapshot]{
-			SaveSnapshotFunc: func(ctx context.Context, snapshot *PersonSnapshot) error {
-				lastSnapshot = snapshot
-				return nil
-			},
-		}
-
-		registry := chronicle.NewAnyEventRegistry()
-
-		esRepo, err := chronicle.NewEventSourcedRepository(
-			memlog,
-			NewEmpty,
-			nil,
-			aggregate.AnyEventRegistry(registry),
-		)
-		require.NoError(t, err)
-
-		repo, err := chronicle.NewEventSourcedRepositoryWithSnapshots(
-			esRepo,
-			snapstore,
-			NewEmpty(),
-			aggregate.SnapStrategyFor[*Person]().EveryNEvents(10),
-		)
-		require.NoError(t, err)
-
-		p.Age()
-
-		// Shouldn't be called
-		_, _, err = repo.Save(ctx, p)
-		require.NoError(t, err)
-		require.Empty(t, snapstore.calls.SaveSnapshot)
-		require.Nil(t, lastSnapshot)
-
-		for range 10 {
-			p.Age()
-		}
-		_, _, err = repo.Save(ctx, p)
-		require.NoError(t, err)
-
-		p.Age()
-		_, _, err = repo.Save(ctx, p)
-		require.NoError(t, err)
-
-		// Should be called once
-		require.Len(t, snapstore.calls.SaveSnapshot, 1)
-
-		// Now, we add 9 more, it should be called once again
-		for range 9 {
-			p.Age()
-		}
-		_, _, err = repo.Save(ctx, p)
-		require.NoError(t, err)
-		require.Len(t, snapstore.calls.SaveSnapshot, 2)
-
-		// And now it should be called 3 times
-		for range 119 {
-			p.Age()
-		}
-		_, _, err = repo.Save(ctx, p)
-		require.NoError(t, err)
-		require.Len(t, snapstore.calls.SaveSnapshot, 3)
-		require.Equal(t, 140, lastSnapshot.Age)
-	})
-
-	t.Run("should ignore snapshot error", func(t *testing.T) {
-		ctx := t.Context()
-		p := createPerson(t)
-
-		memlog := eventlog.NewMemory()
-
-		snapstore := &SnapshotStoreMock[PersonID, *PersonSnapshot]{
-			SaveSnapshotFunc: func(ctx context.Context, snapshot *PersonSnapshot) error {
-				return errors.New("snapshot error")
-			},
-		}
-
-		registry := chronicle.NewAnyEventRegistry()
-		esRepo, err := chronicle.NewEventSourcedRepository(
-			memlog,
-			NewEmpty,
-			nil,
-			aggregate.AnyEventRegistry(registry),
-		)
-		require.NoError(t, err)
-		repo, err := chronicle.NewEventSourcedRepositoryWithSnapshots(
-			esRepo,
-			snapstore,
-			NewEmpty(),
-			aggregate.SnapStrategyFor[*Person]().AfterCommit(),
-			aggregate.OnSnapshotError(func(ctx context.Context, err error) error {
-				return nil
-			}),
-		)
-		require.NoError(t, err)
-
-		for range 44 {
-			p.Age()
-		}
-		_, _, err = repo.Save(ctx, p)
-		require.NoError(t, err)
-		require.Len(t, snapstore.calls.SaveSnapshot, 1)
-	})
-
-	t.Run("should ignore snapshot error when user returns nil", func(t *testing.T) {
-		ctx := t.Context()
-		p := createPerson(t)
-
-		memlog := eventlog.NewMemory()
-
-		snapstore := &SnapshotStoreMock[PersonID, *PersonSnapshot]{
-			SaveSnapshotFunc: func(ctx context.Context, snapshot *PersonSnapshot) error {
-				return errors.New("snapshot error")
-			},
-		}
-
-		registry := chronicle.NewAnyEventRegistry()
-
-		esRepo, err := chronicle.NewEventSourcedRepository(
-			memlog,
-			NewEmpty,
-			nil,
-			aggregate.AnyEventRegistry(registry),
-		)
-		require.NoError(t, err)
-
-		repo, err := chronicle.NewEventSourcedRepositoryWithSnapshots(
-			esRepo,
-			snapstore,
-			NewEmpty(),
-			aggregate.SnapStrategyFor[*Person]().AfterCommit(),
-			aggregate.OnSnapshotError(func(_ context.Context, err error) error {
-				// Received a non-nil error, but return nil anyway.
-				require.ErrorContains(t, err, "snapshot error")
-				require.Error(t, err)
-				return nil
-			}),
-		)
-		require.NoError(t, err)
-
-		for range 44 {
-			p.Age()
-		}
-		_, _, err = repo.Save(ctx, p)
-		require.NoError(t, err)
-		require.Len(t, snapstore.calls.SaveSnapshot, 1)
-	})
-
-	t.Run("should return error on snapshot error", func(t *testing.T) {
-		ctx := t.Context()
-		p := createPerson(t)
-
-		memlog := eventlog.NewMemory()
-
-		snapstore := &SnapshotStoreMock[PersonID, *PersonSnapshot]{
-			SaveSnapshotFunc: func(ctx context.Context, snapshot *PersonSnapshot) error {
-				return errors.New("snapshot error")
-			},
-		}
-
-		registry := chronicle.NewAnyEventRegistry()
-
-		esRepo, err := chronicle.NewEventSourcedRepository(
-			memlog,
-			NewEmpty,
-			nil,
-			aggregate.AnyEventRegistry(registry),
-		)
-		require.NoError(t, err)
-
-		repo, err := chronicle.NewEventSourcedRepositoryWithSnapshots(
-			esRepo,
-			snapstore,
-			NewEmpty(),
-			aggregate.SnapStrategyFor[*Person]().AfterCommit(),
-			aggregate.OnSnapshotError(func(_ context.Context, err error) error {
-				return fmt.Errorf("user customized message %w", err)
-			}),
-		)
-		require.NoError(t, err)
-
-		for range 44 {
-			p.Age()
-		}
-		_, _, err = repo.Save(ctx, p)
-		require.Error(t, err)
-		require.ErrorContains(t, err, "user customized message")
-		require.Len(t, snapstore.calls.SaveSnapshot, 1)
-	})
 }
