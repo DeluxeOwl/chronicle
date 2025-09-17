@@ -40,7 +40,7 @@
 		- [By How Often You Update](#by-how-often-you-update)
 		- [By Mechanism of Updating](#by-mechanism-of-updating)
 - [Event deletion](#event-deletion)
-	- [Event Archival](#event-archival)
+	- [Event archival](#event-archival)
 - [Implementing a custom `event.Log`](#implementing-a-custom-eventlog)
 	- [The `event.Reader` interface](#the-eventreader-interface)
 	- [The `event.Appender` interface](#the-eventappender-interface)
@@ -2252,7 +2252,7 @@ type DeleterLog interface {
 }
 ```
 
-### Event Archival
+### Event archival
 
 Chronicle doesn't provide a way to handle event archival since it can be done in lots of ways.  
 
