@@ -15,7 +15,7 @@ import (
 //
 // Usage:
 //
-//	// A simple transformer that encrypts event data.
+//	// An example of a 1-to-1 transformer for encryption
 //	type CryptoTransformer struct {
 //		// dependencies like an encryption service
 //	}
@@ -44,6 +44,24 @@ import (
 //
 //	// Then, pass it when creating the repository:
 //	// repo, _ := chronicle.NewEventSourcedRepository(log, newAgg, []Transformer{&CryptoTransformer{...}})
+//
+//	// An example of a 1-to-many transformer (upcasting)
+//	type UpcasterV1toV2 struct {}
+//
+//	func (u *UpcasterV1toV2) TransformForRead(ctx context.Context, events []event.Any) ([]event.Any, error) {
+//		newEvents := make([]event.Any, 0, len(events))
+//		for _, e := range events {
+//			if oldEvent, ok := e.(*UserRegisteredV1); ok {
+//				// Split V1 event into two V2 events
+//				newEvents = append(newEvents, &UserCreatedV2{ID: oldEvent.ID, Timestamp: oldEvent.RegisteredAt})
+//				newEvents = append(newEvents, &EmailAddressAddedV2{ID: oldEvent.ID, Email: oldEvent.Email})
+//			} else {
+//				// Pass-through other events unchanged
+//				newEvents = append(newEvents, e)
+//			}
+//		}
+//		return newEvents, nil
+//	}
 type Transformer[E Any] interface {
 	// TransformForWrite is called BEFORE events are serialized and saved to the event log.
 	// It receives a concrete event types and must returns events of the same type.
