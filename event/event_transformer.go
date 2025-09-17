@@ -123,3 +123,54 @@ func (a *anyTransformerAdapter[E]) TransformForRead(ctx context.Context, event E
 
 	return finalEvent, nil
 }
+
+// TransformerChain is a composite Transformer that applies a sequence of transformers.
+// It implements the Transformer interface, allowing multiple transformers to be treated
+// as a single one.
+//
+// On write, it applies transformers in the order they are provided.
+// On read, it applies them in the reverse order to correctly unwind the transformations.
+type TransformerChain[E Any] struct {
+	transformers []Transformer[E]
+}
+
+// NewTransformerChain creates a new TransformerChain from the given transformers.
+func NewTransformerChain[E Any](transformers ...Transformer[E]) TransformerChain[E] {
+	return TransformerChain[E]{
+		transformers: transformers,
+	}
+}
+
+// TransformForWrite applies each transformer in the chain sequentially.
+// The output of one transformer becomes the input for the next.
+func (c TransformerChain[E]) TransformForWrite(ctx context.Context, event E) (E, error) {
+	var err error
+	currentEvent := event
+
+	for _, transformer := range c.transformers {
+		currentEvent, err = transformer.TransformForWrite(ctx, currentEvent)
+		if err != nil {
+			var empty E
+			return empty, err
+		}
+	}
+
+	return currentEvent, nil
+}
+
+// TransformForRead applies each transformer in the chain in reverse order.
+// This ensures that write-time transformations are correctly undone (e.g., decompress then decrypt).
+func (c TransformerChain[E]) TransformForRead(ctx context.Context, event E) (E, error) {
+	var err error
+	currentEvent := event
+
+	for i := len(c.transformers) - 1; i >= 0; i-- {
+		transformer := c.transformers[i]
+		currentEvent, err = transformer.TransformForRead(ctx, currentEvent)
+		if err != nil {
+			var empty E
+			return empty, err
+		}
+	}
+	return currentEvent, nil
+}

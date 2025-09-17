@@ -79,10 +79,45 @@ type TransactionalAggregateProcessor[TX any, TID ID, E event.Any, R Root[TID, E]
 	Process(ctx context.Context, tx TX, root R, events CommittedEvents[E]) error
 }
 
+// ProcessorChain chains multiple TransactionalAggregateProcessor instances together,
+// executing them sequentially as a single unit. It implements the
+// TransactionalAggregateProcessor interface itself, allowing it to be used anywhere
+// a single processor is expected.
+//
+// This is useful for composing multiple transactional side-effects for a single
+// aggregate save operation, such as updating a read model *and* creating an outbox
+// entry in the same transaction.
+//
+// If any processor in the chain returns an error, execution stops immediately,
+// and the error is returned. This ensures that the entire chain's operations,
+// and thus the parent transaction, are atomic.
+//
+// Example:
+//
+//	// Create individual processors
+//	outboxProcessor := &OutboxProcessor{}
+//	projectionProcessor := &ProjectionProcessor{}
+//
+//	// Combine them into a single chain
+//	processorChain := NewProcessorChain(
+//	    outboxProcessor,
+//	    projectionProcessor,
+//	)
+//
+//	// Use the chain with a transactional repository
+//	repo, err := NewTransactionalRepository(
+//	    db,
+//	    account.NewEmpty,
+//	    nil,
+//	    processorChain, // The chain acts as a single processor
+//	)
 type ProcessorChain[TX any, TID ID, E event.Any, R Root[TID, E]] struct {
 	processors []TransactionalAggregateProcessor[TX, TID, E, R]
 }
 
+// NewProcessorChain creates a new ProcessorChain from the provided processors.
+// The processors will be executed by the chain's Process method in the same
+// order they are provided here.
 func NewProcessorChain[TX any, TID ID, E event.Any, R Root[TID, E]](
 	processors ...TransactionalAggregateProcessor[TX, TID, E, R],
 ) ProcessorChain[TX, TID, E, R] {
@@ -91,13 +126,22 @@ func NewProcessorChain[TX any, TID ID, E event.Any, R Root[TID, E]](
 	}
 }
 
-func (fp ProcessorChain[TX, TID, E, R]) Process(
+// Process executes each processor in the chain sequentially. It satisfies the
+// TransactionalAggregateProcessor interface.
+//
+// Each processor is called with the same context, transaction handle, aggregate root,
+// and committed events.
+//
+// If any processor returns an error, execution of the chain is halted, and the
+// error is returned immediately. This will cause the parent transaction to be
+// rolled back. If all processors complete successfully, it returns nil.
+func (pc ProcessorChain[TX, TID, E, R]) Process(
 	ctx context.Context,
 	tx TX,
 	root R,
 	events CommittedEvents[E],
 ) error {
-	for _, processor := range fp.processors {
+	for _, processor := range pc.processors {
 		if err := processor.Process(ctx, tx, root, events); err != nil {
 			return err
 		}
