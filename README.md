@@ -1429,47 +1429,57 @@ func NewCryptoTransformer(key []byte) *CryptoTransformer {
 	}
 }
 
-func (t *CryptoTransformer) TransformForWrite(ctx context.Context, event AccountEvent) (AccountEvent, error) {
-	if opened, isOpened := event.(*accountOpened); isOpened {
-		fmt.Println("Received \"accountOpened\" event")
+func (t *CryptoTransformer) TransformForWrite(
+	ctx context.Context,
+	events []AccountEvent,
+) ([]AccountEvent, error) {
+	for _, event := range events {
+		if opened, isOpened := event.(*accountOpened); isOpened {
+			fmt.Println("Received \"accountOpened\" event")
 
-		encryptedName, err := encrypt([]byte(opened.HolderName), t.key)
-		if err != nil {
-			return nil, fmt.Errorf("failed to encrypt holder name: %w", err)
+			encryptedName, err := encrypt([]byte(opened.HolderName), t.key)
+			if err != nil {
+				return nil, fmt.Errorf("failed to encrypt holder name: %w", err)
+			}
+			opened.HolderName = base64.StdEncoding.EncodeToString(encryptedName)
+
+			fmt.Printf("Holder name after encryption and encoding: %s\n", opened.HolderName)
 		}
-		opened.HolderName = base64.StdEncoding.EncodeToString(encryptedName)
-
-		fmt.Printf("Holder name after encryption and encoding: %s\n", opened.HolderName)
 	}
 
-	return event, nil
+	return events, nil
 }
 ```
 
-We're checking on write if the event is of type `*accountOpened`. If it is, we're encrypting the name and encoding it to base64.
+We're iterating through the events and checking on write if the event is of type `*accountOpened`. If it is, we're encrypting the name and encoding it to base64.
 
 The `TransformForRead` method should be the inverse of this process:
 ```go
-func (t *CryptoTransformer) TransformForRead(ctx context.Context, event AccountEvent) (AccountEvent, error) {
-	if opened, isOpened := event.(*accountOpened); isOpened {
-		fmt.Printf("Holder name before decoding: %s\n", opened.HolderName)
+func (t *CryptoTransformer) TransformForRead(
+	ctx context.Context,
+	events []AccountEvent,
+) ([]AccountEvent, error) {
+	for _, event := range events {
+		if opened, isOpened := event.(*accountOpened); isOpened {
+			fmt.Printf("Holder name before decoding: %s\n", opened.HolderName)
 
-		decoded, err := base64.StdEncoding.DecodeString(opened.HolderName)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode encrypted name: %w", err)
-		}
+			decoded, err := base64.StdEncoding.DecodeString(opened.HolderName)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decode encrypted name: %w", err)
+			}
 
-		fmt.Printf("Holder name before decryption: %s\n", decoded)
-		decryptedName, err := decrypt(decoded, t.key)
-		if err != nil {
-			// This happens if the key is wrong (or "deleted")
-			return nil, fmt.Errorf("failed to decrypt holder name: %w", err)
+			fmt.Printf("Holder name before decryption: %s\n", decoded)
+			decryptedName, err := decrypt(decoded, t.key)
+			if err != nil {
+				// This happens if the key is wrong (or "deleted")
+				return nil, fmt.Errorf("failed to decrypt holder name: %w", err)
+			}
+			opened.HolderName = string(decryptedName)
+			fmt.Printf("Holder name after decryption: %s\n", opened.HolderName)
 		}
-		opened.HolderName = string(decryptedName)
-		fmt.Printf("Holder name after decryption: %s\n", opened.HolderName)
 	}
 
-	return event, nil
+	return events, nil
 }
 ```
 
@@ -1586,14 +1596,25 @@ Let's create a simple transformer that logs every event being written to or read
 type LoggingTransformer struct{}
 
 // This transformer works with any event type (`event.Any`).
-func (t *LoggingTransformer) TransformForWrite(_ context.Context, e event.Any) (event.Any, error) {
-	fmt.Printf("[LOG] Writing event: %s\n", e.EventName())
-	return e, nil
+func (t *LoggingTransformer) TransformForWrite(
+	_ context.Context,
+	events []event.Any,
+) ([]event.Any, error) {
+	for _, event := range events {
+		fmt.Printf("[LOG] Writing event: %s\n", event.EventName())
+	}
+
+	return events, nil
 }
 
-func (t *LoggingTransformer) TransformForRead(_ context.Context, e event.Any) (event.Any, error) {
-	fmt.Printf("[LOG] Reading event: %s\n", e.EventName())
-	return e, nil
+func (t *LoggingTransformer) TransformForRead(
+	_ context.Context,
+	events []event.Any,
+) ([]event.Any, error) {
+	for _, event := range events {
+		fmt.Printf("[LOG] Reading event: %s\n", event.EventName())
+	}
+	return events, nil
 }
 ```
 
