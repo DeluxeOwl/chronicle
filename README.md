@@ -28,6 +28,8 @@
 - [Event transformers](#event-transformers)
 	- [Example: Crypto shedding for GDPR](#example-crypto-shedding-for-gdpr)
 	- [Global Transformers with `AnyTransformerToTyped`](#global-transformers-with-anytransformertotyped)
+	- [Event versioning and upcasting](#event-versioning-and-upcasting)
+		- [Merging events for compaction](#merging-events-for-compaction)
 - [Projections](#projections)
 	- [`event.TransactionalEventLog` and `aggregate.TransactionalRepository`](#eventtransactionaleventlog-and-aggregatetransactionalrepository)
 	- [Example](#example)
@@ -40,7 +42,7 @@
 		- [By How Often You Update](#by-how-often-you-update)
 		- [By Mechanism of Updating](#by-mechanism-of-updating)
 - [Event deletion](#event-deletion)
-	- [Event Archival](#event-archival)
+	- [Event archival](#event-archival)
 - [Implementing a custom `event.Log`](#implementing-a-custom-eventlog)
 	- [The `event.Reader` interface](#the-eventreader-interface)
 	- [The `event.Appender` interface](#the-eventappender-interface)
@@ -1429,47 +1431,57 @@ func NewCryptoTransformer(key []byte) *CryptoTransformer {
 	}
 }
 
-func (t *CryptoTransformer) TransformForWrite(ctx context.Context, event AccountEvent) (AccountEvent, error) {
-	if opened, isOpened := event.(*accountOpened); isOpened {
-		fmt.Println("Received \"accountOpened\" event")
+func (t *CryptoTransformer) TransformForWrite(
+	ctx context.Context,
+	events []AccountEvent,
+) ([]AccountEvent, error) {
+	for _, event := range events {
+		if opened, isOpened := event.(*accountOpened); isOpened {
+			fmt.Println("Received \"accountOpened\" event")
 
-		encryptedName, err := encrypt([]byte(opened.HolderName), t.key)
-		if err != nil {
-			return nil, fmt.Errorf("failed to encrypt holder name: %w", err)
+			encryptedName, err := encrypt([]byte(opened.HolderName), t.key)
+			if err != nil {
+				return nil, fmt.Errorf("failed to encrypt holder name: %w", err)
+			}
+			opened.HolderName = base64.StdEncoding.EncodeToString(encryptedName)
+
+			fmt.Printf("Holder name after encryption and encoding: %s\n", opened.HolderName)
 		}
-		opened.HolderName = base64.StdEncoding.EncodeToString(encryptedName)
-
-		fmt.Printf("Holder name after encryption and encoding: %s\n", opened.HolderName)
 	}
 
-	return event, nil
+	return events, nil
 }
 ```
 
-We're checking on write if the event is of type `*accountOpened`. If it is, we're encrypting the name and encoding it to base64.
+We're iterating through the events and checking on write if the event is of type `*accountOpened`. If it is, we're encrypting the name and encoding it to base64.
 
 The `TransformForRead` method should be the inverse of this process:
 ```go
-func (t *CryptoTransformer) TransformForRead(ctx context.Context, event AccountEvent) (AccountEvent, error) {
-	if opened, isOpened := event.(*accountOpened); isOpened {
-		fmt.Printf("Holder name before decoding: %s\n", opened.HolderName)
+func (t *CryptoTransformer) TransformForRead(
+	ctx context.Context,
+	events []AccountEvent,
+) ([]AccountEvent, error) {
+	for _, event := range events {
+		if opened, isOpened := event.(*accountOpened); isOpened {
+			fmt.Printf("Holder name before decoding: %s\n", opened.HolderName)
 
-		decoded, err := base64.StdEncoding.DecodeString(opened.HolderName)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode encrypted name: %w", err)
-		}
+			decoded, err := base64.StdEncoding.DecodeString(opened.HolderName)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decode encrypted name: %w", err)
+			}
 
-		fmt.Printf("Holder name before decryption: %s\n", decoded)
-		decryptedName, err := decrypt(decoded, t.key)
-		if err != nil {
-			// This happens if the key is wrong (or "deleted")
-			return nil, fmt.Errorf("failed to decrypt holder name: %w", err)
+			fmt.Printf("Holder name before decryption: %s\n", decoded)
+			decryptedName, err := decrypt(decoded, t.key)
+			if err != nil {
+				// This happens if the key is wrong (or "deleted")
+				return nil, fmt.Errorf("failed to decrypt holder name: %w", err)
+			}
+			opened.HolderName = string(decryptedName)
+			fmt.Printf("Holder name after decryption: %s\n", opened.HolderName)
 		}
-		opened.HolderName = string(decryptedName)
-		fmt.Printf("Holder name after decryption: %s\n", opened.HolderName)
 	}
 
-	return event, nil
+	return events, nil
 }
 ```
 
@@ -1586,14 +1598,25 @@ Let's create a simple transformer that logs every event being written to or read
 type LoggingTransformer struct{}
 
 // This transformer works with any event type (`event.Any`).
-func (t *LoggingTransformer) TransformForWrite(_ context.Context, e event.Any) (event.Any, error) {
-	fmt.Printf("[LOG] Writing event: %s\n", e.EventName())
-	return e, nil
+func (t *LoggingTransformer) TransformForWrite(
+	_ context.Context,
+	events []event.Any,
+) ([]event.Any, error) {
+	for _, event := range events {
+		fmt.Printf("[LOG] Writing event: %s\n", event.EventName())
+	}
+
+	return events, nil
 }
 
-func (t *LoggingTransformer) TransformForRead(_ context.Context, e event.Any) (event.Any, error) {
-	fmt.Printf("[LOG] Reading event: %s\n", e.EventName())
-	return e, nil
+func (t *LoggingTransformer) TransformForRead(
+	_ context.Context,
+	events []event.Any,
+) ([]event.Any, error) {
+	for _, event := range events {
+		fmt.Printf("[LOG] Reading event: %s\n", event.EventName())
+	}
+	return events, nil
 }
 ```
 
@@ -1617,6 +1640,133 @@ Here is how you would use both our specific `CryptoTransformer` and our global `
 		},
 	)
 ```
+
+### Event versioning and upcasting
+
+You can find this example in [aggregate_upcasting_test.go](./aggregate/aggregate_upcasting_test.go).
+
+As your application evolves, so will your events. You might need to rename fields, change data types, or split one event into several more granular ones. Since the event log is immutable, you can't go back and change historical events. This is where event upcasting comes in. 
+
+Upcasting is the process of transforming an older version of an event into its newer equivalent, on-the-fly, as it's read from the event store. `chronicle` handles this using the same `event.Transformer` interface.
+
+Imagine we started with a single event to update a person's name and age: 
+```go
+// V1 event - written in the past
+type nameAndAgeSetV1 struct {
+    Name string `json:"name"`
+    Age  int    `json:"age"`
+}
+func (*nameAndAgeSetV1) EventName() string { return "person/name_and_age_set_v1" }
+func (*nameAndAgeSetV1) isPersonEvent()    {}
+```
+
+Later, we decide it's better to have separate events for changing the name and age: 
+```go
+// V2 events - what our new code uses
+type nameSetV2 struct {
+    Name string `json:"name"`
+}
+func (*nameSetV2) EventName() string { return "person/name_set_v2" }
+func (*nameSetV2) isPersonEvent()    {}
+
+type ageSetV2 struct {
+    Age int `json:"age"`
+}
+func (*ageSetV2) EventName() string { return "person/age_set_v2" }
+func (*ageSetV2) isPersonEvent()    {}
+```
+
+How do we load an aggregate that has old `nameAndAgeSetV1` events in its history? We create an "upcaster" transformer.
+```go
+type upcasterV1toV2 struct{}
+
+func (u *upcasterV1toV2) TransformForRead(
+    _ context.Context,
+    events []PersonEvent,
+) ([]PersonEvent, error) {
+    newEvents := make([]PersonEvent, 0, len(events))
+    for _, e := range events {
+        if oldEvent, ok := e.(*nameAndAgeSetV1); ok {
+            // A V1 event is found, split it into two V2 events
+            newEvents = append(newEvents, &nameSetV2{Name: oldEvent.Name})
+            newEvents = append(newEvents, &ageSetV2{Age: oldEvent.Age})
+        } else {
+            // Not a V1 event, pass it through unchanged
+            newEvents = append(newEvents, e)
+        }
+    }
+    return newEvents, nil
+}
+
+// Write is a pass-through; new code doesn't produce V1 events.
+func (u *upcasterV1toV2) TransformForWrite(
+    _ context.Context,
+    events []PersonEvent,
+) ([]PersonEvent, error) {
+    return events, nil
+}
+```
+
+When this transformer is added to the repository, here's what happens during a `repo.Get()` call: 
+1. The repository reads the raw event records from the event log (e.g., `personWasBorn` at version 1, `nameAndAgeSetV1` at version 2).
+2. The event data is deserialized into the Go structs. Your `EventFuncs` must include constructors for both old and new event types so they can be deserialized.
+3. The `upcasterV1toV2.TransformForRead` method is called.
+4. It sees the `nameAndAgeSetV1` event and replaces it in memory with a `nameSetV2` and an `ageSetV2` event.
+5. The aggregate's `Apply` method is then called with the transformed list of events. The aggregate's state is built correctly using the new event types.
+
+> [!IMPORTANT]
+> The aggregate's version always reflects the version of the last **persisted** event in the log. Even if an upcaster creates more events in memory, the version number remains consistent with the source of truth. In the example above, the aggregate's final version would be `2`, corresponding to the `nameAndAgeSetV1` event, not `3`.
+
+#### Merging events for compaction
+Transformers can also work in the other direction: merging multiple events into a single, more compact event before writing them to the log. This can be a useful optimization to reduce the number of records for high-frequency events. 
+
+For example, imagine we have a `personAgedOneYear` event that gets recorded frequently. We can create a transformer to batch these up.
+```go
+// Merges multiple personAgedOneYear events on write
+func (a *ageBatchingTransformer) TransformForWrite(
+    _ context.Context,
+    events []PersonEvent,
+) ([]PersonEvent, error) {
+    totalYears := 0
+    otherEvents := make([]PersonEvent, 0)
+
+    for _, e := range events {
+        if _, ok := e.(*personAgedOneYear); ok {
+            totalYears++
+        } else {
+            otherEvents = append(otherEvents, e)
+        }
+    }
+
+    if totalYears > 0 {
+        mergedEvent := &multipleYearsAged{Years: totalYears}
+        return append(otherEvents, mergedEvent), nil
+    }
+    return events, nil
+}
+
+// Splits the merged event back up on read
+func (a *ageBatchingTransformer) TransformForRead(
+    _ context.Context,
+    events []PersonEvent,
+) ([]PersonEvent, error) {
+    newEvents := make([]PersonEvent, 0, len(events))
+    for _, e := range events {
+        if merged, ok := e.(*multipleYearsAged); ok {
+            for range merged.Years {
+                newEvents = append(newEvents, &personAgedOneYear{})
+            }
+        } else {
+            newEvents = append(newEvents, e)
+        }
+    }
+    return newEvents, nil
+}
+```
+
+When you save an aggregate that has recorded five `personAgedOneYear` events, the `TransformForWrite` hook will replace them with a single `multipleYearsAged{Years: 5}` event. This single event is what gets written to the log. 
+
+When you later load the aggregate, `TransformForRead` does the reverse, ensuring that your aggregate's `Apply` method sees the five individual `personAgedOneYear` events it expects, keeping your domain logic clean and unaware of this persistence optimization. 
 
 ## Projections
 
@@ -2170,7 +2320,7 @@ Event deletion is lossy and dangerous, because if you don't do it properly, it c
 
 **The critical difference from Snapshots**: Regular snapshots are a performance cache. The full event log is still the source of truth. With compaction, the original events are gone forever. You can no longer "time travel" to a state before the compaction. 
 
-You can take a look at the `Test_EventDeletion` test in [aggregate_test.go](./aggregate/aggregate_test.go).
+You can take a look at the `Test_EventDeletion` test in [aggregate_deletion_test.go](./aggregate/aggregate_deletion_test.go).
 
 A pattern for deleting events safely is generating a snapshot event (**not related to the snapshot store**):
 ```go
@@ -2231,7 +2381,7 @@ type DeleterLog interface {
 }
 ```
 
-### Event Archival
+### Event archival
 
 Chronicle doesn't provide a way to handle event archival since it can be done in lots of ways.  
 

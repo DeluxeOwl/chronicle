@@ -74,13 +74,24 @@ func main() {
 
 type LoggingTransformer struct{}
 
-// This transformer works with any event type (`event.Any`).
-func (t *LoggingTransformer) TransformForWrite(_ context.Context, e event.Any) (event.Any, error) {
-	fmt.Printf("[LOG] Writing event: %s\n", e.EventName())
-	return e, nil
+// This transformer works with any event types (`[]event.Any`).
+func (t *LoggingTransformer) TransformForWrite(
+	_ context.Context,
+	events []event.Any,
+) ([]event.Any, error) {
+	for _, event := range events {
+		fmt.Printf("[LOG] Writing event: %s\n", event.EventName())
+	}
+
+	return events, nil
 }
 
-func (t *LoggingTransformer) TransformForRead(_ context.Context, e event.Any) (event.Any, error) {
-	fmt.Printf("[LOG] Reading event: %s\n", e.EventName())
-	return e, nil
+func (t *LoggingTransformer) TransformForRead(
+	_ context.Context,
+	events []event.Any,
+) ([]event.Any, error) {
+	for _, event := range events {
+		fmt.Printf("[LOG] Reading event: %s\n", event.EventName())
+	}
+	return events, nil
 }
