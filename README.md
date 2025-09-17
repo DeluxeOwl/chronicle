@@ -2942,8 +2942,8 @@ I found that none of them were as flexible as I'd like - a lot of them were only
 - archiving ✅
 - first class support for sagas/workflows (maybe a separate package)
 - jobs? that might be out of scope but could work as a separate project
-- event versioning + upcasting events
-	- MultiTransformer that extends Transformer -> upcast to multiple events
+- event versioning + upcasting events ✅
+	- MultiTransformer that extends Transformer -> upcast to multiple events ✅
 - a projection package: subscribe to GLobalLog and manage state, checkpointing, replay, idempotency & retry
   - lifecycle management
   - parallel replay
