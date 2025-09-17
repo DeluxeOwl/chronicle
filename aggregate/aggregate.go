@@ -203,12 +203,13 @@ func LoadFromRecords[TID ID, E event.Any](
 			return fmt.Errorf("load from records: unmarshal record data: %w", err)
 		}
 
-		transformedEvt := evt
+		transformedEvents := []E{evt}
+
 		// Note: transformers need to happen in reverse order
 		// e.g. encrypt -> compress
 		// inverse is decompress -> decrypt
 		for i := len(transformers) - 1; i >= 0; i-- {
-			transformedEvt, err = transformers[i].TransformForRead(ctx, transformedEvt)
+			transformedEvents, err = transformers[i].TransformForRead(ctx, transformedEvents)
 			if err != nil {
 				return fmt.Errorf(
 					"load from records: read transform for event %q (version %d) failed: %w",
@@ -219,10 +220,18 @@ func LoadFromRecords[TID ID, E event.Any](
 			}
 		}
 
-		if err := root.Apply(transformedEvt); err != nil {
-			return fmt.Errorf("load from records: root apply: %w", err)
+		for _, transformedEvt := range transformedEvents {
+			if err := root.Apply(transformedEvt); err != nil {
+				return fmt.Errorf(
+					"load from records: root apply %s: %w",
+					transformedEvt.EventName(),
+					err,
+				)
+			}
 		}
 
+		// Even though you might have more events than what's recorded
+		// because of transformers, the latest version is the recorded one.
 		root.setVersion(record.Version())
 	}
 
@@ -276,13 +285,13 @@ func RawEventsFromUncommitted[E event.Any](
 	transformers []event.Transformer[E],
 	uncommitted UncommittedEvents[E],
 ) ([]event.Raw, error) {
-	rawEvents := make([]event.Raw, len(uncommitted))
-	for i, evt := range uncommitted {
-		transformedEvt := evt
+	rawEvents := []event.Raw{}
+	for _, evt := range uncommitted {
+		transformedEvents := []E{evt}
 		var err error
 
 		for _, t := range transformers {
-			transformedEvt, err = t.TransformForWrite(ctx, transformedEvt)
+			transformedEvents, err = t.TransformForWrite(ctx, transformedEvents)
 			if err != nil {
 				return nil, fmt.Errorf(
 					"raw events from uncommitted: write transform failed for event %q: %w",
@@ -292,12 +301,20 @@ func RawEventsFromUncommitted[E event.Any](
 			}
 		}
 
-		bytes, err := serializer.SerializeBinary(transformedEvt)
-		if err != nil {
-			return nil, fmt.Errorf("raw events from uncommitted: %w", err)
+		transformedRaw := make([]event.Raw, len(transformedEvents))
+		for i, transformedEvent := range transformedEvents {
+			bytes, err := serializer.SerializeBinary(transformedEvent)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"raw events from uncommitted %s: %w",
+					transformedEvent.EventName(),
+					err,
+				)
+			}
+			transformedRaw[i] = event.NewRaw(transformedEvent.EventName(), bytes)
 		}
 
-		rawEvents[i] = event.NewRaw(transformedEvt.EventName(), bytes)
+		rawEvents = append(rawEvents, transformedRaw...)
 	}
 
 	return rawEvents, nil
