@@ -15,7 +15,7 @@ import (
 func Test_SnapshotRepo(t *testing.T) {
 	t.Run("should snapshot every 10 events", func(t *testing.T) {
 		ctx := t.Context()
-		p := createPerson(t)
+		p := createPerson(t, "some-id")
 
 		memlog := eventlog.NewMemory()
 
@@ -86,7 +86,7 @@ func Test_SnapshotRepo(t *testing.T) {
 
 	t.Run("should ignore snapshot error", func(t *testing.T) {
 		ctx := t.Context()
-		p := createPerson(t)
+		p := createPerson(t, "some-id")
 
 		memlog := eventlog.NewMemory()
 
@@ -125,7 +125,7 @@ func Test_SnapshotRepo(t *testing.T) {
 
 	t.Run("should ignore snapshot error when user returns nil", func(t *testing.T) {
 		ctx := t.Context()
-		p := createPerson(t)
+		p := createPerson(t, "some-id")
 
 		memlog := eventlog.NewMemory()
 
@@ -169,7 +169,7 @@ func Test_SnapshotRepo(t *testing.T) {
 
 	t.Run("should return error on snapshot error", func(t *testing.T) {
 		ctx := t.Context()
-		p := createPerson(t)
+		p := createPerson(t, "some-id")
 
 		memlog := eventlog.NewMemory()
 

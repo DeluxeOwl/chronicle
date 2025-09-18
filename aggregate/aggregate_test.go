@@ -12,7 +12,6 @@ import (
 	"github.com/DeluxeOwl/chronicle/eventlog"
 	"github.com/DeluxeOwl/chronicle/internal/testutils"
 	"github.com/DeluxeOwl/chronicle/serde"
-	"github.com/DeluxeOwl/chronicle/snapshotstore"
 
 	"github.com/DeluxeOwl/chronicle/version"
 	"github.com/stretchr/testify/require"
@@ -237,25 +236,83 @@ func CustomSnapshot(
 	return false
 }
 
-func createPerson(t *testing.T) *Person {
+func createPerson(t *testing.T, id string) *Person {
 	t.Helper()
-	p, err := New(PersonID("some-id"), "john")
+	p, err := New(PersonID(id), "john")
 	require.NoError(t, err)
 	require.EqualValues(t, 1, p.Version())
 	return p
 }
 
-func Test_Person(t *testing.T) {
-	ctx := t.Context()
+func Test_Repos_With_Snapshots(t *testing.T) {
+	eventLogs, closeDBs := testutils.SetupEventLogs(t)
+	defer closeDBs()
 
-	pg, clean := testutils.SetupPostgres(t)
-	defer clean()
+	for i, el := range eventLogs {
+		t.Run(el.Name, func(t *testing.T) {
+			snapstores, cleanSnapstores := testutils.SetupSnapStores(t, NewSnapshot)
+			defer cleanSnapstores()
 
-	p := createPerson(t)
+			for j, ss := range snapstores {
+				t.Run(ss.Name, func(t *testing.T) {
+					ctx := t.Context()
+					p := createPerson(t, fmt.Sprintf("person-id-%d-%d", i, j))
+					registry := chronicle.NewAnyEventRegistry()
 
-	// pglog := eventlog.NewMemory()
-	pglog, err := eventlog.NewPostgres(pg)
-	require.NoError(t, err)
+					esRepo, err := chronicle.NewEventSourcedRepository(
+						el.Log,
+						NewEmpty,
+						nil,
+						aggregate.AnyEventRegistry(registry),
+					)
+					require.NoError(t, err)
+
+					// You could also do: aggregate.SnapStrategyFor[*Person]().Custom(CustomSnapshot),
+					// Person is a snapshotter
+					repo, err := chronicle.NewEventSourcedRepositoryWithSnapshots(
+						esRepo,
+						ss.Store,
+						NewEmpty(),
+						aggregate.SnapStrategyFor[*Person]().EveryNEvents(10),
+					)
+					require.NoError(t, err)
+
+					for range 44 {
+						p.Age()
+					}
+
+					_, _, err = repo.Save(ctx, p)
+					require.NoError(t, err)
+
+					newp, err := repo.Get(ctx, p.ID())
+					require.NoError(t, err)
+
+					ps, err := newp.ToSnapshot(newp)
+					require.NoError(t, err)
+					require.Equal(t, "john", ps.Name)
+					require.Equal(t, 44, ps.Age)
+
+					agedOneFactory, ok := registry.GetFunc("person/aged-one-year")
+					require.True(t, ok)
+					event1 := agedOneFactory()
+					event2 := agedOneFactory()
+
+					// This is because of the zero sized struct
+					require.Same(t, event1, event2)
+
+					wasBornFactory, ok := registry.GetFunc("person/was-born")
+					require.True(t, ok)
+					event3 := wasBornFactory()
+					event4 := wasBornFactory()
+					require.NotSame(t, event3, event4)
+
+					_, found, err := ss.Store.GetSnapshot(ctx, p.ID())
+					require.NoError(t, err)
+					require.True(t, found)
+				})
+			}
+		})
+	}
 
 	// _, err = chronicle.NewTransactionalRepository(
 	// 	memlog,
@@ -268,75 +325,18 @@ func Test_Person(t *testing.T) {
 	// 	},
 	// )
 	// require.NoError(t, err)
-
-	// snapstore := snapshotstore.NewMemoryStore(NewSnapshot)
-	snapstore, err := snapshotstore.NewPostgresStore(pg, NewSnapshot)
-	require.NoError(t, err)
-	registry := chronicle.NewAnyEventRegistry()
-
-	esRepo, err := chronicle.NewEventSourcedRepository(
-		pglog,
-		NewEmpty,
-		nil,
-		aggregate.AnyEventRegistry(registry),
-	)
-	require.NoError(t, err)
-
-	repo, err := chronicle.NewEventSourcedRepositoryWithSnapshots(
-		esRepo,
-		snapstore,
-		NewEmpty(),
-		aggregate.SnapStrategyFor[*Person]().EveryNEvents(10),
-	)
-	// You could also do: aggregate.SnapStrategyFor[*Person]().Custom(CustomSnapshot),
-	// Person is a snapshotter
-
-	require.NoError(t, err)
-
-	for range 44 {
-		p.Age()
-	}
-
-	_, _, err = repo.Save(ctx, p)
-	require.NoError(t, err)
-
-	newp, err := repo.Get(ctx, p.ID())
-	require.NoError(t, err)
-
-	ps, err := newp.ToSnapshot(newp)
-	require.NoError(t, err)
-	require.Equal(t, "john", ps.Name)
-	require.Equal(t, 44, ps.Age)
-
-	agedOneFactory, ok := registry.GetFunc("person/aged-one-year")
-	require.True(t, ok)
-	event1 := agedOneFactory()
-	event2 := agedOneFactory()
-
-	// This is because of the zero sized struct
-	require.Same(t, event1, event2)
-
-	wasBornFactory, ok := registry.GetFunc("person/was-born")
-	require.True(t, ok)
-	event3 := wasBornFactory()
-	event4 := wasBornFactory()
-	require.NotSame(t, event3, event4)
-
-	_, found, err := snapstore.GetSnapshot(ctx, p.ID())
-	require.NoError(t, err)
-	require.True(t, found)
 }
 
 func Test_RecordEvent(t *testing.T) {
 	t.Run("record single event", func(t *testing.T) {
-		p := createPerson(t)
+		p := createPerson(t, "some-id")
 		err := aggregate.RecordEvent(p, PersonEvent(&personWasBorn{}))
 		require.NoError(t, err)
 		require.EqualValues(t, 2, p.Version())
 	})
 
 	t.Run("record multiple events", func(t *testing.T) {
-		p := createPerson(t)
+		p := createPerson(t, "some-id")
 		err := aggregate.RecordEvents(
 			p,
 			PersonEvent(&personWasBorn{}),
@@ -347,14 +347,14 @@ func Test_RecordEvent(t *testing.T) {
 	})
 
 	t.Run("record nil event", func(t *testing.T) {
-		p := createPerson(t)
+		p := createPerson(t, "some-id")
 		err := aggregate.RecordEvent(p, PersonEvent(nil))
 		require.ErrorContains(t, err, "nil event")
 	})
 }
 
 func Test_FlushUncommittedEvents(t *testing.T) {
-	p := createPerson(t)
+	p := createPerson(t, "some-id")
 	p.Age()
 
 	uncommitted := aggregate.FlushUncommittedEvents(p)
@@ -391,7 +391,7 @@ func Test_CommitEvents(t *testing.T) {
 
 	t.Run("with events", func(t *testing.T) {
 		memstore := eventlog.NewMemory()
-		p := createPerson(t)
+		p := createPerson(t, "some-id")
 		p.Age()
 
 		personWasBornName := new(personWasBorn).EventName()
@@ -437,7 +437,7 @@ func Test_ReadAndLoadFromStore(t *testing.T) {
 	})
 
 	t.Run("load", func(t *testing.T) {
-		p := createPerson(t)
+		p := createPerson(t, "some-id")
 		p.Age()
 
 		memstore := eventlog.NewMemory()
@@ -466,7 +466,7 @@ func Test_ReadAndLoadFromStore(t *testing.T) {
 }
 
 func Test_LoadFromRecords(t *testing.T) {
-	p := createPerson(t)
+	p := createPerson(t, "some-id")
 	p.Age()
 
 	serializer := serde.NewJSONBinary()

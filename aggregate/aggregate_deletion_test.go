@@ -22,7 +22,7 @@ func Test_EventDeletion(t *testing.T) {
 			}
 
 			ctx := t.Context()
-			p := createPerson(t)
+			p := createPerson(t, "some-id")
 
 			esRepo, err := chronicle.NewEventSourcedRepository(
 				el.Log,

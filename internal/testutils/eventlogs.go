@@ -5,8 +5,10 @@ import (
 	"os"
 	"testing"
 
+	"github.com/DeluxeOwl/chronicle/aggregate"
 	"github.com/DeluxeOwl/chronicle/event"
 	"github.com/DeluxeOwl/chronicle/eventlog"
+	"github.com/DeluxeOwl/chronicle/snapshotstore"
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/vfs"
 	"github.com/stretchr/testify/require"
@@ -20,6 +22,35 @@ type EventLog struct {
 type GlobalEventLog struct {
 	Name string
 	Log  event.GlobalLog
+}
+
+type SnapStore[TID aggregate.ID, TS aggregate.Snapshot[TID]] struct {
+	Name  string
+	Store aggregate.SnapshotStore[TID, TS]
+}
+
+func SetupSnapStores[TID aggregate.ID, TS aggregate.Snapshot[TID]](
+	t *testing.T,
+	createSnapshot func() TS,
+) ([]SnapStore[TID, TS], func()) {
+	pg, cleanupPostgres := SetupPostgres(t)
+	pgsnapstore, err := snapshotstore.NewPostgresStore(pg, createSnapshot)
+	require.NoError(t, err)
+
+	memsnapstore := snapshotstore.NewMemoryStore(createSnapshot)
+
+	return []SnapStore[TID, TS]{
+			{
+				Name:  "postgres snapshot store",
+				Store: pgsnapstore,
+			},
+			{
+				Name:  "memory snapshot store",
+				Store: memsnapstore,
+			},
+		}, func() {
+			cleanupPostgres()
+		}
 }
 
 //nolint:dupl // not needed.
