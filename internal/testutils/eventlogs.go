@@ -107,6 +107,45 @@ func SetupEventLogs(t *testing.T) ([]EventLog, func()) {
 		}
 }
 
+type TransactionalLog[TX any] struct {
+	Name string
+	Log  event.TransactionalEventLog[TX]
+}
+
+//nolint:dupl // not needed.
+func SetupSQLTransactionalLogs(t *testing.T) ([]TransactionalLog[*sql.Tx], func()) {
+	t.Helper()
+
+	f, err := os.CreateTemp(t.TempDir(), "sqlite-*.db")
+	require.NoError(t, err)
+
+	sqliteDB, err := sql.Open("sqlite3", f.Name())
+	require.NoError(t, err)
+
+	sqliteLog, err := eventlog.NewSqlite(sqliteDB)
+	require.NoError(t, err)
+
+	pg, cleanupPostgres := SetupPostgres(t)
+	postgresLog, err := eventlog.NewPostgres(pg)
+	require.NoError(t, err)
+
+	return []TransactionalLog[*sql.Tx]{
+			{
+				Name: "sqlite log",
+				Log:  sqliteLog,
+			},
+			{
+				Name: "postgres log",
+				Log:  postgresLog,
+			},
+		}, func() {
+			err = sqliteDB.Close()
+			require.NoError(t, err)
+
+			cleanupPostgres()
+		}
+}
+
 //nolint:dupl // not needed.
 func SetupGlobalEventLogs(t *testing.T) ([]GlobalEventLog, func()) {
 	t.Helper()

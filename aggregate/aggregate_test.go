@@ -2,6 +2,7 @@ package aggregate_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"testing"
@@ -313,18 +314,96 @@ func Test_Repos_With_Snapshots(t *testing.T) {
 			}
 		})
 	}
+}
 
-	// _, err = chronicle.NewTransactionalRepository(
-	// 	memlog,
-	// 	NewEmpty,
-	// 	nil,
-	// 	&TransactionalAggregateProcessorMock[eventlog.MemTx, PersonID, PersonEvent, *Person]{
-	// 		ProcessFunc: func(ctx context.Context, tx eventlog.MemTx, root *Person, events aggregate.CommittedEvents[PersonEvent]) error {
-	// 			return nil
-	// 		},
-	// 	},
-	// )
-	// require.NoError(t, err)
+func Test_TransactionalRepository(t *testing.T) {
+	eventLogs, closeDBs := testutils.SetupSQLTransactionalLogs(t)
+	defer closeDBs()
+
+	for _, el := range eventLogs {
+		t.Run(el.Name, func(t *testing.T) {
+			t.Run("success case - processor commits with aggregate events", func(t *testing.T) {
+				ctx := t.Context()
+				personID := fmt.Sprintf("tx-person-success-%s", el.Name)
+				p := createPerson(t, personID)
+				require.NoError(t, p.Age()) // Version is now 2 (create + age)
+
+				// This processor will track the events it sees.
+				processor := &TransactionalAggregateProcessorMock[*sql.Tx, PersonID, PersonEvent, *Person]{
+					ProcessFunc: func(ctx context.Context, tx *sql.Tx, root *Person, events aggregate.CommittedEvents[PersonEvent]) error {
+						return nil
+					},
+				}
+
+				repo, err := chronicle.NewTransactionalRepository(
+					el.Log,
+					NewEmpty,
+					nil,
+					processor,
+				)
+				require.NoError(t, err)
+
+				// Save the aggregate. This should trigger the processor.
+				_, _, err = repo.Save(ctx, p)
+				require.NoError(t, err)
+
+				// 1. Verify the processor was called and saw the right events.
+				// It should see both the creation and the aging event.
+				require.Len(t, processor.calls.Process, 1)
+				require.Len(t, processor.calls.Process[0].Events, 2)
+				require.Equal(
+					t,
+					"person/was-born",
+					processor.calls.Process[0].Events[0].EventName(),
+				)
+				require.Equal(
+					t,
+					"person/aged-one-year",
+					processor.calls.Process[0].Events[1].EventName(),
+				)
+
+				// 2. Verify the events were actually committed to the log.
+				loadedPerson, err := repo.Get(ctx, PersonID(personID))
+				require.NoError(t, err)
+				require.Equal(t, version.Version(2), loadedPerson.Version())
+				require.Equal(t, 1, loadedPerson.age)
+			})
+
+			t.Run(
+				"failure case - transaction is rolled back if processor fails",
+				func(t *testing.T) {
+					ctx := t.Context()
+					personID := fmt.Sprintf("tx-person-fail-%s", el.Name)
+					p := createPerson(t, personID) // Version 1
+
+					// This processor will intentionally fail.
+					processor := &TransactionalAggregateProcessorMock[*sql.Tx, PersonID, PersonEvent, *Person]{
+						ProcessFunc: func(ctx context.Context, tx *sql.Tx, root *Person, events aggregate.CommittedEvents[PersonEvent]) error {
+							return errors.New("processor failed intentionally")
+						},
+					}
+
+					repo, err := chronicle.NewTransactionalRepository(
+						el.Log,
+						NewEmpty,
+						nil,
+						processor,
+					)
+					require.NoError(t, err)
+
+					// Save should fail because our processor returns an error.
+					_, _, err = repo.Save(ctx, p)
+					require.Error(t, err)
+					require.ErrorContains(t, err, "processor failed intentionally")
+
+					// Verify NO events were committed to the log due to the rollback.
+					// We expect Get to fail with ErrRootNotFound because the creation event was never saved.
+					_, err = repo.Get(ctx, PersonID(personID))
+					require.ErrorIs(t, err, aggregate.ErrRootNotFound)
+				},
+			)
+		})
+	}
 }
 
 func Test_RecordEvent(t *testing.T) {
