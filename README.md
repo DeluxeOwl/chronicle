@@ -2947,8 +2947,7 @@ I found that none of them were as flexible as I'd like - a lot of them were only
   - lifecycle management
   - parallel replay
   - idempotency helpers, dlq
-- get specific version
 - ci/cd & more tests
 - observability
-- add another selector which allows me to get a specific version
+- add another selector which allows me to get a specific version ✅
 - things like joins, maybe differential dataflow
