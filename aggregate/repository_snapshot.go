@@ -124,7 +124,51 @@ func (esr *ESRepoWithSnapshots[TID, E, R, TS]) GetVersion(
 	id TID,
 	selector version.Selector,
 ) (R, error) {
-	return esr.internal.GetVersion(ctx, id, selector)
+	var empty R
+
+	// A snapshot represents the full state of an aggregate up to its version.
+	// It's only useful if we are building the state from the beginning of history.
+	// If `From` is greater than 1, the user wants a partial history replay,
+	// so we cannot use the snapshot and must fall back to the underlying repository.
+	if selector.From > 1 {
+		return esr.internal.GetVersion(ctx, id, selector)
+	}
+
+	// Attempt to load the aggregate from the most recent snapshot.
+	root, found, err := LoadFromSnapshot(ctx, esr.snapstore, esr.snapshotter, id)
+	if err != nil {
+		return empty, fmt.Errorf("snapshot repo get-version: failed to retrieve snapshot: %w", err)
+	}
+
+	// Fall back to the internal repository if:
+	// 1. No snapshot was found.
+	// 2. A target version `To` is specified, and the snapshot's version is already
+	//    at or beyond that version. In this case, the snapshot is too recent, and we must
+	//    replay from the event store to get the exact state at the earlier version.
+	if !found || (selector.To > 0 && root.Version() >= selector.To) {
+		return esr.internal.GetVersion(ctx, id, selector)
+	}
+
+	// At this point, we have a valid snapshot that is older than our target version `To`.
+	// We can use it as a starting point.
+
+	// If the snapshot's version is exactly the target version, we are done.
+	if selector.To > 0 && root.Version() == selector.To {
+		return root, nil
+	}
+
+	// We need to load events that occurred after the snapshot up to the target version `To`.
+	// If `selector.To` is zero, we load all events after the snapshot.
+	loadSelector := version.Selector{
+		From: root.Version() + 1,
+		To:   selector.To,
+	}
+
+	if err := esr.internal.LoadAggregate(ctx, root, id, loadSelector); err != nil {
+		return empty, fmt.Errorf("snapshot repo get-version: failed to load events after snapshot: %w", err)
+	}
+
+	return root, nil
 }
 
 func (esr *ESRepoWithSnapshots[TID, E, R, TS]) LoadAggregate(
