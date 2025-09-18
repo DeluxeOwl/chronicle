@@ -168,6 +168,10 @@ func (store *Memory) ReadEvents(
 				continue
 			}
 
+			if selector.To > 0 && record.Version() > selector.To {
+				break
+			}
+
 			ctxErr := ctx.Err()
 
 			if ctxErr != nil && !yield(nil, ctx.Err()) {
@@ -200,6 +204,10 @@ func (mem *Memory) ReadAllEvents(
 		for _, memRecord := range allEvents {
 			if memRecord.GlobalVersion < globalSelector.From {
 				continue
+			}
+
+			if globalSelector.To > 0 && memRecord.GlobalVersion > globalSelector.To {
+				break
 			}
 
 			if err := ctx.Err(); err != nil {
