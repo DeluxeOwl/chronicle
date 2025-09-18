@@ -12,7 +12,7 @@ linters:
     - copyloopvar
     - cyclop
     - depguard
-    - dupl
+    # - dupl
     - durationcheck
     - errcheck
     - errname

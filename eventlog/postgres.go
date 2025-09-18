@@ -105,11 +105,11 @@ func PostgresTableName(tableName string) PostgresOption {
 			tableName,
 		)
 		p.qReadEvents = fmt.Sprintf(
-			"SELECT version, event_name, data FROM %s WHERE log_id = $1 AND version >= $2 ORDER BY version ASC",
+			"SELECT version, event_name, data FROM %s WHERE log_id = $1 AND version >= $2 AND ($3 = 0 OR version <= $4) ORDER BY version ASC",
 			tableName,
 		)
 		p.qReadAllEvents = fmt.Sprintf(
-			"SELECT global_version, version, log_id, event_name, data FROM %s WHERE global_version >= $1 ORDER BY global_version ASC",
+			"SELECT global_version, version, log_id, event_name, data FROM %s WHERE global_version >= $1 AND ($2 = 0 OR global_version <= $3) ORDER BY global_version ASC",
 			tableName,
 		)
 		p.qDeleteEventsUpTo = fmt.Sprintf(
@@ -335,15 +335,20 @@ func (p *Postgres) WithinTx(
 //	}
 //
 // Returns an `event.Records` iterator.
-//
-//nolint:dupl // I think it's better to keep them separate.
 func (p *Postgres) ReadEvents(
 	ctx context.Context,
 	id event.LogID,
 	selector version.Selector,
 ) event.Records {
 	return func(yield func(*event.Record, error) bool) {
-		rows, err := p.db.QueryContext(ctx, p.qReadEvents, id, selector.From)
+		rows, err := p.db.QueryContext(
+			ctx,
+			p.qReadEvents,
+			id,
+			selector.From,
+			selector.To,
+			selector.To,
+		)
 		if err != nil {
 			yield(nil, fmt.Errorf("read events: query context: %w", err))
 			return
@@ -394,7 +399,13 @@ func (p *Postgres) ReadAllEvents(
 	globalSelector version.Selector,
 ) event.GlobalRecords {
 	return func(yield func(*event.GlobalRecord, error) bool) {
-		rows, err := p.db.QueryContext(ctx, p.qReadAllEvents, globalSelector.From)
+		rows, err := p.db.QueryContext(
+			ctx,
+			p.qReadAllEvents,
+			globalSelector.From,
+			globalSelector.To,
+			globalSelector.To,
+		)
 		if err != nil {
 			yield(nil, fmt.Errorf("read all events: query context: %w", err))
 			return

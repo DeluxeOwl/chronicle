@@ -23,15 +23,37 @@ var Zero Version = 0
 var SelectFromBeginning = Selector{From: 0}
 
 // Selector specifies a range of events to retrieve from the event log.
-// Currently, it only supports selecting events *from* a specific version onwards.
 //
 // Usage:
 //
 //	// Get events from version 11 onwards
 //	selector := version.Selector{From: 11}
 //	repo.GetVersion(ctx, myID, selector)
+//
+//	// Get events from version 11 to version 25
+//	selector := version.Selector{From: 11, To: 25}
+//	repo.GetVersion(ctx, myID, selector)
+//
+//	// Get events up to version 25
+//	selector := version.Selector{To: 25}
+//	repo.GetVersion(ctx, myID, selector)
 type Selector struct {
-	From Version
+	From Version `exhaustruct:"optional"`
+	To   Version `exhaustruct:"optional"`
+}
+
+func SelectInterval(from Version, to Version) Selector {
+	return Selector{
+		From: from,
+		To:   to,
+	}
+}
+
+func SelectExact(to Version) Selector {
+	return Selector{
+		From: 0,
+		To:   to,
+	}
 }
 
 // Check defines the contract for an optimistic concurrency version check. Implementations

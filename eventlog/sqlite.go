@@ -66,7 +66,7 @@ func SqliteTableName(tableName string) SqliteOption {
 			tableName,
 		)
 		s.qReadEvents = fmt.Sprintf(
-			"SELECT version, event_name, data FROM %s WHERE log_id = ? AND version >= ? ORDER BY version ASC",
+			"SELECT version, event_name, data FROM %s WHERE log_id = ? AND version >= ? AND (? = 0 OR version <= ?) ORDER BY version ASC",
 			tableName,
 		)
 		s.qReadAllEvents = fmt.Sprintf(
@@ -198,14 +198,20 @@ func (s *Sqlite) WithinTx(
 	return nil
 }
 
-//nolint:dupl // I think it's better to keep them separate.
 func (s *Sqlite) ReadEvents(
 	ctx context.Context,
 	id event.LogID,
 	selector version.Selector,
 ) event.Records {
 	return func(yield func(*event.Record, error) bool) {
-		rows, err := s.db.QueryContext(ctx, s.qReadEvents, id, selector.From)
+		rows, err := s.db.QueryContext(
+			ctx,
+			s.qReadEvents,
+			id,
+			selector.From,
+			selector.To,
+			selector.To,
+		)
 		if err != nil {
 			yield(nil, fmt.Errorf("read events: query context: %w", err))
 			return
@@ -244,7 +250,13 @@ func (s *Sqlite) ReadAllEvents(
 	globalSelector version.Selector,
 ) event.GlobalRecords {
 	return func(yield func(*event.GlobalRecord, error) bool) {
-		rows, err := s.db.QueryContext(ctx, s.qReadAllEvents, globalSelector.From)
+		rows, err := s.db.QueryContext(
+			ctx,
+			s.qReadAllEvents,
+			globalSelector.From,
+			globalSelector.To,
+			globalSelector.To,
+		)
 		if err != nil {
 			yield(nil, fmt.Errorf("read all events: query context: %w", err))
 			return
