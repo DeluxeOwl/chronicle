@@ -433,7 +433,7 @@ func Test_ReadAndLoadFromStore(t *testing.T) {
 			PersonID("john"),
 			version.SelectFromBeginning,
 		)
-		require.ErrorContains(t, err, "root not found")
+		require.ErrorContains(t, err, aggregate.ErrRootNotFound.Error())
 	})
 
 	t.Run("load", func(t *testing.T) {
@@ -489,4 +489,114 @@ func Test_LoadFromRecords(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, emptyPerson, p)
+}
+
+func Test_Repository_GetVersion(t *testing.T) {
+	ctx := t.Context()
+
+	pg, clean := testutils.SetupPostgres(t)
+	defer clean()
+
+	pglog, err := eventlog.NewPostgres(pg)
+	require.NoError(t, err)
+
+	repo, err := chronicle.NewEventSourcedRepository(
+		pglog, NewEmpty, nil,
+	)
+	require.NoError(t, err)
+
+	// Setup: Create a person and give them a history of 10 events.
+	personID := PersonID("get-version-id")
+	p, err := New(personID, "doc") // Event 1, version 1, age 0
+	require.NoError(t, err)
+
+	for range 9 {
+		p.Age() // Events 2-10, versions 2-10, age will be 9
+	}
+	require.Equal(t, version.Version(10), p.Version())
+	require.Equal(t, 9, p.age)
+
+	_, _, err = repo.Save(ctx, p)
+	require.NoError(t, err)
+
+	//nolint:exhaustruct // Unnecessary.
+	testCases := []struct {
+		name        string
+		id          PersonID
+		selector    version.Selector
+		expectErr   bool
+		errContains string
+		expectedAge int
+		expectedVer version.Version
+	}{
+		{
+			name:        "get state at an intermediate version",
+			id:          personID,
+			selector:    version.Selector{To: 5},
+			expectErr:   false,
+			expectedAge: 4, // Born (age 0) + 4 aging events (v2, v3, v4, v5)
+			expectedVer: 5,
+		},
+		{
+			name:        "get state at the latest version",
+			id:          personID,
+			selector:    version.Selector{To: 10},
+			expectErr:   false,
+			expectedAge: 9, // Born (age 0) + 9 aging events
+			expectedVer: 10,
+		},
+		{
+			name: "get state with version selector beyond the latest",
+			id:   personID,
+			// Requesting a version that doesn't exist should load up to the latest available.
+			selector:    version.Selector{To: 99},
+			expectErr:   false,
+			expectedAge: 9,
+			expectedVer: 10,
+		},
+		{
+			name:        "get state at version 1 (creation only)",
+			id:          personID,
+			selector:    version.Selector{To: 1},
+			expectErr:   false,
+			expectedAge: 0,
+			expectedVer: 1,
+		},
+		{
+			name:        "get state for a non-existent aggregate",
+			id:          PersonID("non-existent-id"),
+			selector:    version.Selector{To: 5},
+			expectErr:   true,
+			errContains: aggregate.ErrRootNotFound.Error(),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			loadedPerson, err := repo.GetVersion(ctx, tc.id, tc.selector)
+
+			if tc.expectErr {
+				require.Error(t, err)
+				require.ErrorContains(t, err, tc.errContains)
+				return
+			}
+
+			require.NoError(t, err)
+			require.NotNil(t, loadedPerson)
+			require.Equal(t, tc.id, loadedPerson.id)
+			require.Equal(t, "doc", loadedPerson.name)
+			require.Equal(
+				t,
+				tc.expectedAge,
+				loadedPerson.age,
+				"Incorrect age for the loaded version",
+			)
+			require.Equal(
+				t,
+				tc.expectedVer,
+				loadedPerson.Version(),
+				"Incorrect version for the loaded aggregate",
+			)
+		})
+	}
 }

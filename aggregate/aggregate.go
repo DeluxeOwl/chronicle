@@ -134,6 +134,8 @@ func RecordEvents[TID ID, E event.Any](root Root[TID, E], events ...E) error {
 	return root.recordThat(asAnyApplier(root), evs...)
 }
 
+var ErrRootNotFound = errors.New("root not found")
+
 // ReadAndLoadFromStore is a framework helper that orchestrates loading an aggregate.
 // It reads event records from the event store and uses them to hydrate a new instance
 // of an aggregate root.
@@ -162,7 +164,7 @@ func ReadAndLoadFromStore[TID ID, E event.Any](
 	}
 
 	if root.Version() == 0 {
-		return errors.New("read and load from store: root not found")
+		return fmt.Errorf("read and load from store: %w", ErrRootNotFound)
 	}
 
 	return nil
