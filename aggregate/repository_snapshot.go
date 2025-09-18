@@ -165,7 +165,10 @@ func (esr *ESRepoWithSnapshots[TID, E, R, TS]) GetVersion(
 	}
 
 	if err := esr.internal.LoadAggregate(ctx, root, id, loadSelector); err != nil {
-		return empty, fmt.Errorf("snapshot repo get-version: failed to load events after snapshot: %w", err)
+		return empty, fmt.Errorf(
+			"snapshot repo get-version: failed to load events after snapshot: %w",
+			err,
+		)
 	}
 
 	return root, nil

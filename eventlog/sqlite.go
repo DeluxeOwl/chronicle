@@ -70,7 +70,7 @@ func SqliteTableName(tableName string) SqliteOption {
 			tableName,
 		)
 		s.qReadAllEvents = fmt.Sprintf(
-			"SELECT global_version, version, log_id, event_name, data FROM %s WHERE global_version >= ? ORDER BY global_version ASC",
+			"SELECT global_version, version, log_id, event_name, data FROM %s WHERE global_version >= ? AND (? = 0 OR global_version <= ?) ORDER BY global_version ASC",
 			tableName,
 		)
 		s.qDeleteEventsUpTo = fmt.Sprintf(

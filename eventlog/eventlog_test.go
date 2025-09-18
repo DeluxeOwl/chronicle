@@ -374,3 +374,202 @@ func Test_ReadAllEvents(t *testing.T) {
 		})
 	}
 }
+
+// Test_ReadEvents_WithSelectorTo tests reading a specific slice of events
+// from the log using a version selector that specifies a 'To' version.
+func Test_ReadEvents_WithSelectorTo(t *testing.T) {
+	eventLogs, closeDBs := testutils.SetupEventLogs(t)
+	defer closeDBs()
+
+	for _, el := range eventLogs {
+		t.Run(el.Name, func(t *testing.T) {
+			logID := event.LogID("stream-selector-to")
+			ctx := t.Context()
+
+			// Append 10 events to create a stream from version 1 to 10
+			var rawEvents event.RawEvents
+			for i := 1; i <= 10; i++ {
+				rawEvents = append(rawEvents, event.NewRaw(fmt.Sprintf("event-%d", i), nil))
+			}
+			_, err := el.Log.AppendEvents(ctx, logID, version.CheckExact(0), rawEvents)
+			require.NoError(t, err)
+
+			//nolint:exhaustruct // Unnecessary.
+			testCases := []struct {
+				name                 string
+				selector             version.Selector
+				expectedLen          int
+				expectedFirstVersion version.Version
+				expectedLastVersion  version.Version
+			}{
+				{
+					name:                 "select a slice from the middle",
+					selector:             version.Selector{From: 3, To: 7},
+					expectedLen:          5,
+					expectedFirstVersion: 3,
+					expectedLastVersion:  7,
+				},
+				{
+					name:                 "select a slice until the end",
+					selector:             version.Selector{From: 8, To: 10},
+					expectedLen:          3,
+					expectedFirstVersion: 8,
+					expectedLastVersion:  10,
+				},
+				{
+					name:                 "select a single event",
+					selector:             version.Selector{From: 5, To: 5},
+					expectedLen:          1,
+					expectedFirstVersion: 5,
+					expectedLastVersion:  5,
+				},
+				{
+					name:                 "select with 'To' beyond the last event",
+					selector:             version.Selector{From: 8, To: 15},
+					expectedLen:          3, // returns up to the last available event
+					expectedFirstVersion: 8,
+					expectedLastVersion:  10,
+				},
+				{
+					name:                 "select with unbounded 'To' (To=0)",
+					selector:             version.Selector{From: 9, To: 0},
+					expectedLen:          2, // should behave like no 'To' was specified
+					expectedFirstVersion: 9,
+					expectedLastVersion:  10,
+				},
+				{
+					name:        "select with 'From' beyond last event",
+					selector:    version.Selector{From: 11, To: 15},
+					expectedLen: 0,
+				},
+				{
+					name:        "select with 'To' before 'From'",
+					selector:    version.Selector{From: 5, To: 4},
+					expectedLen: 0,
+				},
+			}
+
+			for _, tc := range testCases {
+				t.Run(tc.name, func(t *testing.T) {
+					records := testutils.CollectRecords(
+						t,
+						el.Log.ReadEvents(ctx, logID, tc.selector),
+					)
+
+					require.Len(t, records, tc.expectedLen)
+
+					if tc.expectedLen > 0 {
+						assert.Equal(t, tc.expectedFirstVersion, records[0].Version())
+						assert.Equal(t, tc.expectedLastVersion, records[len(records)-1].Version())
+					}
+				})
+			}
+		})
+	}
+}
+
+// Test_ReadAllEvents_WithSelectorTo tests reading a specific slice from the global
+// event stream using a selector that specifies a 'To' global version.
+func Test_ReadAllEvents_WithSelectorTo(t *testing.T) {
+	eventLogs, closeDBs := testutils.SetupGlobalEventLogs(t)
+	defer closeDBs()
+
+	for _, el := range eventLogs {
+		t.Run(el.Name, func(t *testing.T) {
+			ctx := t.Context()
+			totalEvents := 20
+
+			// Append 20 events across two different streams to create a global log
+			for i := range 10 {
+				_, err := el.Log.AppendEvents(
+					ctx, event.LogID("stream-a"), version.CheckExact(i),
+					event.RawEvents{event.NewRaw("event-a", nil)},
+				)
+				require.NoError(t, err)
+			}
+			for i := range 10 {
+				_, err := el.Log.AppendEvents(
+					ctx, event.LogID("stream-b"), version.CheckExact(i),
+					event.RawEvents{event.NewRaw("event-b", nil)},
+				)
+				require.NoError(t, err)
+			}
+
+			//nolint:exhaustruct // Unnecessary.
+			testCases := []struct {
+				name                 string
+				selector             version.Selector
+				expectedLen          int
+				expectedFirstVersion version.Version
+				expectedLastVersion  version.Version
+			}{
+				{
+					name:                 "select a slice from the middle",
+					selector:             version.Selector{From: 5, To: 15},
+					expectedLen:          11,
+					expectedFirstVersion: 5,
+					expectedLastVersion:  15,
+				},
+				{
+					name:                 "select a slice until the end",
+					selector:             version.Selector{From: 18, To: 20},
+					expectedLen:          3,
+					expectedFirstVersion: 18,
+					expectedLastVersion:  20,
+				},
+				{
+					name:                 "select a single event",
+					selector:             version.Selector{From: 10, To: 10},
+					expectedLen:          1,
+					expectedFirstVersion: 10,
+					expectedLastVersion:  10,
+				},
+				{
+					name:                 "select with 'To' beyond the last event",
+					selector:             version.Selector{From: 15, To: 30},
+					expectedLen:          6, // returns up to the last available event (20)
+					expectedFirstVersion: 15,
+					expectedLastVersion:  version.Version(totalEvents),
+				},
+				{
+					name:                 "select with unbounded 'To' (To=0)",
+					selector:             version.Selector{From: 18, To: 0},
+					expectedLen:          3, // should behave like no 'To' was specified
+					expectedFirstVersion: 18,
+					expectedLastVersion:  version.Version(totalEvents),
+				},
+				{
+					name:        "select with 'From' beyond last event",
+					selector:    version.Selector{From: 21, To: 30},
+					expectedLen: 0,
+				},
+				{
+					name:        "select with 'To' before 'From'",
+					selector:    version.Selector{From: 10, To: 9},
+					expectedLen: 0,
+				},
+			}
+
+			for _, tc := range testCases {
+				t.Run(tc.name, func(t *testing.T) {
+					var records []*event.GlobalRecord
+					for r, err := range el.Log.ReadAllEvents(ctx, tc.selector) {
+						require.NoError(t, err)
+						records = append(records, r)
+					}
+
+					require.Len(t, records, tc.expectedLen)
+
+					if tc.expectedLen > 0 {
+						assert.Equal(t, tc.expectedFirstVersion, records[0].GlobalVersion())
+						assert.Equal(
+							t,
+							tc.expectedLastVersion,
+							records[len(records)-1].GlobalVersion(),
+						)
+					}
+				})
+			}
+		})
+	}
+}
