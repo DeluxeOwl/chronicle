@@ -30,12 +30,12 @@ var SelectFromBeginning = Selector{From: 0}
 //	selector := version.Selector{From: 11}
 //	repo.GetVersion(ctx, myID, selector)
 //
-//	// Get events from version 11 to version 25
-//	selector := version.Selector{From: 11, To: 25}
-//	repo.GetVersion(ctx, myID, selector)
-//
 //	// Get events up to version 25
 //	selector := version.Selector{To: 25}
+//	repo.GetVersion(ctx, myID, selector)
+//
+//	// Get events from version 11 to version 25. ⚠️ Only use this if you know what you're doing.
+//	selector := version.Selector{From: 11, To: 25}
 //	repo.GetVersion(ctx, myID, selector)
 type Selector struct {
 	From Version `exhaustruct:"optional"`
