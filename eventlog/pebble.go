@@ -233,15 +233,22 @@ func (p *Pebble) ReadEvents(
 	selector version.Selector,
 ) event.Records {
 	return func(yield func(*event.Record, error) bool) {
-		startKey := eventKeyFor(id, selector.From)
-		prefix := eventKeyPrefixFor(id)
-
-		// Use an iterator with an upper bound to only scan keys for the given log ID.
 		//nolint:exhaustruct // Unnecessary.
-		iter, err := p.db.NewIter(&pebble.IterOptions{
-			LowerBound: startKey,
-			UpperBound: prefixEndKey(prefix),
-		})
+		opts := &pebble.IterOptions{
+			LowerBound: eventKeyFor(id, selector.From),
+		}
+
+		if selector.To > 0 {
+			// If To is specified, set the upper bound.
+			// The UpperBound is exclusive, so we use To + 1 to include version To in the scan.
+			opts.UpperBound = eventKeyFor(id, selector.To+1)
+		} else {
+			// If To is zero, scan to the end of all events for this log ID.
+			prefix := eventKeyPrefixFor(id)
+			opts.UpperBound = prefixEndKey(prefix)
+		}
+
+		iter, err := p.db.NewIter(opts)
 		if err != nil {
 			yield(nil, fmt.Errorf("read events: create iterator: %w", err))
 			return
@@ -254,7 +261,6 @@ func (p *Pebble) ReadEvents(
 				return
 			}
 
-			// Key contains logID and version
 			_, eventVersion, err := parseEventKey(iter.Key())
 			if err != nil {
 				yield(nil, fmt.Errorf("read events: could not parse event key: %w", err))
@@ -301,13 +307,21 @@ func (p *Pebble) ReadAllEvents(
 	globalSelector version.Selector,
 ) event.GlobalRecords {
 	return func(yield func(*event.GlobalRecord, error) bool) {
-		startKey := globalEventKeyFor(globalSelector.From)
-
 		//nolint:exhaustruct // Unnecessary.
-		iter, err := p.db.NewIter(&pebble.IterOptions{
-			LowerBound: startKey,
-			UpperBound: prefixEndKey(globalEventKeyPrefix),
-		})
+		opts := &pebble.IterOptions{
+			LowerBound: globalEventKeyFor(globalSelector.From),
+		}
+
+		if globalSelector.To > 0 {
+			// If To is specified, set the upper bound.
+			// The UpperBound is exclusive, so we use To + 1 to include version To.
+			opts.UpperBound = globalEventKeyFor(globalSelector.To + 1)
+		} else {
+			// If To is zero, scan to the end of all global events.
+			opts.UpperBound = prefixEndKey(globalEventKeyPrefix)
+		}
+
+		iter, err := p.db.NewIter(opts)
 		if err != nil {
 			yield(nil, fmt.Errorf("read all events: create iterator: %w", err))
 			return
