@@ -245,7 +245,7 @@ func createPerson(t *testing.T, id string) *Person {
 	return p
 }
 
-func Test_Repos_With_Snapshots(t *testing.T) {
+func Test_Repos_With_Snapshots_And_Version(t *testing.T) {
 	eventLogs, closeDBs := testutils.SetupEventLogs(t)
 	defer closeDBs()
 
@@ -310,6 +310,10 @@ func Test_Repos_With_Snapshots(t *testing.T) {
 					_, found, err := ss.Store.GetSnapshot(ctx, p.ID())
 					require.NoError(t, err)
 					require.True(t, found)
+
+					version40Person, err := repo.GetVersion(ctx, p.ID(), version.SelectExact(40))
+					require.NoError(t, err)
+					require.Equal(t, 39, version40Person.age) // first is wasBorn
 				})
 			}
 		})
