@@ -2934,6 +2934,7 @@ I found that none of them were as flexible as I'd like - a lot of them were only
 
 ## TODOs & day 2
 
+- add migrations as sql files, `%s` in them
 - cqrs example
 - a "prod ready" sink with postgres, maybe with NATS
 - handling system wide constraints: like unique usernames
