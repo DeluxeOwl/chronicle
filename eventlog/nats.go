@@ -168,7 +168,7 @@ func (c *NATS) AppendEvents(
 func (c *NATS) ReadEvents(ctx context.Context, id event.LogID, selector version.Selector) event.Records {
 	return func(yield func(*event.Record, error) bool) {
 		streamName := c.logIDToStreamName(id)
-		subject := fmt.Sprintf("%s.%s", c.subjectPrefix, id)
+		subject := c.logIDToSubjectName(id)
 
 		stream, err := c.js.Stream(ctx, streamName)
 		if err != nil {
@@ -252,12 +252,13 @@ func (c *NATS) AppendInTx(
 		return version.Zero, nil, fmt.Errorf("append in tx: %w", ErrUnsupportedCheck)
 	}
 
-	subject := fmt.Sprintf("%s.%s", c.subjectPrefix, id)
+	stream := c.logIDToStreamName(id)
+	subject := c.logIDToSubjectName(id)
 	msgs := convertRawEventsToNatsMsgs(subject, events, version.Version(exp))
 	expectedSeq := uint64(exp)
 
 	_, err := c.ensureStream(ctx, jetstream.StreamConfig{
-		Name:               c.logIDToStreamName(id),
+		Name:               stream,
 		Subjects:           []string{subject},
 		Storage:            c.storageType,
 		Retention:          c.retention,
@@ -483,7 +484,7 @@ func (c *NATS) appendSingleEvent(
 	rawEvent event.Raw,
 ) (version.Version, error) {
 	streamName := c.logIDToStreamName(id)
-	subject := fmt.Sprintf("%s.%s", c.subjectPrefix, id)
+	subject := c.logIDToSubjectName(id)
 	_, err := c.ensureStream(ctx, jetstream.StreamConfig{
 		Name:      streamName,
 		Subjects:  []string{subject},
@@ -554,7 +555,16 @@ func parseActualVersionFromError(err error) (version.Version, bool) {
 func (c *NATS) logIDToStreamName(id event.LogID) string {
 	safeID := strings.ReplaceAll(string(id), "/", "_")
 	safeID = strings.ReplaceAll(safeID, ".", "_")
+	safeID = strings.ReplaceAll(safeID, " ", "_")
 	return fmt.Sprintf("%s_%s", c.streamPrefix, safeID)
+}
+
+// logIDToSubjectName converts an event.LogID into a NATS-compatible stream name.
+func (c *NATS) logIDToSubjectName(id event.LogID) string {
+	safeID := strings.ReplaceAll(string(id), "/", "_")
+	safeID = strings.ReplaceAll(safeID, ".", "_")
+	safeID = strings.ReplaceAll(safeID, " ", "_")
+	return fmt.Sprintf("%s.%s", c.subjectPrefix, safeID)
 }
 
 func (c *NATS) natsMsgToRecord(msg jetstream.Msg, id event.LogID) (*event.Record, error) {
