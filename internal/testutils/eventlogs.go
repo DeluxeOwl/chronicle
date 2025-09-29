@@ -11,6 +11,7 @@ import (
 	"github.com/DeluxeOwl/chronicle/snapshotstore"
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/vfs"
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/stretchr/testify/require"
 )
 
@@ -79,6 +80,11 @@ func SetupEventLogs(t *testing.T) ([]EventLog, func()) {
 	postgresLog, err := eventlog.NewPostgres(pg)
 	require.NoError(t, err)
 
+	nats, err := SetupNATS(t)
+	require.NoError(t, err)
+	natsLog, err := eventlog.NewNATSJetStream(nats)
+	require.NoError(t, err)
+
 	return []EventLog{
 			{
 				Name: "memory log",
@@ -96,6 +102,10 @@ func SetupEventLogs(t *testing.T) ([]EventLog, func()) {
 				Name: "postgres log",
 				Log:  postgresLog,
 			},
+			{
+				Name: "nats log",
+				Log: natsLog,
+			},
 		}, func() {
 			err := pebbleDB.Close()
 			require.NoError(t, err)
@@ -104,6 +114,8 @@ func SetupEventLogs(t *testing.T) ([]EventLog, func()) {
 			require.NoError(t, err)
 
 			cleanupPostgres()
+
+			nats.Drain()
 		}
 }
 
@@ -143,6 +155,23 @@ func SetupSQLTransactionalLogs(t *testing.T) ([]TransactionalLog[*sql.Tx], func(
 			require.NoError(t, err)
 
 			cleanupPostgres()
+		}
+}
+
+func SetupNATSTransactionalLogs(t *testing.T) ([]TransactionalLog[jetstream.JetStream], func()) {
+
+	nats, err := SetupNATS(t)
+	require.NoError(t, err)
+	natsLog, err := eventlog.NewNATSJetStream(nats)
+	require.NoError(t, err)
+
+	return []TransactionalLog[jetstream.JetStream]{
+			{
+				Name: "nats log",
+				Log:  natsLog,
+			},
+		}, func() {
+			nats.Drain()
 		}
 }
 

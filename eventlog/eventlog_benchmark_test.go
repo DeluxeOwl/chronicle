@@ -70,6 +70,18 @@ func createBenchLog(b *testing.B, logType string) event.Log {
 		})
 
 		return log
+	case "nats":
+		nats, err := testutils.SetupNATS(b)
+		require.NoError(b, err)
+
+		log, err := eventlog.NewNATSJetStream(nats)
+		require.NoError(b, err)
+
+		b.Cleanup(func() {
+			nats.Drain()
+		})
+
+		return log
 	default:
 		b.Fatalf("unknown log type: %s", logType)
 		return nil
@@ -103,7 +115,7 @@ func BenchmarkAppendEvents(b *testing.B) {
 		{"BatchSize100", 100},
 	}
 
-	logTypes := []string{"memory", "pebble", "sqlite", "postgres"}
+	logTypes := []string{"memory", "pebble", "sqlite", "postgres", "nats"}
 
 	for _, s := range scenarios {
 		b.Run(s.name, func(b *testing.B) {
@@ -138,7 +150,7 @@ func BenchmarkReadEvents(b *testing.B) {
 		{"StreamLength1000", 1000},
 	}
 
-	logTypes := []string{"memory", "pebble", "sqlite", "postgres"}
+	logTypes := []string{"memory", "pebble", "sqlite", "postgres", "nats"}
 
 	for _, s := range scenarios {
 		b.Run(s.name, func(b *testing.B) {
@@ -174,7 +186,7 @@ func BenchmarkReadAllEvents(b *testing.B) {
 		{"Total10000_Events", 10, 1000},
 	}
 
-	logTypes := []string{"memory", "pebble", "sqlite", "postgres"}
+	logTypes := []string{"memory", "pebble", "sqlite", "postgres", "nats"}
 
 	for _, s := range scenarios {
 		b.Run(s.name, func(b *testing.B) {
@@ -213,7 +225,7 @@ func BenchmarkAppendEventsConcurrent(b *testing.B) {
 	// at the same time (e.g., many users interacting with the system).
 	const numGoroutines = 100
 
-	logTypes := []string{"memory", "pebble", "sqlite", "postgres"}
+	logTypes := []string{"memory", "pebble", "sqlite", "postgres", "nats"}
 	rawEvents := createRawEvents(5) // Each goroutine will append 5 events.
 
 	for _, logType := range logTypes {
