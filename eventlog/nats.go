@@ -242,7 +242,7 @@ func (c *NATS) ReadEvents(ctx context.Context, id event.LogID, selector version.
 
 func (c *NATS) AppendInTx(
 	ctx context.Context,
-	js jetstream.JetStream,
+	_ jetstream.JetStream,
 	id event.LogID,
 	expected version.Check,
 	events event.RawEvents) (version.Version, []*event.Record, error) {
@@ -283,7 +283,7 @@ func (c *NATS) AppendInTx(
 		records[i] = event.NewRecord(version.Version(exp)+version.Version(i+1), id, raw.EventName(), raw.Data())
 	}
 
-	return version.Version(finalVersion), records, nil
+	return finalVersion, records, nil
 }
 
 func (c *NATS) WithinTx(ctx context.Context, fn func(ctx context.Context, tx jetstream.JetStream) error) error {
@@ -343,49 +343,76 @@ func (c *NATS) publishBatch(
 		return nil, err
 	}
 
-	// Generate a unique ID for this entire batch.
+	// 1. Generate a unique ID for this entire batch.
 	uid, err := uuid.NewV7()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate batch ID: %w", err)
 	}
 	batchID := uid.String()
 
+	totalMsgs := len(msgs)
+
 	// --- The Publishing Loop ---
 	for i, originalMsg := range msgs {
-
-		batchSeq := i + 1
-		msg := c.prepareBatchMessage(originalMsg, batchID, batchSeq, len(msgs), expectedLastSeq)
-
-		reply, err := c.nc.RequestMsgWithContext(ctx, msg)
-		if err != nil {
-			return nil, fmt.Errorf("failed on batch message %d: %w", batchSeq, err)
+		if err := ctx.Err(); err != nil {
+			// If the context is cancelled mid-batch, the batch will time out
+			// on the server and be abandoned.
+			return nil, err
 		}
 
-		// Only the LAST message's reply contains the full PubAck.
-		if i == len(msgs)-1 {
+		batchSeq := i + 1
+		isFirst := i == 0
+		isLast := i == totalMsgs-1
+
+		// Prepare the message with appropriate batch headers.
+		msg := c.prepareBatchMessage(originalMsg, batchID, batchSeq, totalMsgs, expectedLastSeq)
+
+		if isLast {
+			// 4. FINAL MESSAGE: Send as a request and wait for the PubAck.
+			reply, err := c.nc.RequestMsgWithContext(ctx, msg)
+			if err != nil {
+				return nil, fmt.Errorf("failed on final batch commit message: %w", err)
+			}
+
+			// The final reply contains the full PubAck.
 			var pa pubAck
 			if err := json.Unmarshal(reply.Data, &pa); err != nil {
+				// Handle cases where the reply is just a raw API error.
 				var apiErr jetstream.APIError
 				if json.Unmarshal(reply.Data, &apiErr) == nil {
 					return nil, &apiErr
 				}
 				return nil, fmt.Errorf("failed to unmarshal puback from commit response: %w", err)
-			} else if pa.Error.Code != 0 {
+			}
+			if pa.Error.Code != 0 {
 				return nil, &pa.Error
 			}
 			return &pa, nil
+
+		} else if isFirst {
+			// 2. FIRST MESSAGE: Send as a request to initiate the batch.
+			reply, err := c.nc.RequestMsgWithContext(ctx, msg)
+			if err != nil {
+				return nil, fmt.Errorf("failed to initiate batch: %w", err)
+			}
+			// The reply for the first message should be empty unless there's an immediate error.
+			if len(reply.Data) > 0 {
+				var apiErr jetstream.APIError
+				if json.Unmarshal(reply.Data, &apiErr) == nil && apiErr.ErrorCode != 0 {
+					return nil, fmt.Errorf("received error initiating batch: %w", &apiErr)
+				}
+			}
+
 		} else {
-			// For first and intermediate messages, the reply should be empty but we check for errors.
-			// A non-empty reply with an error indicates a problem.
-			var apiErr jetstream.APIError
-			if json.Unmarshal(reply.Data, &apiErr) == nil && apiErr.ErrorCode != 0 {
-				return nil, fmt.Errorf("received error on intermediate batch message %d: %w", batchSeq, &apiErr)
+			// 3. INTERMEDIATE MESSAGES: Send as a simple, fire-and-forget publish.
+			if err := c.nc.PublishMsg(msg); err != nil {
+				return nil, fmt.Errorf("failed on intermediate batch message %d: %w", batchSeq, err)
 			}
 		}
 	}
 
-	// This should not be reached. The loop should always return from the last message case.
-	return nil, errors.New("batch publishing finished without a commit message")
+	// This part of the code should be unreachable.
+	return nil, errors.New("batch publishing loop finished without a commit message")
 }
 
 func (c *NATS) prepareBatchMessage(originalMsg *nats.Msg, batchID string, seq int, total int, expectedLastSeq *uint64) *nats.Msg {
