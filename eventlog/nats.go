@@ -40,8 +40,8 @@ const (
 // TODO: Remove this struct once the official client includes these fields.
 type pubAck struct {
 	jetstream.PubAck
-	BatchId   string             `json:"batch,omitempty"`
-	BatchSize int                `json:"count,omitempty"`
+	BatchId   string             `json:"batch"`
+	BatchSize int                `json:"count"`
 	Error     jetstream.APIError `json:"error"`
 }
 
@@ -63,34 +63,34 @@ type NATS struct {
 }
 type NatsOption func(*NATS)
 
-// WithStreamName is a configuration option that sets the name of the stream
+// WithNATSStreamName is a configuration option that sets the name of the stream
 // used to store events. If not provided, it defaults to "chronicle_events".
-func WithStreamName(name string) NatsOption {
+func WithNATSStreamName(name string) NatsOption {
 	return func(n *NATS) {
 		n.streamPrefix = name
 	}
 }
 
-// WithSubjectPrefix is a configuration option that sets the prefix for all
+// WithNATSSubjectPrefix is a configuration option that sets the prefix for all
 // subjects. Defaults to "chronicle.events". So an aggregate with ID "123" will
 // have its events on "chronicle.events.123".
-func WithSubjectPrefix(prefix string) NatsOption {
+func WithNATSSubjectPrefix(prefix string) NatsOption {
 	return func(n *NATS) {
 		n.subjectPrefix = prefix
 	}
 }
 
-// WithStorage sets the storage backend for the Jetstream stream.
+// WithNATSStorage sets the storage backend for the Jetstream stream.
 // Defaults to jetstream.FileStorage.
-func WithStorage(storage jetstream.StorageType) NatsOption {
+func WithNATSStorage(storage jetstream.StorageType) NatsOption {
 	return func(n *NATS) {
 		n.storageType = storage
 	}
 }
 
-// WithRetentionPolicy sets the retention policy for the Jetstream stream.
+// WithNATSRetentionPolicy sets the retention policy for the Jetstream stream.
 // Defaults to jetstream.WorkQueuePolicy.
-func WithRetentionPolicy(policy jetstream.RetentionPolicy) NatsOption {
+func WithNATSRetentionPolicy(policy jetstream.RetentionPolicy) NatsOption {
 	return func(n *NATS) {
 		n.retention = policy
 	}
@@ -378,11 +378,6 @@ func (c *NATS) publishBatch(
 			// The final reply contains the full PubAck.
 			var pa pubAck
 			if err := json.Unmarshal(reply.Data, &pa); err != nil {
-				// Handle cases where the reply is just a raw API error.
-				var apiErr jetstream.APIError
-				if json.Unmarshal(reply.Data, &apiErr) == nil {
-					return nil, &apiErr
-				}
 				return nil, fmt.Errorf("failed to unmarshal puback from commit response: %w", err)
 			}
 			if pa.Error.Code != 0 {
@@ -394,20 +389,20 @@ func (c *NATS) publishBatch(
 			// 2. FIRST MESSAGE: Send as a request to initiate the batch.
 			reply, err := c.nc.RequestMsgWithContext(ctx, msg)
 			if err != nil {
-				return nil, fmt.Errorf("failed to initiate batch: %w", err)
+				return nil, err
 			}
 			// The reply for the first message should be empty unless there's an immediate error.
 			if len(reply.Data) > 0 {
-				var apiErr jetstream.APIError
-				if json.Unmarshal(reply.Data, &apiErr) == nil && apiErr.ErrorCode != 0 {
-					return nil, fmt.Errorf("received error initiating batch: %w", &apiErr)
+				var apiErr pubAck
+				if json.Unmarshal(reply.Data, &apiErr) == nil && apiErr.Error.ErrorCode != 0 {
+					return nil, fmt.Errorf("received error initiating batch: %v", &apiErr)
 				}
 			}
 
 		} else {
 			// 3. INTERMEDIATE MESSAGES: Send as a simple, fire-and-forget publish.
 			if err := c.nc.PublishMsg(msg); err != nil {
-				return nil, fmt.Errorf("failed on intermediate batch message %d: %w", batchSeq, err)
+				return nil, err
 			}
 		}
 	}
@@ -444,15 +439,13 @@ func (c *NATS) prepareBatchMessage(originalMsg *nats.Msg, batchID string, seq in
 func convertRawEventsToNatsMsgs(subject string, events event.RawEvents, startingVersion version.Version) []*nats.Msg {
 	msgs := make([]*nats.Msg, len(events))
 	for i, rawEvent := range events {
-		// The aggregate's version for this specific event.
 		eventVersion := startingVersion + version.Version(i+1)
 
 		msgs[i] = &nats.Msg{
 			Subject: subject,
 			Data:    rawEvent.Data(),
 			Header: nats.Header{
-				headerEventName: []string{rawEvent.EventName()},
-				// Store the version as a string in the header.
+				headerEventName:        []string{rawEvent.EventName()},
 				headerAggregateVersion: []string{strconv.FormatUint(uint64(eventVersion), 10)},
 			},
 		}
@@ -535,13 +528,10 @@ func parseActualVersionFromError(err error) (version.Version, bool) {
 	var apiErr *jetstream.APIError
 	// First, check if the error is a jetstream.APIError and has the correct code.
 	if errors.As(err, &apiErr) && apiErr.ErrorCode == jetstream.JSErrCodeStreamWrongLastSequence {
-		// If it is, use the regex to find the number at the end of the description.
 		matches := wrongLastSeqRegexp.FindStringSubmatch(apiErr.Description)
-		// matches[0] is the full match ("11"), matches[1] is the first capture group ("11").
 		if len(matches) > 1 {
 			actual, parseErr := strconv.ParseUint(matches[1], 10, 64)
 			if parseErr == nil {
-				// Success! We found and parsed the version.
 				return version.Version(actual), true
 			}
 		}
