@@ -45,58 +45,71 @@ type pubAck struct {
 	Error     jetstream.APIError `json:"error"`
 }
 
-// NATS is an implementation of event.Log for NATS Jetstream.
-// It uses a Jetstream stream to store events. Each aggregate's event log
-// is a subject within that stream.
+// NATS provides an event.Log implementation using NATS Jetstream as the backing store.
 //
-// Optimistic concurrency control is achieved using Jetstream's "Expected Last
-// Subject Sequence" feature, which is highly reliable for preventing race
-// conditions during writes.
+// It employs a "one stream per aggregate" model. Each unique event.LogID is
+// mapped to its own dedicated Jetstream stream. This design choice ensures that the
+// Jetstream sequence numbers for a stream are always synchronized with the aggregate's
+// version, which allows for simple and reliable optimistic concurrency control.
+//
+// For appending single events (the common case), it uses a highly efficient, standard
+// publish operation. For appending multiple events atomically, it uses the newer
+// atomic batch publish feature (ADR-50).
 type NATS struct {
-	nc          *nats.Conn
-	js          jetstream.JetStream
+	nc *nats.Conn
+	js jetstream.JetStream
+
+	// Configuration for dynamically created streams.
 	storageType jetstream.StorageType
 	retention   jetstream.RetentionPolicy
 
+	// Prefixes used to generate stream and subject names from an event.LogID.
 	streamPrefix  string
 	subjectPrefix string
 }
-type NatsOption func(*NATS)
+
+// NATSOption defines a function that configures a NATS event log instance.
+type NATSOption func(*NATS)
 
 // WithNATSStreamName is a configuration option that sets the name of the stream
 // used to store events. If not provided, it defaults to "chronicle_events".
-func WithNATSStreamName(name string) NatsOption {
+func WithNATSStreamName(name string) NATSOption {
 	return func(n *NATS) {
 		n.streamPrefix = name
 	}
 }
 
-// WithNATSSubjectPrefix is a configuration option that sets the prefix for all
-// subjects. Defaults to "chronicle.events". So an aggregate with ID "123" will
-// have its events on "chronicle.events.123".
-func WithNATSSubjectPrefix(prefix string) NatsOption {
+// WithNATSSubjectPrefix sets the prefix used for all event subjects.
+// For an aggregate with ID "order/123", the subject would be "<prefix>.order_123".
+// If not provided, it defaults to "chronicle.events".
+func WithNATSSubjectPrefix(prefix string) NATSOption {
 	return func(n *NATS) {
 		n.subjectPrefix = prefix
 	}
 }
 
-// WithNATSStorage sets the storage backend for the Jetstream stream.
-// Defaults to jetstream.FileStorage.
-func WithNATSStorage(storage jetstream.StorageType) NatsOption {
+// WithNATSStorage sets the storage backend (e.g., File or Memory) for the Jetstream streams.
+// Defaults to jetstream.FileStorage for durability.
+func WithNATSStorage(storage jetstream.StorageType) NATSOption {
 	return func(n *NATS) {
 		n.storageType = storage
 	}
 }
 
-// WithNATSRetentionPolicy sets the retention policy for the Jetstream stream.
-// Defaults to jetstream.WorkQueuePolicy.
-func WithNATSRetentionPolicy(policy jetstream.RetentionPolicy) NatsOption {
+// WithNATSRetentionPolicy sets the retention policy for the Jetstream streams (e.g., Limits, Interest).
+// Defaults to jetstream.LimitsPolicy.
+func WithNATSRetentionPolicy(policy jetstream.RetentionPolicy) NATSOption {
 	return func(n *NATS) {
 		n.retention = policy
 	}
 }
 
-func NewNATSJetStream(nc *nats.Conn, opts ...NatsOption) (*NATS, error) {
+// NewNATSJetStream creates a new NATS event log instance.
+// It requires a connected `*nats.Conn` and accepts functional options for configuration.
+// This constructor does NOT create any streams.
+//
+// Streams are created on-demand when events are first appended for a new aggregate.
+func NewNATSJetStream(nc *nats.Conn, opts ...NATSOption) (*NATS, error) {
 	if nc == nil {
 		return nil, errors.New("nats connection cannot be nil")
 	}
@@ -122,10 +135,11 @@ func NewNATSJetStream(nc *nats.Conn, opts ...NatsOption) (*NATS, error) {
 	return njs, nil
 }
 
-// AppendEvents implements event.Log.
-// It optimizes for the common case of appending a single event by using the standard
-// jetstream.PublishMsg method. For batches of more than one event, it uses the
-// atomic batch publish feature.
+// AppendEvents appends one or more events for a given aggregate ID to its dedicated stream.
+// It performs an optimistic concurrency check based on the `expected` version.
+//
+// This method is optimized: for single events, it uses a standard, efficient publish call.
+// For multiple events, it uses the atomic batch publish feature to ensure all-or-nothing semantics.
 func (c *NATS) AppendEvents(
 	ctx context.Context,
 	id event.LogID,
@@ -164,7 +178,8 @@ func (c *NATS) AppendEvents(
 	return newVersion, nil
 }
 
-// ReadEvents implements event.Log.
+// ReadEvents returns an iterator for the event history of a single aggregate.
+// It reads from the aggregate's dedicated stream by creating an ephemeral pull consumer.
 func (c *NATS) ReadEvents(ctx context.Context, id event.LogID, selector version.Selector) event.Records {
 	return func(yield func(*event.Record, error) bool) {
 		streamName := c.logIDToStreamName(id)
@@ -172,6 +187,8 @@ func (c *NATS) ReadEvents(ctx context.Context, id event.LogID, selector version.
 
 		stream, err := c.js.Stream(ctx, streamName)
 		if err != nil {
+			// If the stream doesn't exist, it means no events have ever been written
+			// for this aggregate, which is a normal condition, not an error.
 			if errors.Is(err, jetstream.ErrStreamNotFound) {
 				return
 
@@ -180,13 +197,16 @@ func (c *NATS) ReadEvents(ctx context.Context, id event.LogID, selector version.
 			return
 		}
 		consumerCfg := jetstream.ConsumerConfig{
-			FilterSubject:     subject,
-			AckPolicy:         jetstream.AckExplicitPolicy,
-			DeliverPolicy:     jetstream.DeliverByStartSequencePolicy,
-			OptStartSeq:       uint64(selector.From),
+			FilterSubject: subject,
+			AckPolicy:     jetstream.AckExplicitPolicy,
+			DeliverPolicy: jetstream.DeliverByStartSequencePolicy,
+			OptStartSeq:   uint64(selector.From), // The selector's `From` version directly maps to the stream's start sequence.
+
 			InactiveThreshold: 5 * time.Minute,
 		}
 
+		// A start sequence of 0 is invalid for DeliverByStartSequencePolicy,
+		// so we must switch to DeliverAllPolicy in that case.
 		if selector.From == 0 {
 			consumerCfg.DeliverPolicy = jetstream.DeliverAllPolicy
 		}
@@ -204,6 +224,8 @@ func (c *NATS) ReadEvents(ctx context.Context, id event.LogID, selector version.
 		defer iter.Stop()
 
 		for {
+			// A timeout is provided to `Next` to prevent the loop from blocking indefinitely
+			// if there are no more messages. This is the mechanism that signals the end of the stream.
 			msg, err := iter.Next(jetstream.NextMaxWait(500 * time.Millisecond))
 			if err != nil {
 				if errors.Is(err, jetstream.ErrMsgIteratorClosed) {
@@ -231,6 +253,7 @@ func (c *NATS) ReadEvents(ctx context.Context, id event.LogID, selector version.
 				return
 			}
 
+			// Acknowledge the message so it is not redelivered.
 			if err := msg.Ack(); err != nil {
 				yield(nil, fmt.Errorf("read events: acknowledge message: %w", err))
 				return
@@ -240,6 +263,8 @@ func (c *NATS) ReadEvents(ctx context.Context, id event.LogID, selector version.
 	}
 }
 
+// AppendInTx appends a batch of two or more events to the log within a transaction-like context.
+// It uses the NATS atomic batch publish feature (ADR-50) for all-or-nothing writes.
 func (c *NATS) AppendInTx(
 	ctx context.Context,
 	_ jetstream.JetStream,
@@ -257,12 +282,13 @@ func (c *NATS) AppendInTx(
 	msgs := convertRawEventsToNatsMsgs(subject, events, version.Version(exp))
 	expectedSeq := uint64(exp)
 
+	// Idempotently ensure the stream for this aggregate exists before publishing.
 	_, err := c.ensureStream(ctx, jetstream.StreamConfig{
 		Name:               stream,
 		Subjects:           []string{subject},
 		Storage:            c.storageType,
 		Retention:          c.retention,
-		AllowAtomicPublish: true,
+		AllowAtomicPublish: true, // This flag is required for batch writes.
 	})
 	if err != nil {
 		return version.Zero, nil, fmt.Errorf("cannot create stream: %w", err)
@@ -277,8 +303,10 @@ func (c *NATS) AppendInTx(
 		return version.Zero, nil, fmt.Errorf("append events: publish batch to jetstream: %w", err)
 	}
 
+	// On success, the new version is the expected version plus the number of new events.
 	finalVersion := version.Version(exp) + version.Version(len(events))
 
+	// The `event.TransactionalLog` interface requires us to return the persisted records.
 	records := make([]*event.Record, len(events))
 	for i, raw := range events {
 		records[i] = event.NewRecord(version.Version(exp)+version.Version(i+1), id, raw.EventName(), raw.Data())
@@ -287,12 +315,17 @@ func (c *NATS) AppendInTx(
 	return finalVersion, records, nil
 }
 
+// WithinTx provides a transactional boundary for event log operations.
+// For NATS, single publish and batch publish operations are already atomic by nature,
+// so this function simply executes the provided function without creating a
+// separate transaction handle.
 func (c *NATS) WithinTx(ctx context.Context, fn func(ctx context.Context, tx jetstream.JetStream) error) error {
 	return fn(ctx, c.js)
 }
 
-// EnsureStream ensures that a stream with the given configuration exists.
-// It creates the stream if it doesn't exist or updates it if it does.
+// ensureStream idempotently ensures a stream with the given configuration exists.
+// If the stream does not exist, it is created. If it exists, it is updated to
+// match the configuration, which is a safe, idempotent operation.
 func (c *NATS) ensureStream(ctx context.Context, cfg jetstream.StreamConfig) (jetstream.Stream, error) {
 	stream, err := c.js.Stream(ctx, cfg.Name)
 	if err != nil || stream == nil {
@@ -368,39 +401,31 @@ func (c *NATS) publishBatch(
 		// Prepare the message with appropriate batch headers.
 		msg := c.prepareBatchMessage(originalMsg, batchID, batchSeq, totalMsgs, expectedLastSeq)
 
-		if isLast {
-			// 4. FINAL MESSAGE: Send as a request and wait for the PubAck.
+		if isFirst || isLast {
 			reply, err := c.nc.RequestMsgWithContext(ctx, msg)
 			if err != nil {
-				return nil, fmt.Errorf("failed on final batch commit message: %w", err)
+				return nil, fmt.Errorf("request for batch message %d failed: %w", batchSeq, err)
 			}
-
-			// The final reply contains the full PubAck.
-			var pa pubAck
-			if err := json.Unmarshal(reply.Data, &pa); err != nil {
-				return nil, fmt.Errorf("failed to unmarshal puback from commit response: %w", err)
-			}
-			if pa.Error.Code != 0 {
-				return nil, &pa.Error
-			}
-			return &pa, nil
-
-		} else if isFirst {
-			// 2. FIRST MESSAGE: Send as a request to initiate the batch.
-			reply, err := c.nc.RequestMsgWithContext(ctx, msg)
-			if err != nil {
-				return nil, err
+			// Only the last message's reply contains the definitive PubAck.
+			if isLast {
+				var pa pubAck
+				if err := json.Unmarshal(reply.Data, &pa); err != nil {
+					return nil, fmt.Errorf("could not unmarshal commit response: %w", err)
+				}
+				if pa.Error.Code != 0 {
+					return nil, &pa.Error
+				}
+				return &pa, nil
 			}
 			// The reply for the first message should be empty unless there's an immediate error.
 			if len(reply.Data) > 0 {
 				var apiErr pubAck
 				if json.Unmarshal(reply.Data, &apiErr) == nil && apiErr.Error.ErrorCode != 0 {
-					return nil, fmt.Errorf("received error initiating batch: %v", &apiErr)
+					return nil, fmt.Errorf("received error initiating batch: %w", &apiErr.Error)
 				}
 			}
-
 		} else {
-			// 3. INTERMEDIATE MESSAGES: Send as a simple, fire-and-forget publish.
+			// Intermediate messages are fire-and-forget for performance.
 			if err := c.nc.PublishMsg(msg); err != nil {
 				return nil, err
 			}
@@ -411,6 +436,9 @@ func (c *NATS) publishBatch(
 	return nil, errors.New("batch publishing loop finished without a commit message")
 }
 
+// prepareBatchMessage is a helper that constructs a `*nats.Msg` for use in the
+// ADR-50 batch publish protocol. It clones the original message and injects the
+// necessary `Nats-Batch-*` and optimistic locking headers
 func (c *NATS) prepareBatchMessage(originalMsg *nats.Msg, batchID string, seq int, total int, expectedLastSeq *uint64) *nats.Msg {
 	msg := &nats.Msg{
 		Subject: originalMsg.Subject,
@@ -436,6 +464,9 @@ func (c *NATS) prepareBatchMessage(originalMsg *nats.Msg, batchID string, seq in
 	return msg
 }
 
+// convertRawEventsToNatsMsgs transforms a slice of Chronicle's RawEvents into a slice
+// of `*nats.Msg` suitable for publishing. It embeds the aggregate version and event
+// name into the headers of each message.
 func convertRawEventsToNatsMsgs(subject string, events event.RawEvents, startingVersion version.Version) []*nats.Msg {
 	msgs := make([]*nats.Msg, len(events))
 	for i, rawEvent := range events {
@@ -468,8 +499,9 @@ func cloneHeader(original nats.Header) nats.Header {
 	return clone
 }
 
-// appendSingleEvent handles the optimized case of writing a single event to the stream.
-// It uses the standard PublishMsg which is robust and efficient.
+// appendSingleEvent is an optimized path for writing a single event to a stream.
+// It uses the standard `jetstream.PublishMsg` which is more efficient than the
+// full ADR-50 batch protocol for this common case.
 func (c *NATS) appendSingleEvent(
 	ctx context.Context,
 	id event.LogID,
@@ -522,8 +554,9 @@ func (c *NATS) appendSingleEvent(
 var wrongLastSeqRegexp = regexp.MustCompile(`(\d+)$`)
 
 // parseActualVersionFromError inspects an error to see if it's a Jetstream
-// "wrong last sequence" conflict. If it is, it parses the actual version
-// from the error's description string and returns it.
+// "wrong last sequence" conflict (ErrorCode 10071). If it is, it safely parses the
+// actual version from the error's description string and returns it. This is more
+// reliable and efficient than making a separate network call to get the latest version.
 func parseActualVersionFromError(err error) (version.Version, bool) {
 	var apiErr *jetstream.APIError
 	// First, check if the error is a jetstream.APIError and has the correct code.
@@ -557,6 +590,8 @@ func (c *NATS) logIDToSubjectName(id event.LogID) string {
 	return fmt.Sprintf("%s.%s", c.subjectPrefix, safeID)
 }
 
+// natsMsgToRecord converts a received `jetstream.Msg` into a `*event.Record`.
+// It extracts the necessary metadata (version, event name) from the message headers.
 func (c *NATS) natsMsgToRecord(msg jetstream.Msg, id event.LogID) (*event.Record, error) {
 	eventName := msg.Headers().Get(headerEventName)
 	if eventName == "" {
