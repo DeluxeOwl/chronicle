@@ -64,8 +64,10 @@ type NATS struct {
 	retention   jetstream.RetentionPolicy
 
 	// Prefixes used to generate stream and subject names from an event.LogID.
-	streamPrefix  string
+	streamName    string
 	subjectPrefix string
+
+	readTimeout time.Duration
 }
 
 // NATSOption defines a function that configures a NATS event log instance.
@@ -75,7 +77,7 @@ type NATSOption func(*NATS)
 // used to store events. If not provided, it defaults to "chronicle_events".
 func WithNATSStreamName(name string) NATSOption {
 	return func(n *NATS) {
-		n.streamPrefix = name
+		n.streamName = name
 	}
 }
 
@@ -104,6 +106,14 @@ func WithNATSRetentionPolicy(policy jetstream.RetentionPolicy) NATSOption {
 	}
 }
 
+// WithReadTimeOut sets the read wait duration during events fetching from the stream.
+// Defaults to 500 milliseconds.
+func WithReadTimeOut(t time.Duration) NATSOption {
+	return func(n *NATS) {
+		n.readTimeout = t
+	}
+}
+
 // NewNATSJetStream creates a new NATS event log instance.
 // It requires a connected `*nats.Conn` and accepts functional options for configuration.
 // This constructor does NOT create any streams.
@@ -122,10 +132,11 @@ func NewNATSJetStream(nc *nats.Conn, opts ...NATSOption) (*NATS, error) {
 	njs := &NATS{
 		nc:            nc,
 		js:            js,
-		streamPrefix:  "chronicle_events",
+		streamName:    "chronicle_events",
 		subjectPrefix: "chronicle.events",
 		storageType:   jetstream.FileStorage,
 		retention:     jetstream.LimitsPolicy,
+		readTimeout:   500 * time.Millisecond,
 	}
 
 	for _, opt := range opts {
@@ -182,10 +193,9 @@ func (c *NATS) AppendEvents(
 // It reads from the aggregate's dedicated stream by creating an ephemeral pull consumer.
 func (c *NATS) ReadEvents(ctx context.Context, id event.LogID, selector version.Selector) event.Records {
 	return func(yield func(*event.Record, error) bool) {
-		streamName := c.logIDToStreamName(id)
-		subject := c.logIDToSubjectName(id)
+		subject := c.logIDToSubject(id)
 
-		stream, err := c.js.Stream(ctx, streamName)
+		stream, err := c.js.Stream(ctx, c.streamName)
 		if err != nil {
 			// If the stream doesn't exist, it means no events have ever been written
 			// for this aggregate, which is a normal condition, not an error.
@@ -226,7 +236,7 @@ func (c *NATS) ReadEvents(ctx context.Context, id event.LogID, selector version.
 		for {
 			// A timeout is provided to `Next` to prevent the loop from blocking indefinitely
 			// if there are no more messages. This is the mechanism that signals the end of the stream.
-			msg, err := iter.Next(jetstream.NextMaxWait(500 * time.Millisecond))
+			msg, err := iter.Next(jetstream.NextMaxWait(c.readTimeout))
 			if err != nil {
 				if errors.Is(err, jetstream.ErrMsgIteratorClosed) {
 					// Normal end of iteration
@@ -277,19 +287,12 @@ func (c *NATS) AppendInTx(
 		return version.Zero, nil, fmt.Errorf("append in tx: %w", ErrUnsupportedCheck)
 	}
 
-	stream := c.logIDToStreamName(id)
-	subject := c.logIDToSubjectName(id)
+	subject := c.logIDToSubject(id)
 	msgs := convertRawEventsToNatsMsgs(subject, events, version.Version(exp))
 	expectedSeq := uint64(exp)
 
 	// Idempotently ensure the stream for this aggregate exists before publishing.
-	_, err := c.ensureStream(ctx, jetstream.StreamConfig{
-		Name:               stream,
-		Subjects:           []string{subject},
-		Storage:            c.storageType,
-		Retention:          c.retention,
-		AllowAtomicPublish: true, // This flag is required for batch writes.
-	})
+	_, err := c.ensureStream(ctx, c.streamName, subject)
 	if err != nil {
 		return version.Zero, nil, fmt.Errorf("cannot create stream: %w", err)
 	}
@@ -326,7 +329,15 @@ func (c *NATS) WithinTx(ctx context.Context, fn func(ctx context.Context, tx jet
 // ensureStream idempotently ensures a stream with the given configuration exists.
 // If the stream does not exist, it is created. If it exists, it is updated to
 // match the configuration, which is a safe, idempotent operation.
-func (c *NATS) ensureStream(ctx context.Context, cfg jetstream.StreamConfig) (jetstream.Stream, error) {
+func (c *NATS) ensureStream(ctx context.Context, streamName, subject string) (jetstream.Stream, error) {
+	cfg := jetstream.StreamConfig{
+		Name:      streamName,
+		Subjects:  []string{subject},
+		Storage:   c.storageType,
+		Retention: c.retention,
+		// Required for batch publishing
+		AllowAtomicPublish: true,
+	}
 	stream, err := c.js.Stream(ctx, cfg.Name)
 	if err != nil || stream == nil {
 		if errors.Is(err, jetstream.ErrStreamNotFound) {
@@ -508,17 +519,10 @@ func (c *NATS) appendSingleEvent(
 	expected version.CheckExact,
 	rawEvent event.Raw,
 ) (version.Version, error) {
-	streamName := c.logIDToStreamName(id)
-	subject := c.logIDToSubjectName(id)
-	_, err := c.ensureStream(ctx, jetstream.StreamConfig{
-		Name:      streamName,
-		Subjects:  []string{subject},
-		Storage:   c.storageType,
-		Retention: c.retention,
-	})
-
+	subject := c.logIDToSubject(id)
+	_, err := c.ensureStream(ctx, c.streamName, subject)
 	if err != nil {
-		return version.Zero, fmt.Errorf("could not ensure stream '%s': %w", streamName, err)
+		return version.Zero, fmt.Errorf("could not ensure stream '%s': %w", c.streamName, err)
 	}
 
 	newEventVersion := version.Version(expected) + 1
@@ -573,23 +577,6 @@ func parseActualVersionFromError(err error) (version.Version, bool) {
 	return version.Zero, false
 }
 
-// logIDToStreamName converts an event.LogID into a NATS-compatible stream name.
-// e.g., "foo/123" -> "chronicle_events_foo_123"
-func (c *NATS) logIDToStreamName(id event.LogID) string {
-	safeID := strings.ReplaceAll(string(id), "/", "_")
-	safeID = strings.ReplaceAll(safeID, ".", "_")
-	safeID = strings.ReplaceAll(safeID, " ", "_")
-	return fmt.Sprintf("%s_%s", c.streamPrefix, safeID)
-}
-
-// logIDToSubjectName converts an event.LogID into a NATS-compatible stream name.
-func (c *NATS) logIDToSubjectName(id event.LogID) string {
-	safeID := strings.ReplaceAll(string(id), "/", "_")
-	safeID = strings.ReplaceAll(safeID, ".", "_")
-	safeID = strings.ReplaceAll(safeID, " ", "_")
-	return fmt.Sprintf("%s.%s", c.subjectPrefix, safeID)
-}
-
 // natsMsgToRecord converts a received `jetstream.Msg` into a `*event.Record`.
 // It extracts the necessary metadata (version, event name) from the message headers.
 func (c *NATS) natsMsgToRecord(msg jetstream.Msg, id event.LogID) (*event.Record, error) {
@@ -614,4 +601,13 @@ func (c *NATS) natsMsgToRecord(msg jetstream.Msg, id event.LogID) (*event.Record
 		eventName,
 		msg.Data(),
 	), nil
+}
+
+// logIDToSubject converts a LogID into a NATS subject for a specific instance.
+// e.g., "order/123" -> "chronicle.events.orders.123"
+func (c *NATS) logIDToSubject(id event.LogID) string {
+	// Sanitize the full ID to be NATS subject-safe.
+	safeID := strings.ReplaceAll(string(id), "/", ".")
+	safeID = strings.ReplaceAll(safeID, " ", "_")
+	return fmt.Sprintf("%s.%s", c.subjectPrefix, safeID)
 }
