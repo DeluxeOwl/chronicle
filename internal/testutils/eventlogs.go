@@ -79,6 +79,11 @@ func SetupEventLogs(t *testing.T) ([]EventLog, func()) {
 	postgresLog, err := eventlog.NewPostgres(pg)
 	require.NoError(t, err)
 
+	nats, err := SetupNATS(t)
+	require.NoError(t, err)
+	natsLog, err := eventlog.NewNATSJetStream(nats)
+	require.NoError(t, err)
+
 	return []EventLog{
 			{
 				Name: "memory log",
@@ -96,6 +101,10 @@ func SetupEventLogs(t *testing.T) ([]EventLog, func()) {
 				Name: "postgres log",
 				Log:  postgresLog,
 			},
+			{
+				Name: "nats log",
+				Log:  natsLog,
+			},
 		}, func() {
 			err := pebbleDB.Close()
 			require.NoError(t, err)
@@ -104,6 +113,8 @@ func SetupEventLogs(t *testing.T) ([]EventLog, func()) {
 			require.NoError(t, err)
 
 			cleanupPostgres()
+
+			nats.Drain()
 		}
 }
 

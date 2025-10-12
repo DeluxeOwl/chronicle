@@ -9,6 +9,7 @@ require (
 	github.com/gofrs/uuid/v5 v5.3.2
 	github.com/jackc/pgx/v5 v5.7.5
 	github.com/mattn/go-sqlite3 v1.14.29
+	github.com/nats-io/nats.go v1.46.0
 	github.com/olekukonko/tablewriter v1.0.9
 	github.com/sanity-io/litter v1.5.8
 	github.com/stretchr/testify v1.10.0
@@ -70,6 +71,8 @@ require (
 	github.com/moby/sys/userns v0.1.0 // indirect
 	github.com/moby/term v0.5.0 // indirect
 	github.com/morikuni/aec v1.0.0 // indirect
+	github.com/nats-io/nkeys v0.4.11 // indirect
+	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/olekukonko/errors v1.1.0 // indirect
 	github.com/olekukonko/ll v0.0.9 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
