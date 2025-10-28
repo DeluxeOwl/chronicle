@@ -22,128 +22,18 @@ var (
 //
 // See `NewPostgres` for initialization.
 type Postgres struct {
-	db       *sql.DB
-	useByteA bool
-
-	qCreateTable      string
-	qCreateFunction   string
-	qCreateTrigger    string
-	qInsertEvent      string
-	qReadEvents       string
-	qReadAllEvents    string
-	qDeleteEventsUpTo string
+	db *sql.DB
 }
 
 type PostgresOption func(*Postgres)
-
-// PostgresTableName is a configuration option that sets the name of the table
-// used to store events. If not provided, it defaults to "chronicle_events".
-// This option also regenerates all internal SQL queries to use the specified table name.
-//
-// Usage:
-//
-//	pgLog, err := eventlog.NewPostgres(db,
-//	    eventlog.PostgresTableName("my_domain_events"),
-//	)
-//
-// Returns a `PostgresOption` to be used with `NewPostgres`.
-func PostgresTableName(tableName string) PostgresOption {
-	return func(p *Postgres) {
-		dataType := "JSONB"
-		if p.useByteA {
-			dataType = "BYTEA"
-		}
-
-		p.qCreateTable = fmt.Sprintf(`
-		CREATE TABLE IF NOT EXISTS %s (
-			global_version BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-			log_id         TEXT NOT NULL,
-			version        BIGINT NOT NULL,
-			event_name     TEXT NOT NULL,
-			data           %s,
-			UNIQUE (log_id, version)
-		);`, tableName, dataType)
-
-		p.qCreateFunction = fmt.Sprintf(`
-		CREATE OR REPLACE FUNCTION chronicle_check_event_version()
-		RETURNS TRIGGER AS $$
-		DECLARE max_version BIGINT;
-		BEGIN
-			-- Acquire a transaction-level advisory lock based on a hash of the log_id.
-			-- This serializes inserts for the same log_id, preventing the race condition
-			-- where two transactions simultaneously try to insert the first event for a stream.
-			-- The lock is automatically released at the end of the transaction.
-			PERFORM pg_advisory_xact_lock(hashtext(NEW.log_id));
-
-			-- Now that we have the lock, we can safely check the current version.
-			SELECT version INTO max_version FROM %s WHERE log_id = NEW.log_id ORDER BY version DESC LIMIT 1;
-			
-			-- If no row was found (i.e., this is the first event for this log_id),
-			-- the 'max_version' will be NULL. COALESCE handles this, setting it to 0.
-			IF NOT FOUND THEN
-				max_version := 0;
-			END IF;
-
-			IF NEW.version != max_version + 1 THEN
-				-- Raise an exception with the actual latest version to be parsed by the client.
-				RAISE EXCEPTION '%s%%', max_version;
-			END IF;
-
-			RETURN NEW;
-		END;
-		$$ LANGUAGE plpgsql;`, tableName, conflictErrorPrefix)
-
-		p.qCreateTrigger = fmt.Sprintf(`
-        DROP TRIGGER IF EXISTS trg_chronicle_check_event_version ON %s;
-        CREATE TRIGGER trg_chronicle_check_event_version
-        BEFORE INSERT ON %s
-        FOR EACH ROW EXECUTE FUNCTION chronicle_check_event_version();
-        `, tableName, tableName)
-
-		p.qInsertEvent = fmt.Sprintf(
-			"INSERT INTO %s (log_id, version, event_name, data) VALUES ($1, $2, $3, $4)",
-			tableName,
-		)
-		p.qReadEvents = fmt.Sprintf(
-			"SELECT version, event_name, data FROM %s WHERE log_id = $1 AND version >= $2 AND ($3 = 0 OR version <= $4) ORDER BY version ASC",
-			tableName,
-		)
-		p.qReadAllEvents = fmt.Sprintf(
-			"SELECT global_version, version, log_id, event_name, data FROM %s WHERE global_version >= $1 AND ($2 = 0 OR global_version <= $3) ORDER BY global_version ASC",
-			tableName,
-		)
-		p.qDeleteEventsUpTo = fmt.Sprintf(
-			"DELETE FROM %s WHERE log_id = $1 AND version <= $2",
-			tableName,
-		)
-	}
-}
-
-// PostgresUseBYTEA configures the event log to use a BYTEA column for event data
-// instead of the default JSONB. This is useful if you are using a binary
-//
-//	format like Protobuf instead of JSON.
-//
-// Usage:
-//
-//	pgLog, err := eventlog.NewPostgres(db,
-//	    eventlog.PostgresUseBYTEA(),
-//	)
-//
-// Returns a `PostgresOption` to be used with `NewPostgres`.
-func PostgresUseBYTEA() PostgresOption {
-	return func(p *Postgres) {
-		p.useByteA = true
-	}
-}
 
 // NewPostgres creates a new Postgres event log. Upon initialization, it ensures that
 // the necessary database schema (table, function, and trigger) is created. This
 // setup is performed within a transaction, making it safe to call on application startup.
 //
-// By default, this log uses a JSONB column and expects a JSON-based
+// IMPORTANT: By default, this log uses a JSONB column and expects a JSON-based
 // encoder (e.g., codec.NewJSONB()) to be configured in the repository.
-// Use the `PostgresUseBYTEA` option if you plan to use a different binary format.
+// Modify the migrations or create your own implementation of a store if you want a different format.
 //
 // Usage:
 //
@@ -158,15 +48,10 @@ func PostgresUseBYTEA() PostgresOption {
 //
 // Returns a configured `*Postgres` instance or an error if the setup fails.
 func NewPostgres(db *sql.DB, opts ...PostgresOption) (*Postgres, error) {
-	//nolint:exhaustruct // Fields are set below
 	pgLog := &Postgres{db: db}
 
 	for _, o := range opts {
 		o(pgLog)
-	}
-
-	if pgLog.qCreateTable == "" {
-		PostgresTableName("chronicle_events")(pgLog)
 	}
 
 	tx, err := db.Begin()
@@ -177,13 +62,53 @@ func NewPostgres(db *sql.DB, opts ...PostgresOption) (*Postgres, error) {
 	//nolint:errcheck // The error from Commit/Rollback will be handled.
 	defer tx.Rollback()
 
-	if _, err := tx.Exec(pgLog.qCreateTable); err != nil {
+	if _, err := tx.Exec(`
+		CREATE TABLE IF NOT EXISTS chronicle_events (
+			global_version BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+			log_id         TEXT NOT NULL,
+			version        BIGINT NOT NULL,
+			event_name     TEXT NOT NULL,
+			data           JSONB,
+			UNIQUE (log_id, version)
+		);`); err != nil {
 		return nil, fmt.Errorf("new postgres event log: create events table: %w", err)
 	}
-	if _, err := tx.Exec(pgLog.qCreateFunction); err != nil {
+	if _, err := tx.Exec(`
+		CREATE OR REPLACE FUNCTION chronicle_check_event_version()
+		RETURNS TRIGGER AS $$
+		DECLARE max_version BIGINT;
+		BEGIN
+			-- Acquire a transaction-level advisory lock based on a hash of the log_id.
+			-- This serializes inserts for the same log_id, preventing the race condition
+			-- where two transactions simultaneously try to insert the first event for a stream.
+			-- The lock is automatically released at the end of the transaction.
+			PERFORM pg_advisory_xact_lock(hashtext(NEW.log_id));
+
+			-- Now that we have the lock, we can safely check the current version.
+			SELECT version INTO max_version FROM chronicle_events WHERE log_id = NEW.log_id ORDER BY version DESC LIMIT 1;
+			
+			-- If no row was found (i.e., this is the first event for this log_id),
+			-- the 'max_version' will be NULL. COALESCE handles this, setting it to 0.
+			IF NOT FOUND THEN
+				max_version := 0;
+			END IF;
+
+			IF NEW.version != max_version + 1 THEN
+				-- Raise an exception with the actual latest version to be parsed by the client.
+				RAISE EXCEPTION '_chronicle_version_conflict: %', max_version;
+			END IF;
+
+			RETURN NEW;
+		END;
+		$$ LANGUAGE plpgsql;`); err != nil {
 		return nil, fmt.Errorf("new postgres event log: create version check function: %w", err)
 	}
-	if _, err := tx.Exec(pgLog.qCreateTrigger); err != nil {
+	if _, err := tx.Exec(`
+        DROP TRIGGER IF EXISTS trg_chronicle_check_event_version ON chronicle_events;
+        CREATE TRIGGER trg_chronicle_check_event_version
+        BEFORE INSERT ON chronicle_events
+        FOR EACH ROW EXECUTE FUNCTION chronicle_check_event_version();
+        `); err != nil {
 		return nil, fmt.Errorf("new postgres event log: create version check trigger: %w", err)
 	}
 
@@ -258,7 +183,10 @@ func (p *Postgres) AppendInTx(
 		return version.Zero, nil, fmt.Errorf("append in tx: %w", ErrUnsupportedCheck)
 	}
 
-	stmt, err := tx.PrepareContext(ctx, p.qInsertEvent)
+	stmt, err := tx.PrepareContext(
+		ctx,
+		"INSERT INTO chronicle_events (log_id, version, event_name, data) VALUES ($1, $2, $3, $4)",
+	)
 	if err != nil {
 		return version.Zero, nil, fmt.Errorf("append in tx: prepare statement: %w", err)
 	}
@@ -344,7 +272,7 @@ func (p *Postgres) ReadEvents(
 	return func(yield func(*event.Record, error) bool) {
 		rows, err := p.db.QueryContext(
 			ctx,
-			p.qReadEvents,
+			"SELECT version, event_name, data FROM chronicle_events WHERE log_id = $1 AND version >= $2 AND ($3 = 0 OR version <= $4) ORDER BY version ASC",
 			id,
 			selector.From,
 			selector.To,
@@ -402,7 +330,7 @@ func (p *Postgres) ReadAllEvents(
 	return func(yield func(*event.GlobalRecord, error) bool) {
 		rows, err := p.db.QueryContext(
 			ctx,
-			p.qReadAllEvents,
+			"SELECT global_version, version, log_id, event_name, data FROM chronicle_events WHERE global_version >= $1 AND ($2 = 0 OR global_version <= $3) ORDER BY global_version ASC",
 			globalSelector.From,
 			globalSelector.To,
 			globalSelector.To,
@@ -465,7 +393,12 @@ func (p *Postgres) DangerouslyDeleteEventsUpTo(
 	id event.LogID,
 	version version.Version,
 ) error {
-	_, err := p.db.ExecContext(ctx, p.qDeleteEventsUpTo, id, version)
+	_, err := p.db.ExecContext(
+		ctx,
+		"DELETE FROM chronicle_events WHERE log_id = $1 AND version <= $2",
+		id,
+		version,
+	)
 	if err != nil {
 		return fmt.Errorf(
 			"dangerously delete events for log '%s' up to version %d: %w",

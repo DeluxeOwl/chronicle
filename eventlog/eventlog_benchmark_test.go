@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -53,12 +52,11 @@ func createBenchLog(b *testing.B, logType string) event.Log {
 		b.Cleanup(clean)
 
 		// use a unique table name for each benchmark for isolation
-		tableName := fmt.Sprintf("chronicle_bench_%d", time.Now().UnixNano())
-		log, err := eventlog.NewPostgres(db, eventlog.PostgresTableName(tableName))
+		log, err := eventlog.NewPostgres(db)
 		require.NoError(b, err)
 
 		b.Cleanup(func() {
-			db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s;", tableName))
+			db.Exec("DROP TABLE IF EXISTS chronicle_events;")
 		})
 
 		return log
