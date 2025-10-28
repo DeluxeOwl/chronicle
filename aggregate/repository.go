@@ -145,8 +145,8 @@ func NewESRepo[TID ID, E event.Any, R Root[TID, E]](
 	esr := &ESRepo[TID, E, R]{
 		eventlog:           eventLog,
 		createRoot:         createRoot,
-		registry:           event.NewRegistry[E](),
-		encoder:            encoding.NewJSONB(),
+		registry:           event.NewConcreteRegistryFromAny[E](event.GlobalRegistry),
+		encoder:            encoding.DefaultJSONB,
 		transformers:       transformers,
 		shouldRegisterRoot: true,
 	}

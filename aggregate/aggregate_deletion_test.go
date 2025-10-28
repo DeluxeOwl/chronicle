@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/DeluxeOwl/chronicle"
+	"github.com/DeluxeOwl/chronicle/aggregate"
 	"github.com/DeluxeOwl/chronicle/event"
 	"github.com/DeluxeOwl/chronicle/internal/testutils"
 	"github.com/DeluxeOwl/chronicle/version"
@@ -28,6 +29,7 @@ func Test_EventDeletion(t *testing.T) {
 				el.Log,
 				NewEmpty,
 				nil,
+				aggregate.AnyEventRegistry(event.NewRegistry[event.Any]()),
 			)
 			require.NoError(t, err)
 

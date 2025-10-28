@@ -7,6 +7,8 @@ import (
 	"github.com/DeluxeOwl/chronicle/internal/assert"
 )
 
+var GlobalRegistry = NewRegistry[Any]()
+
 // FuncFor creates a new, zero-value instance of a specific event type.
 // This function acts as a factory, enabling the framework to decode event data
 // from the event store into concrete Go types without knowing the types at compile time.

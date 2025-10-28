@@ -60,7 +60,7 @@ func NewPostgres[TID aggregate.ID, TS aggregate.Snapshot[TID]](
 	s := &Postgres[TID, TS]{
 		db:             db,
 		createSnapshot: createSnapshot,
-		encoder:        encoding.NewJSONB(),
+		encoder:        encoding.DefaultJSONB,
 		mopts: migrations.Options{
 			SkipMigrations: false,
 			Logger:         migrations.NopLogger(),

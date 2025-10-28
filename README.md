@@ -2561,6 +2561,9 @@ This could be to integrate with a different kind of storage, add custom caching,
 
 First, you'll define your repository struct. It needs dependencies to function: an `event.Log` for storage, a factory function `createRoot` to instantiate your aggregate, an `event.Registry` to map event names to types, and a `codec.Codec` for encoding and decoding.
 
+> [!WARNING] 
+> By default, all repositories use a shared global registry. To override this, you need to pass the registry manually.
+
 ```go
 import (
 	"github.com/DeluxeOwl/chronicle/aggregate"
@@ -2570,9 +2573,9 @@ import (
 )
 
 type CustomRepository[TID ID, E event.Any, R Root[TID, E]] struct {
-	eventlog   event.Log
-	createRoot func() R
-	registry   event.Registry[E]
+	eventlog     event.Log
+	createRoot   func() R
+	registry     event.Registry[E]
 	encoder      codec.Codec
 
 	// Optional: for encrypting, compressing, or upcasting events
@@ -2595,7 +2598,7 @@ func NewCustomRepository[...](
 	repo := &CustomRepository[...]{
 		eventlog:   eventLog,
 		createRoot: createRoot,
-		registry:   event.NewRegistry[E](),
+		registry:   event.NewConcreteRegistryFromAny[E](event.GlobalRegistry),
 		encoder:    codec.NewJSONB(), // Default to JSON, you can also change this.
 	}
 

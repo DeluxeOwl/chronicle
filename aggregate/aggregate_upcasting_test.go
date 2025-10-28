@@ -48,7 +48,7 @@ func (u *upcasterV1toV2) TransformForRead(
 func Test_EventTransformation_UpcastingSplitsEvent(t *testing.T) {
 	ctx := t.Context()
 	personID := PersonID("person-upcast")
-	encoder := encoding.NewJSONB()
+	encoder := encoding.DefaultJSONB
 	memlog := eventlog.NewMemory()
 
 	// 1. Simulate old data being in the event log.

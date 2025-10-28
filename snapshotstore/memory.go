@@ -53,7 +53,7 @@ func NewMemory[TID aggregate.ID, TS aggregate.Snapshot[TID]](
 		mu:             sync.RWMutex{},
 		snapshots:      make(map[string][]byte),
 		createSnapshot: createSnapshot,
-		encoder:        encoding.NewJSONB(),
+		encoder:        encoding.DefaultJSONB,
 	}
 
 	for _, opt := range opts {

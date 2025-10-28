@@ -344,6 +344,7 @@ func Test_TransactionalRepository(t *testing.T) {
 					NewEmpty,
 					nil,
 					processor,
+					aggregate.AnyEventRegistry(event.NewRegistry[event.Any]()),
 				)
 				require.NoError(t, err)
 
@@ -392,6 +393,7 @@ func Test_TransactionalRepository(t *testing.T) {
 						NewEmpty,
 						nil,
 						processor,
+						aggregate.AnyEventRegistry(event.NewRegistry[event.Any]()),
 					)
 					require.NoError(t, err)
 
@@ -451,7 +453,7 @@ func Test_FlushUncommittedEvents(t *testing.T) {
 
 	raw, err := aggregate.RawEventsFromUncommitted(
 		t.Context(),
-		encoding.NewJSONB(),
+		encoding.DefaultJSONB,
 		nil,
 		uncommitted,
 	)
@@ -461,7 +463,7 @@ func Test_FlushUncommittedEvents(t *testing.T) {
 }
 
 func Test_CommitEvents(t *testing.T) {
-	encoder := encoding.NewJSONB()
+	encoder := encoding.DefaultJSONB
 	t.Run("without events", func(t *testing.T) {
 		memstore := eventlog.NewMemory()
 		p := NewEmpty()
@@ -501,7 +503,6 @@ func Test_CommitEvents(t *testing.T) {
 }
 
 func Test_ReadAndLoadFromStore(t *testing.T) {
-	encoder := encoding.NewJSONB()
 	t.Run("not found", func(t *testing.T) {
 		memlog := eventlog.NewMemory()
 		registry := chronicle.NewEventRegistry[PersonEvent]()
@@ -511,7 +512,7 @@ func Test_ReadAndLoadFromStore(t *testing.T) {
 			NewEmpty(),
 			event.Log(memlog),
 			registry,
-			encoding.Decoder(encoder),
+			encoding.DefaultJSONB,
 			nil,
 			PersonID("john"),
 			version.SelectFromBeginning,
@@ -528,7 +529,7 @@ func Test_ReadAndLoadFromStore(t *testing.T) {
 		err := registry.RegisterEvents(p)
 		require.NoError(t, err)
 
-		_, _, err = aggregate.CommitEvents(t.Context(), memstore, encoder, nil, p)
+		_, _, err = aggregate.CommitEvents(t.Context(), memstore, encoding.DefaultJSONB, nil, p)
 		require.NoError(t, err)
 
 		emptyRoot := NewEmpty()
@@ -537,7 +538,7 @@ func Test_ReadAndLoadFromStore(t *testing.T) {
 			emptyRoot,
 			event.Log(memstore),
 			registry,
-			encoding.Decoder(encoder),
+			encoding.DefaultJSONB,
 			nil,
 			p.ID(),
 			version.SelectFromBeginning,
@@ -552,7 +553,7 @@ func Test_LoadFromRecords(t *testing.T) {
 	p := createPerson(t, "some-id")
 	p.Age()
 
-	encoder := encoding.NewJSONB()
+	encoder := encoding.DefaultJSONB
 	memstore := eventlog.NewMemory()
 	registry := chronicle.NewEventRegistry[PersonEvent]()
 
@@ -584,7 +585,7 @@ func Test_Repository_GetVersion(t *testing.T) {
 	require.NoError(t, err)
 
 	repo, err := chronicle.NewEventSourcedRepository(
-		pglog, NewEmpty, nil,
+		pglog, NewEmpty, nil, aggregate.AnyEventRegistry(event.NewRegistry[event.Any]()),
 	)
 	require.NoError(t, err)
 

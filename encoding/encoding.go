@@ -101,6 +101,8 @@ func NewJSONB() *JSONB {
 	return &JSONB{}
 }
 
+var DefaultJSONB Codec = &JSONB{}
+
 // Encode uses json.Marshal to encode the value.
 func (jb *JSONB) Encode(v any) ([]byte, error) {
 	return json.Marshal(v)
