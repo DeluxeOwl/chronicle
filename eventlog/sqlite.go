@@ -3,11 +3,13 @@ package eventlog
 import (
 	"context"
 	"database/sql"
+	"embed"
 	"errors"
 	"fmt"
 
 	"github.com/DeluxeOwl/chronicle/event"
 	"github.com/DeluxeOwl/chronicle/version"
+	"github.com/pressly/goose/v3"
 )
 
 var (
@@ -22,45 +24,47 @@ var (
 )
 
 type Sqlite struct {
-	db *sql.DB
+	db    *sql.DB
+	mopts MigrationsOptions
 }
 
 type SqliteOption func(*Sqlite)
 
+func WithSqliteMigrations(options MigrationsOptions) SqliteOption {
+	return func(s *Sqlite) {
+		s.mopts = options
+	}
+}
+
+//go:embed sqlitemigrations/*.sql
+var sqliteMigrations embed.FS
+
 func NewSqlite(db *sql.DB, opts ...SqliteOption) (*Sqlite, error) {
 	sqliteLog := &Sqlite{
 		db: db,
+		mopts: MigrationsOptions{
+			SkipMigrations: false,
+			Logger:         goose.NopLogger(),
+		},
 	}
 
 	for _, o := range opts {
 		o(sqliteLog)
 	}
 
-	if _, err := db.Exec(`
-		CREATE TABLE IF NOT EXISTS chronicle_events (
-			global_version INTEGER PRIMARY KEY AUTOINCREMENT,
-			log_id          TEXT    NOT NULL,
-			version        INTEGER NOT NULL,
-			event_name     TEXT    NOT NULL,
-			data           BLOB,
-			UNIQUE (log_id, version)
-		);`); err != nil {
-		return nil, fmt.Errorf("new sqlite event log: create events table failed: %w", err)
+	if sqliteLog.mopts.SkipMigrations {
+		return sqliteLog, nil
 	}
-	if _, err := db.Exec(`
-        CREATE TRIGGER IF NOT EXISTS check_event_version
-        BEFORE INSERT ON chronicle_events
-        FOR EACH ROW
-        BEGIN
-            -- This custom message is key for our driver-agnostic error check. Must be "_chronicle_version_conflict: "
-            SELECT RAISE(ABORT, '_chronicle_version_conflict: ' || (SELECT COALESCE(MAX(version), 0) FROM chronicle_events WHERE log_id = NEW.log_id))
-            WHERE NEW.version != (
-                SELECT COALESCE(MAX(version), 0) + 1
-                FROM chronicle_events
-                WHERE log_id = NEW.log_id
-            );
-        END;`); err != nil {
-		return nil, fmt.Errorf("new sqlite event log: create version check trigger failed: %w", err)
+
+	goose.SetBaseFS(sqliteMigrations)
+	goose.SetLogger(sqliteLog.mopts.Logger)
+
+	if err := goose.SetDialect("sqlite3"); err != nil {
+		return nil, fmt.Errorf("new sqlite event log: %w", err)
+	}
+
+	if err := goose.Up(db, "sqlitemigrations"); err != nil {
+		return nil, fmt.Errorf("new sqlite event log: %w", err)
 	}
 
 	return sqliteLog, nil

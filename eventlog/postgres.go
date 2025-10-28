@@ -3,10 +3,12 @@ package eventlog
 import (
 	"context"
 	"database/sql"
+	"embed"
 	"fmt"
 
 	"github.com/DeluxeOwl/chronicle/event"
 	"github.com/DeluxeOwl/chronicle/version"
+	"github.com/pressly/goose/v3"
 )
 
 var (
@@ -22,10 +24,30 @@ var (
 //
 // See `NewPostgres` for initialization.
 type Postgres struct {
-	db *sql.DB
+	db    *sql.DB
+	mopts MigrationsOptions
 }
 
 type PostgresOption func(*Postgres)
+
+type MigrationsLogger interface {
+	Fatalf(format string, v ...any)
+	Printf(format string, v ...any)
+}
+
+type MigrationsOptions struct {
+	SkipMigrations bool
+	Logger         MigrationsLogger
+}
+
+func WithPGMigrations(options MigrationsOptions) PostgresOption {
+	return func(p *Postgres) {
+		p.mopts = options
+	}
+}
+
+//go:embed postgresmigrations/*.sql
+var postgresMigrations embed.FS
 
 // NewPostgres creates a new Postgres event log. Upon initialization, it ensures that
 // the necessary database schema (table, function, and trigger) is created. This
@@ -48,72 +70,31 @@ type PostgresOption func(*Postgres)
 //
 // Returns a configured `*Postgres` instance or an error if the setup fails.
 func NewPostgres(db *sql.DB, opts ...PostgresOption) (*Postgres, error) {
-	pgLog := &Postgres{db: db}
+	pgLog := &Postgres{
+		db: db,
+		mopts: MigrationsOptions{
+			SkipMigrations: false,
+			Logger:         goose.NopLogger(),
+		},
+	}
 
 	for _, o := range opts {
 		o(pgLog)
 	}
 
-	tx, err := db.Begin()
-	if err != nil {
-		return nil, fmt.Errorf("new postgres event log: begin setup transaction: %w", err)
+	if pgLog.mopts.SkipMigrations {
+		return pgLog, nil
 	}
 
-	//nolint:errcheck // The error from Commit/Rollback will be handled.
-	defer tx.Rollback()
+	goose.SetBaseFS(postgresMigrations)
+	goose.SetLogger(pgLog.mopts.Logger)
 
-	if _, err := tx.Exec(`
-		CREATE TABLE IF NOT EXISTS chronicle_events (
-			global_version BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-			log_id         TEXT NOT NULL,
-			version        BIGINT NOT NULL,
-			event_name     TEXT NOT NULL,
-			data           JSONB,
-			UNIQUE (log_id, version)
-		);`); err != nil {
-		return nil, fmt.Errorf("new postgres event log: create events table: %w", err)
-	}
-	if _, err := tx.Exec(`
-		CREATE OR REPLACE FUNCTION chronicle_check_event_version()
-		RETURNS TRIGGER AS $$
-		DECLARE max_version BIGINT;
-		BEGIN
-			-- Acquire a transaction-level advisory lock based on a hash of the log_id.
-			-- This serializes inserts for the same log_id, preventing the race condition
-			-- where two transactions simultaneously try to insert the first event for a stream.
-			-- The lock is automatically released at the end of the transaction.
-			PERFORM pg_advisory_xact_lock(hashtext(NEW.log_id));
-
-			-- Now that we have the lock, we can safely check the current version.
-			SELECT version INTO max_version FROM chronicle_events WHERE log_id = NEW.log_id ORDER BY version DESC LIMIT 1;
-			
-			-- If no row was found (i.e., this is the first event for this log_id),
-			-- the 'max_version' will be NULL. COALESCE handles this, setting it to 0.
-			IF NOT FOUND THEN
-				max_version := 0;
-			END IF;
-
-			IF NEW.version != max_version + 1 THEN
-				-- Raise an exception with the actual latest version to be parsed by the client.
-				RAISE EXCEPTION '_chronicle_version_conflict: %', max_version;
-			END IF;
-
-			RETURN NEW;
-		END;
-		$$ LANGUAGE plpgsql;`); err != nil {
-		return nil, fmt.Errorf("new postgres event log: create version check function: %w", err)
-	}
-	if _, err := tx.Exec(`
-        DROP TRIGGER IF EXISTS trg_chronicle_check_event_version ON chronicle_events;
-        CREATE TRIGGER trg_chronicle_check_event_version
-        BEFORE INSERT ON chronicle_events
-        FOR EACH ROW EXECUTE FUNCTION chronicle_check_event_version();
-        `); err != nil {
-		return nil, fmt.Errorf("new postgres event log: create version check trigger: %w", err)
+	if err := goose.SetDialect("pgx"); err != nil {
+		return nil, fmt.Errorf("new postgres event log: %w", err)
 	}
 
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("new postgres event log: commit setup transaction: %w", err)
+	if err := goose.Up(db, "postgresmigrations"); err != nil {
+		return nil, fmt.Errorf("new postgres event log: %w", err)
 	}
 
 	return pgLog, nil
