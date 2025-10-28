@@ -30,6 +30,8 @@ type Postgres struct {
 
 type PostgresOption func(*Postgres)
 
+// WithPGMigrations configures migration behavior for the Postgres event log.
+// Use this to skip automatic migrations or provide a custom logger.
 func WithPGMigrations(options migrations.Options) PostgresOption {
 	return func(p *Postgres) {
 		p.mopts = options
