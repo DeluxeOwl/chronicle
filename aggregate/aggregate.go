@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"iter"
 
+	"github.com/DeluxeOwl/chronicle/encoding"
 	"github.com/DeluxeOwl/chronicle/event"
-	"github.com/DeluxeOwl/chronicle/serde"
 
 	"github.com/DeluxeOwl/chronicle/internal/assert"
 
@@ -151,7 +151,7 @@ func ReadAndLoadFromStore[TID ID, E event.Any](
 	root Root[TID, E],
 	store event.Log,
 	registry event.Registry[E],
-	deserializer serde.BinaryDeserializer,
+	deserializer encoding.Decoder,
 	transformers []event.Transformer[E],
 	id TID,
 	selector version.Selector,
@@ -183,7 +183,7 @@ func LoadFromRecords[TID ID, E event.Any](
 	ctx context.Context,
 	root Root[TID, E],
 	registry event.Registry[E],
-	deserializer serde.BinaryDeserializer,
+	deserializer encoding.Decoder,
 	transformers []event.Transformer[E],
 	records event.Records,
 ) error {
@@ -204,7 +204,7 @@ func LoadFromRecords[TID ID, E event.Any](
 		}
 
 		evt := fact()
-		if err := deserializer.DeserializeBinary(record.Data(), evt); err != nil {
+		if err := deserializer.Decode(record.Data(), evt); err != nil {
 			return fmt.Errorf("load from records: unmarshal record data: %w", err)
 		}
 		deserializedEvents = append(deserializedEvents, evt)
@@ -290,7 +290,7 @@ func FlushUncommittedEvents[TID ID, E event.Any, R Root[TID, E]](
 // Returns a slice of `event.Raw` ready for storage, or an error if transformation or serialization fails.
 func RawEventsFromUncommitted[E event.Any](
 	ctx context.Context,
-	serializer serde.BinarySerializer,
+	serializer encoding.Encoder,
 	transformers []event.Transformer[E],
 	uncommitted UncommittedEvents[E],
 ) ([]event.Raw, error) {
@@ -309,7 +309,7 @@ func RawEventsFromUncommitted[E event.Any](
 
 	rawEvents := make([]event.Raw, len(transformedEvents))
 	for i, transformedEvent := range transformedEvents {
-		bytes, err := serializer.SerializeBinary(transformedEvent)
+		bytes, err := serializer.Encode(transformedEvent)
 		if err != nil {
 			return nil, fmt.Errorf(
 				"raw events from uncommitted %s: %w",
@@ -351,7 +351,7 @@ func (committed CommittedEvents[E]) All() iter.Seq[E] {
 func CommitEvents[TID ID, E event.Any, R Root[TID, E]](
 	ctx context.Context,
 	store event.Log,
-	serializer serde.BinarySerializer,
+	serializer encoding.Encoder,
 	transformers []event.Transformer[E],
 	root R,
 ) (version.Version, CommittedEvents[E], error) {
@@ -398,7 +398,7 @@ func CommitEventsWithTX[TX any, TID ID, E event.Any, R Root[TID, E]](
 	transactor event.Transactor[TX],
 	txLog event.TransactionalLog[TX],
 	processor TransactionalAggregateProcessor[TX, TID, E, R],
-	serializer serde.BinarySerializer,
+	serializer encoding.Encoder,
 	transformers []event.Transformer[E],
 	root R,
 ) (version.Version, CommittedEvents[E], error) {

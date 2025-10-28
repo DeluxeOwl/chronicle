@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/DeluxeOwl/chronicle/encoding"
 	"github.com/DeluxeOwl/chronicle/event"
-	"github.com/DeluxeOwl/chronicle/serde"
 
 	"github.com/DeluxeOwl/chronicle/version"
 )
@@ -113,7 +113,7 @@ var _ Repository[testAggID, testAggEvent, *testAgg] = (*ESRepo[testAggID, testAg
 // and an event registry. By default, it uses JSON for serialization.
 type ESRepo[TID ID, E event.Any, R Root[TID, E]] struct {
 	registry   event.Registry[E]
-	serde      serde.BinarySerde
+	encoder    encoding.Codec
 	eventlog   event.Log
 	createRoot func() R
 
@@ -146,7 +146,7 @@ func NewESRepo[TID ID, E event.Any, R Root[TID, E]](
 		eventlog:           eventLog,
 		createRoot:         createRoot,
 		registry:           event.NewRegistry[E](),
-		serde:              serde.NewJSONBinary(),
+		encoder:            encoding.NewJSONB(),
 		transformers:       transformers,
 		shouldRegisterRoot: true,
 	}
@@ -178,7 +178,7 @@ func (repo *ESRepo[TID, E, R]) LoadAggregate(
 		root,
 		repo.eventlog,
 		repo.registry,
-		repo.serde,
+		repo.encoder,
 		repo.transformers,
 		id,
 		selector,
@@ -215,7 +215,7 @@ func (repo *ESRepo[TID, E, R]) Save(
 	newVersion, committedEvents, err := CommitEvents(
 		ctx,
 		repo.eventlog,
-		repo.serde,
+		repo.encoder,
 		repo.transformers,
 		root,
 	)
@@ -225,8 +225,8 @@ func (repo *ESRepo[TID, E, R]) Save(
 	return newVersion, committedEvents, nil
 }
 
-func (esr *ESRepo[TID, E, R]) setSerializer(s serde.BinarySerde) {
-	esr.serde = s
+func (esr *ESRepo[TID, E, R]) setSerializer(s encoding.Codec) {
+	esr.encoder = s
 }
 
 func (esr *ESRepo[TID, E, R]) setShouldRegisterRoot(b bool) {
@@ -239,7 +239,7 @@ func (esr *ESRepo[TID, E, R]) setAnyRegistry(anyRegistry event.Registry[event.An
 
 // Note: we do it this way because otherwise go can't infer the type.
 type esRepoConfigurator interface {
-	setSerializer(s serde.BinarySerde)
+	setSerializer(s encoding.Codec)
 	setShouldRegisterRoot(b bool)
 	setAnyRegistry(anyRegistry event.Registry[event.Any])
 }
@@ -254,7 +254,7 @@ type ESRepoOption func(esRepoConfigurator)
 // Usage:
 //
 //	repo, err := NewESRepo(..., aggregate.EventSerializer(myCustomSerializer))
-func EventSerializer(serializer serde.BinarySerde) ESRepoOption {
+func EventSerializer(serializer encoding.Codec) ESRepoOption {
 	return func(c esRepoConfigurator) {
 		c.setSerializer(serializer)
 	}

@@ -9,10 +9,10 @@ import (
 
 	"github.com/DeluxeOwl/chronicle"
 	"github.com/DeluxeOwl/chronicle/aggregate"
+	"github.com/DeluxeOwl/chronicle/encoding"
 	"github.com/DeluxeOwl/chronicle/event"
 	"github.com/DeluxeOwl/chronicle/eventlog"
 	"github.com/DeluxeOwl/chronicle/internal/testutils"
-	"github.com/DeluxeOwl/chronicle/serde"
 
 	"github.com/DeluxeOwl/chronicle/version"
 	"github.com/stretchr/testify/require"
@@ -451,7 +451,7 @@ func Test_FlushUncommittedEvents(t *testing.T) {
 
 	raw, err := aggregate.RawEventsFromUncommitted(
 		t.Context(),
-		serde.NewJSONBinary(),
+		encoding.NewJSONB(),
 		nil,
 		uncommitted,
 	)
@@ -461,7 +461,7 @@ func Test_FlushUncommittedEvents(t *testing.T) {
 }
 
 func Test_CommitEvents(t *testing.T) {
-	serializer := serde.NewJSONBinary()
+	serializer := encoding.NewJSONB()
 	t.Run("without events", func(t *testing.T) {
 		memstore := eventlog.NewMemory()
 		p := NewEmpty()
@@ -501,7 +501,7 @@ func Test_CommitEvents(t *testing.T) {
 }
 
 func Test_ReadAndLoadFromStore(t *testing.T) {
-	serializer := serde.NewJSONBinary()
+	serializer := encoding.NewJSONB()
 	t.Run("not found", func(t *testing.T) {
 		memlog := eventlog.NewMemory()
 		registry := chronicle.NewEventRegistry[PersonEvent]()
@@ -511,7 +511,7 @@ func Test_ReadAndLoadFromStore(t *testing.T) {
 			NewEmpty(),
 			event.Log(memlog),
 			registry,
-			serde.BinaryDeserializer(serializer),
+			encoding.Decoder(serializer),
 			nil,
 			PersonID("john"),
 			version.SelectFromBeginning,
@@ -537,7 +537,7 @@ func Test_ReadAndLoadFromStore(t *testing.T) {
 			emptyRoot,
 			event.Log(memstore),
 			registry,
-			serde.BinaryDeserializer(serializer),
+			encoding.Decoder(serializer),
 			nil,
 			p.ID(),
 			version.SelectFromBeginning,
@@ -552,7 +552,7 @@ func Test_LoadFromRecords(t *testing.T) {
 	p := createPerson(t, "some-id")
 	p.Age()
 
-	serializer := serde.NewJSONBinary()
+	serializer := encoding.NewJSONB()
 	memstore := eventlog.NewMemory()
 	registry := chronicle.NewEventRegistry[PersonEvent]()
 

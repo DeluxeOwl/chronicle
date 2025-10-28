@@ -2559,13 +2559,13 @@ This could be to integrate with a different kind of storage, add custom caching,
 
 `chronicle` provides a set of reusable helper functions that handle the most complex parts of the event sourcing workflow. Implementing a repository is often just a matter of wiring these components together.
 
-First, you'll define your repository struct. It needs dependencies to function: an `event.Log` for storage, a factory function `createRoot` to instantiate your aggregate, an `event.Registry` to map event names to types, and a `serde.BinarySerde` for serialization.
+First, you'll define your repository struct. It needs dependencies to function: an `event.Log` for storage, a factory function `createRoot` to instantiate your aggregate, an `event.Registry` to map event names to types, and a `codec.Codec` for serialization.
 
 ```go
 import (
 	"github.com/DeluxeOwl/chronicle/aggregate"
 	"github.com/DeluxeOwl/chronicle/event"
-	"github.com/DeluxeOwl/chronicle/serde"
+	"github.com/DeluxeOwl/chronicle/codec"
 	// ...
 )
 
@@ -2573,7 +2573,7 @@ type CustomRepository[TID ID, E event.Any, R Root[TID, E]] struct {
 	eventlog   event.Log
 	createRoot func() R
 	registry   event.Registry[E]
-	serde      serde.BinarySerde
+	serde      codec.Codec
 
 	// Optional: for encrypting, compressing, or upcasting events
 	transformers []event.Transformer[E]
@@ -2596,7 +2596,7 @@ func NewCustomRepository[...](
 		eventlog:   eventLog,
 		createRoot: createRoot,
 		registry:   event.NewRegistry[E](),
-		serde:      serde.NewJSONBinary(), // Default to JSON, you can also change this.
+		serde:      codec.NewJSONBinary(), // Default to JSON, you can also change this.
 	}
 
 	err := repo.registry.RegisterEvents(createRoot())
@@ -2620,7 +2620,7 @@ func (r *CustomRepository[...]) Get(ctx context.Context, id TID) (R, error) {
 		root,
 		r.eventlog,
 		r.registry,
-		r.serde,
+		r.encoder,
 		r.transformers,
 		id,
 		version.SelectFromBeginning, // Load all events
@@ -2650,7 +2650,7 @@ func (r *CustomRepository[...]) Save(
 	newVersion, committedEvents, err := aggregate.CommitEvents(
 		ctx,
 		r.eventlog,
-		r.serde,
+		r.encoder,
 		r.transformers,
 		root,
 	)

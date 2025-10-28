@@ -7,7 +7,7 @@ import (
 	"fmt"
 
 	"github.com/DeluxeOwl/chronicle/aggregate"
-	"github.com/DeluxeOwl/chronicle/serde"
+	"github.com/DeluxeOwl/chronicle/encoding"
 )
 
 // Compile-time check to ensure PostgresStore implements the SnapshotStore interface.
@@ -20,7 +20,7 @@ var _ aggregate.SnapshotStore[aggregate.ID, aggregate.Snapshot[aggregate.ID]] = 
 // latest snapshot for each aggregate, which is identified by its log_id.
 type PostgresStore[TID aggregate.ID, TS aggregate.Snapshot[TID]] struct {
 	db             *sql.DB
-	serde          serde.BinarySerde
+	encoder        encoding.Codec
 	createSnapshot func() TS
 	useByteA       bool
 
@@ -97,7 +97,7 @@ func NewPostgresStore[TID aggregate.ID, TS aggregate.Snapshot[TID]](
 	s := &PostgresStore[TID, TS]{
 		db:             db,
 		createSnapshot: createSnapshot,
-		serde:          serde.NewJSONBinary(), // Default to JSON serialization
+		encoder:        encoding.NewJSONB(), // Default to JSON serialization
 	}
 
 	for _, opt := range opts {
@@ -125,7 +125,7 @@ func (s *PostgresStore[TID, TS]) SaveSnapshot(ctx context.Context, snapshot TS) 
 
 	id := snapshot.ID().String()
 
-	data, err := s.serde.SerializeBinary(snapshot)
+	data, err := s.encoder.Encode(snapshot)
 	if err != nil {
 		return fmt.Errorf("save snapshot: serialize: %w", err)
 	}
@@ -165,7 +165,7 @@ func (s *PostgresStore[TID, TS]) GetSnapshot(
 
 	// A snapshot was found, now deserialize it.
 	snapshot := s.createSnapshot()
-	if err := s.serde.DeserializeBinary(data, snapshot); err != nil {
+	if err := s.encoder.Decode(data, snapshot); err != nil {
 		return empty, false, fmt.Errorf("get snapshot: deserialize: %w", err)
 	}
 

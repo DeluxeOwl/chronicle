@@ -6,7 +6,7 @@ import (
 	"sync"
 
 	"github.com/DeluxeOwl/chronicle/aggregate"
-	"github.com/DeluxeOwl/chronicle/serde"
+	"github.com/DeluxeOwl/chronicle/encoding"
 )
 
 var _ aggregate.SnapshotStore[aggregate.ID, aggregate.Snapshot[aggregate.ID]] = (*MemoryStore[aggregate.ID, aggregate.Snapshot[aggregate.ID]])(
@@ -17,7 +17,7 @@ var _ aggregate.SnapshotStore[aggregate.ID, aggregate.Snapshot[aggregate.ID]] = 
 // It is useful for testing, development, or applications where snapshot persistence is not required.
 // Snapshots are stored as serialized byte slices in a map, keyed by the aggregate ID.
 type MemoryStore[TID aggregate.ID, TS aggregate.Snapshot[TID]] struct {
-	serde          serde.BinarySerde
+	encoder        encoding.Codec
 	snapshots      map[string][]byte
 	createSnapshot func() TS
 	mu             sync.RWMutex
@@ -26,10 +26,10 @@ type MemoryStore[TID aggregate.ID, TS aggregate.Snapshot[TID]] struct {
 type MemoryStoreOption[TID aggregate.ID, TS aggregate.Snapshot[TID]] func(*MemoryStore[TID, TS])
 
 func WithSerializer[TID aggregate.ID, TS aggregate.Snapshot[TID]](
-	s serde.BinarySerde,
+	s encoding.Codec,
 ) MemoryStoreOption[TID, TS] {
 	return func(store *MemoryStore[TID, TS]) {
-		store.serde = s
+		store.encoder = s
 	}
 }
 
@@ -53,7 +53,7 @@ func NewMemoryStore[TID aggregate.ID, TS aggregate.Snapshot[TID]](
 		mu:             sync.RWMutex{},
 		snapshots:      make(map[string][]byte),
 		createSnapshot: createSnapshot,
-		serde:          serde.NewJSONBinary(),
+		encoder:        encoding.NewJSONB(),
 	}
 
 	for _, opt := range opts {
@@ -82,7 +82,7 @@ func (s *MemoryStore[TID, TS]) SaveSnapshot(ctx context.Context, snapshot TS) er
 
 	id := snapshot.ID().String()
 
-	data, err := s.serde.SerializeBinary(snapshot)
+	data, err := s.encoder.Encode(snapshot)
 	if err != nil {
 		return fmt.Errorf("save snapshot: marshal: %w", err)
 	}
@@ -129,7 +129,7 @@ func (s *MemoryStore[TID, TS]) GetSnapshot(ctx context.Context, aggregateID TID)
 	}
 
 	snapshot := s.createSnapshot()
-	if err := s.serde.DeserializeBinary(data, snapshot); err != nil {
+	if err := s.encoder.Decode(data, snapshot); err != nil {
 		return empty, false, fmt.Errorf("get snapshot: unmarshal: %w", err)
 	}
 

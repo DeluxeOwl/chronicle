@@ -141,7 +141,7 @@ func PostgresUseBYTEA() PostgresOption {
 // setup is performed within a transaction, making it safe to call on application startup.
 //
 // By default, this log uses a JSONB column and expects a JSON-based
-// serializer (e.g., serde.NewJSONBinary()) to be configured in the repository.
+// serializer (e.g., codec.NewJSONBinary()) to be configured in the repository.
 // Use the `PostgresUseBYTEA` option if you plan to use a different binary format.
 //
 // Usage:

@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/DeluxeOwl/chronicle/encoding"
 	"github.com/DeluxeOwl/chronicle/event"
-	"github.com/DeluxeOwl/chronicle/serde"
 	"github.com/DeluxeOwl/chronicle/version"
 )
 
@@ -24,7 +24,7 @@ type TransactionalRepository[T any, TID ID, E event.Any, R Root[TID, E]] struct 
 	txLog      event.TransactionalLog[T]
 
 	eventlog     event.Log
-	serde        serde.BinarySerde
+	encoder      encoding.Codec
 	registry     event.Registry[E]
 	createRoot   func() R
 	transformers []event.Transformer[E]
@@ -63,7 +63,7 @@ func NewTransactionalRepository[TX any, TID ID, E event.Any, R Root[TID, E]](
 		eventlog:           event.NewLogWithProcessor(log, nil),
 		createRoot:         createRoot,
 		registry:           event.NewRegistry[E](),
-		serde:              serde.NewJSONBinary(),
+		encoder:            encoding.NewJSONB(),
 		shouldRegisterRoot: true,
 		aggProcessor:       aggProcessor,
 		transformers:       transformers,
@@ -113,7 +113,7 @@ func NewTransactionalRepositoryWithTransactor[TX any, TID ID, E event.Any, R Roo
 		eventlog:           event.NewTransactableLogWithProcessor(transactor, txLog, nil),
 		createRoot:         createRoot,
 		registry:           event.NewRegistry[E](),
-		serde:              serde.NewJSONBinary(),
+		encoder:            encoding.NewJSONB(),
 		shouldRegisterRoot: true,
 		aggProcessor:       aggProcessor,
 		transformers:       transformers,
@@ -155,7 +155,7 @@ func (repo *TransactionalRepository[TX, TID, E, R]) Save(
 		repo.transactor,
 		repo.txLog,
 		repo.aggProcessor,
-		repo.serde,
+		repo.encoder,
 		repo.transformers,
 		root,
 	)
@@ -177,7 +177,7 @@ func (repo *TransactionalRepository[TX, TID, E, R]) LoadAggregate(
 		root,
 		repo.eventlog,
 		repo.registry,
-		repo.serde,
+		repo.encoder,
 		repo.transformers,
 		id,
 		selector,
@@ -203,8 +203,8 @@ func (repo *TransactionalRepository[TX, TID, E, R]) GetVersion(
 	return root, nil
 }
 
-func (repo *TransactionalRepository[T, TID, E, R]) setSerializer(s serde.BinarySerde) {
-	repo.serde = s
+func (repo *TransactionalRepository[T, TID, E, R]) setSerializer(s encoding.Codec) {
+	repo.encoder = s
 }
 
 func (repo *TransactionalRepository[T, TID, E, R]) setShouldRegisterRoot(b bool) {

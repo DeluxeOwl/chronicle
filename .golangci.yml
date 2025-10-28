@@ -143,7 +143,7 @@ linters:
         - github.com/danielgtaylor/huma/v2.Operation
         - ^github.com/Shopify/sarama.Config$
         - ^github.com/Shopify/sarama.ProducerMessage$
-        - ^github.com/mitchellh/mapstructure.DecoderConfig$
+        - ^github.com/mitchellh/mapstructure.DecodeConfig$
         - ^github.com/prometheus/client_golang/.+Opts$
         - ^github.com/spf13/cobra.Command$
         - ^github.com/spf13/cobra.CompletionOptions$
