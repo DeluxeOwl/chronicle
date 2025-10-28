@@ -11,7 +11,7 @@ import (
 
 // TransactionalProcessor defines the contract for processing messages within a transaction.
 // The user implements this interface for their specific database and schema.
-// T is the transaction handle type, e.g., *sql.Tx or *pebble.Batch.
+// T is the transaction handle type, e.g., *sql.Tx.
 // It can be used as an outbox, or to create projections.
 type TransactionalProcessor[TX any] interface {
 	// Process is called by the framework *inside* an active transaction,

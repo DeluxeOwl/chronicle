@@ -11,6 +11,10 @@ tasks:
           exit 1
         fi
 
+  tidy:
+    cmds:
+      - go mod tidy
+
   lint:
     desc: Runs the linters and formatters
     cmds:

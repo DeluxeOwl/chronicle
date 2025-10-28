@@ -9,8 +9,6 @@ import (
 	"github.com/DeluxeOwl/chronicle/event"
 	"github.com/DeluxeOwl/chronicle/eventlog"
 	"github.com/DeluxeOwl/chronicle/snapshotstore"
-	"github.com/cockroachdb/pebble"
-	"github.com/cockroachdb/pebble/vfs"
 	"github.com/stretchr/testify/require"
 )
 
@@ -57,15 +55,6 @@ func SetupSnapStores[TID aggregate.ID, TS aggregate.Snapshot[TID]](
 func SetupEventLogs(t *testing.T) ([]EventLog, func()) {
 	t.Helper()
 
-	//nolint:exhaustruct // not needed.
-	pebbleDB, err := pebble.Open("", &pebble.Options{
-		FS: vfs.NewMem(),
-	})
-	require.NoError(t, err)
-
-	pebbleLog := eventlog.NewPebble(pebbleDB)
-	require.NoError(t, err)
-
 	f, err := os.CreateTemp(t.TempDir(), "sqlite-*.db")
 	require.NoError(t, err)
 
@@ -85,10 +74,6 @@ func SetupEventLogs(t *testing.T) ([]EventLog, func()) {
 				Log:  eventlog.NewMemory(),
 			},
 			{
-				Name: "pebble memory log",
-				Log:  pebbleLog,
-			},
-			{
 				Name: "sqlite log",
 				Log:  sqliteLog,
 			},
@@ -97,9 +82,6 @@ func SetupEventLogs(t *testing.T) ([]EventLog, func()) {
 				Log:  postgresLog,
 			},
 		}, func() {
-			err := pebbleDB.Close()
-			require.NoError(t, err)
-
 			err = sqliteDB.Close()
 			require.NoError(t, err)
 
@@ -150,15 +132,6 @@ func SetupSQLTransactionalLogs(t *testing.T) ([]TransactionalLog[*sql.Tx], func(
 func SetupGlobalEventLogs(t *testing.T) ([]GlobalEventLog, func()) {
 	t.Helper()
 
-	//nolint:exhaustruct // not needed.
-	pebbleDB, err := pebble.Open("", &pebble.Options{
-		FS: vfs.NewMem(),
-	})
-	require.NoError(t, err)
-
-	pebbleLog := eventlog.NewPebble(pebbleDB)
-	require.NoError(t, err)
-
 	f, err := os.CreateTemp(t.TempDir(), "sqlite-*.db")
 	require.NoError(t, err)
 
@@ -178,10 +151,6 @@ func SetupGlobalEventLogs(t *testing.T) ([]GlobalEventLog, func()) {
 				Log:  eventlog.NewMemory(),
 			},
 			{
-				Name: "pebble memory log",
-				Log:  pebbleLog,
-			},
-			{
 				Name: "sqlite log",
 				Log:  sqliteLog,
 			},
@@ -190,9 +159,6 @@ func SetupGlobalEventLogs(t *testing.T) ([]GlobalEventLog, func()) {
 				Log:  postgresLog,
 			},
 		}, func() {
-			err := pebbleDB.Close()
-			require.NoError(t, err)
-
 			err = sqliteDB.Close()
 			require.NoError(t, err)
 

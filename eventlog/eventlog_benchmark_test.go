@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cockroachdb/pebble"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -39,13 +38,6 @@ func createBenchLog(b *testing.B, logType string) event.Log {
 	switch logType {
 	case "memory":
 		return eventlog.NewMemory()
-	case "pebble":
-		dir := b.TempDir()
-		db, err := pebble.Open(dir, nil)
-		require.NoError(b, err)
-
-		b.Cleanup(func() { db.Close() })
-		return eventlog.NewPebble(db)
 	case "sqlite":
 		dbPath := filepath.Join(b.TempDir(), "test.db")
 		db, err := sql.Open("sqlite3", dbPath)
@@ -103,7 +95,7 @@ func BenchmarkAppendEvents(b *testing.B) {
 		{"BatchSize100", 100},
 	}
 
-	logTypes := []string{"memory", "pebble", "sqlite", "postgres"}
+	logTypes := []string{"memory", "sqlite", "postgres"}
 
 	for _, s := range scenarios {
 		b.Run(s.name, func(b *testing.B) {
@@ -138,7 +130,7 @@ func BenchmarkReadEvents(b *testing.B) {
 		{"StreamLength1000", 1000},
 	}
 
-	logTypes := []string{"memory", "pebble", "sqlite", "postgres"}
+	logTypes := []string{"memory", "sqlite", "postgres"}
 
 	for _, s := range scenarios {
 		b.Run(s.name, func(b *testing.B) {
@@ -174,7 +166,7 @@ func BenchmarkReadAllEvents(b *testing.B) {
 		{"Total10000_Events", 10, 1000},
 	}
 
-	logTypes := []string{"memory", "pebble", "sqlite", "postgres"}
+	logTypes := []string{"memory", "sqlite", "postgres"}
 
 	for _, s := range scenarios {
 		b.Run(s.name, func(b *testing.B) {
@@ -213,7 +205,7 @@ func BenchmarkAppendEventsConcurrent(b *testing.B) {
 	// at the same time (e.g., many users interacting with the system).
 	const numGoroutines = 100
 
-	logTypes := []string{"memory", "pebble", "sqlite", "postgres"}
+	logTypes := []string{"memory", "sqlite", "postgres"}
 	rawEvents := createRawEvents(5) // Each goroutine will append 5 events.
 
 	for _, logType := range logTypes {
