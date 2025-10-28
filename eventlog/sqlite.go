@@ -23,78 +23,43 @@ var (
 
 type Sqlite struct {
 	db *sql.DB
-
-	// Pre-computed query strings for performance and to avoid Sprintf in hot paths.
-	qCreateTable      string
-	qCreateTrigger    string
-	qInsertEvent      string
-	qReadEvents       string
-	qReadAllEvents    string
-	qDeleteEventsUpTo string
 }
 
 type SqliteOption func(*Sqlite)
 
-func SqliteTableName(tableName string) SqliteOption {
-	return func(s *Sqlite) {
-		s.qCreateTable = fmt.Sprintf(`
-		CREATE TABLE IF NOT EXISTS %s (
+func NewSqlite(db *sql.DB, opts ...SqliteOption) (*Sqlite, error) {
+	sqliteLog := &Sqlite{
+		db: db,
+	}
+
+	for _, o := range opts {
+		o(sqliteLog)
+	}
+
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS chronicle_events (
 			global_version INTEGER PRIMARY KEY AUTOINCREMENT,
 			log_id          TEXT    NOT NULL,
 			version        INTEGER NOT NULL,
 			event_name     TEXT    NOT NULL,
 			data           BLOB,
 			UNIQUE (log_id, version)
-		);`, tableName)
-
-		s.qCreateTrigger = fmt.Sprintf(`
-        CREATE TRIGGER IF NOT EXISTS check_event_version
-        BEFORE INSERT ON %s
-        FOR EACH ROW
-        BEGIN
-            -- This custom message is key for our driver-agnostic error check.
-            SELECT RAISE(ABORT, '%s' || (SELECT COALESCE(MAX(version), 0) FROM %s WHERE log_id = NEW.log_id))
-            WHERE NEW.version != (
-                SELECT COALESCE(MAX(version), 0) + 1
-                FROM %s
-                WHERE log_id = NEW.log_id
-            );
-        END;`, tableName, conflictErrorPrefix, tableName, tableName)
-
-		s.qInsertEvent = fmt.Sprintf(
-			"INSERT INTO %s (log_id, version, event_name, data) VALUES (?, ?, ?, ?)",
-			tableName,
-		)
-		s.qReadEvents = fmt.Sprintf(
-			"SELECT version, event_name, data FROM %s WHERE log_id = ? AND version >= ? AND (? = 0 OR version <= ?) ORDER BY version ASC",
-			tableName,
-		)
-		s.qReadAllEvents = fmt.Sprintf(
-			"SELECT global_version, version, log_id, event_name, data FROM %s WHERE global_version >= ? AND (? = 0 OR global_version <= ?) ORDER BY global_version ASC",
-			tableName,
-		)
-		s.qDeleteEventsUpTo = fmt.Sprintf(
-			"DELETE FROM %s WHERE log_id = ? AND version <= ?",
-			tableName,
-		)
-	}
-}
-
-func NewSqlite(db *sql.DB, opts ...SqliteOption) (*Sqlite, error) {
-	//nolint:exhaustruct // Fields are set below
-	sqliteLog := &Sqlite{db: db}
-
-	// Set default queries
-	SqliteTableName("chronicle_events")(sqliteLog)
-
-	for _, o := range opts {
-		o(sqliteLog)
-	}
-
-	if _, err := db.Exec(sqliteLog.qCreateTable); err != nil {
+		);`); err != nil {
 		return nil, fmt.Errorf("new sqlite event log: create events table failed: %w", err)
 	}
-	if _, err := db.Exec(sqliteLog.qCreateTrigger); err != nil {
+	if _, err := db.Exec(`
+        CREATE TRIGGER IF NOT EXISTS check_event_version
+        BEFORE INSERT ON chronicle_events
+        FOR EACH ROW
+        BEGIN
+            -- This custom message is key for our driver-agnostic error check. Must be "_chronicle_version_conflict: "
+            SELECT RAISE(ABORT, '_chronicle_version_conflict: ' || (SELECT COALESCE(MAX(version), 0) FROM chronicle_events WHERE log_id = NEW.log_id))
+            WHERE NEW.version != (
+                SELECT COALESCE(MAX(version), 0) + 1
+                FROM chronicle_events
+                WHERE log_id = NEW.log_id
+            );
+        END;`); err != nil {
 		return nil, fmt.Errorf("new sqlite event log: create version check trigger failed: %w", err)
 	}
 
@@ -143,7 +108,10 @@ func (s *Sqlite) AppendInTx(
 		return version.Zero, nil, fmt.Errorf("append in tx: %w", ErrUnsupportedCheck)
 	}
 
-	stmt, err := tx.PrepareContext(ctx, s.qInsertEvent)
+	stmt, err := tx.PrepareContext(
+		ctx,
+		"INSERT INTO chronicle_events (log_id, version, event_name, data) VALUES (?, ?, ?, ?)",
+	)
 	if err != nil {
 		return version.Zero, nil, fmt.Errorf("append in tx: prepare statement: %w", err)
 	}
@@ -206,7 +174,7 @@ func (s *Sqlite) ReadEvents(
 	return func(yield func(*event.Record, error) bool) {
 		rows, err := s.db.QueryContext(
 			ctx,
-			s.qReadEvents,
+			"SELECT version, event_name, data FROM chronicle_events WHERE log_id = ? AND version >= ? AND (? = 0 OR version <= ?) ORDER BY version ASC",
 			id,
 			selector.From,
 			selector.To,
@@ -252,7 +220,7 @@ func (s *Sqlite) ReadAllEvents(
 	return func(yield func(*event.GlobalRecord, error) bool) {
 		rows, err := s.db.QueryContext(
 			ctx,
-			s.qReadAllEvents,
+			"SELECT global_version, version, log_id, event_name, data FROM chronicle_events WHERE global_version >= ? AND (? = 0 OR global_version <= ?) ORDER BY global_version ASC",
 			globalSelector.From,
 			globalSelector.To,
 			globalSelector.To,
@@ -315,7 +283,12 @@ func (s *Sqlite) DangerouslyDeleteEventsUpTo(
 	id event.LogID,
 	version version.Version,
 ) error {
-	_, err := s.db.ExecContext(ctx, s.qDeleteEventsUpTo, id, version)
+	_, err := s.db.ExecContext(
+		ctx,
+		"DELETE FROM chronicle_events WHERE log_id = ? AND version <= ?",
+		id,
+		version,
+	)
 	if err != nil {
 		return fmt.Errorf(
 			"dangerously delete events for log '%s' up to version %d: %w",
