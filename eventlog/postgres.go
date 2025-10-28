@@ -7,8 +7,8 @@ import (
 	"fmt"
 
 	"github.com/DeluxeOwl/chronicle/event"
+	"github.com/DeluxeOwl/chronicle/pkg/migrations"
 	"github.com/DeluxeOwl/chronicle/version"
-	"github.com/pressly/goose/v3"
 )
 
 var (
@@ -25,22 +25,12 @@ var (
 // See `NewPostgres` for initialization.
 type Postgres struct {
 	db    *sql.DB
-	mopts MigrationsOptions
+	mopts migrations.Options
 }
 
 type PostgresOption func(*Postgres)
 
-type MigrationsLogger interface {
-	Fatalf(format string, v ...any)
-	Printf(format string, v ...any)
-}
-
-type MigrationsOptions struct {
-	SkipMigrations bool
-	Logger         MigrationsLogger
-}
-
-func WithPGMigrations(options MigrationsOptions) PostgresOption {
+func WithPGMigrations(options migrations.Options) PostgresOption {
 	return func(p *Postgres) {
 		p.mopts = options
 	}
@@ -72,9 +62,9 @@ var postgresMigrations embed.FS
 func NewPostgres(db *sql.DB, opts ...PostgresOption) (*Postgres, error) {
 	pgLog := &Postgres{
 		db: db,
-		mopts: MigrationsOptions{
+		mopts: migrations.Options{
 			SkipMigrations: false,
-			Logger:         goose.NopLogger(),
+			Logger:         migrations.NopLogger(),
 		},
 	}
 
@@ -86,14 +76,13 @@ func NewPostgres(db *sql.DB, opts ...PostgresOption) (*Postgres, error) {
 		return pgLog, nil
 	}
 
-	goose.SetBaseFS(postgresMigrations)
-	goose.SetLogger(pgLog.mopts.Logger)
-
-	if err := goose.SetDialect("pgx"); err != nil {
-		return nil, fmt.Errorf("new postgres event log: %w", err)
-	}
-
-	if err := goose.Up(db, "postgresmigrations"); err != nil {
+	if err := migrations.RunMigrations(migrations.Migrations{
+		DB:      db,
+		Fsys:    postgresMigrations,
+		Logger:  pgLog.mopts.Logger,
+		Dialect: "pgx",
+		Dir:     "postgresmigrations",
+	}); err != nil {
 		return nil, fmt.Errorf("new postgres event log: %w", err)
 	}
 

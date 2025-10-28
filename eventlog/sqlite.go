@@ -8,8 +8,8 @@ import (
 	"fmt"
 
 	"github.com/DeluxeOwl/chronicle/event"
+	"github.com/DeluxeOwl/chronicle/pkg/migrations"
 	"github.com/DeluxeOwl/chronicle/version"
-	"github.com/pressly/goose/v3"
 )
 
 var (
@@ -31,14 +31,14 @@ var (
 // See `NewSqlite` for initialization.
 type Sqlite struct {
 	db    *sql.DB
-	mopts MigrationsOptions
+	mopts migrations.Options
 }
 
 type SqliteOption func(*Sqlite)
 
 // WithSqliteMigrations configures migration behavior for the SQLite event log.
 // Use this to skip automatic migrations or provide a custom logger.
-func WithSqliteMigrations(options MigrationsOptions) SqliteOption {
+func WithSqliteMigrations(options migrations.Options) SqliteOption {
 	return func(s *Sqlite) {
 		s.mopts = options
 	}
@@ -70,9 +70,9 @@ var sqliteMigrations embed.FS
 func NewSqlite(db *sql.DB, opts ...SqliteOption) (*Sqlite, error) {
 	sqliteLog := &Sqlite{
 		db: db,
-		mopts: MigrationsOptions{
+		mopts: migrations.Options{
 			SkipMigrations: false,
-			Logger:         goose.NopLogger(),
+			Logger:         migrations.NopLogger(),
 		},
 	}
 
@@ -84,15 +84,14 @@ func NewSqlite(db *sql.DB, opts ...SqliteOption) (*Sqlite, error) {
 		return sqliteLog, nil
 	}
 
-	goose.SetBaseFS(sqliteMigrations)
-	goose.SetLogger(sqliteLog.mopts.Logger)
-
-	if err := goose.SetDialect("sqlite3"); err != nil {
-		return nil, fmt.Errorf("new sqlite event log: %w", err)
-	}
-
-	if err := goose.Up(db, "sqlitemigrations"); err != nil {
-		return nil, fmt.Errorf("new sqlite event log: %w", err)
+	if err := migrations.RunMigrations(migrations.Migrations{
+		DB:      db,
+		Fsys:    sqliteMigrations,
+		Logger:  sqliteLog.mopts.Logger,
+		Dialect: "sqlite3",
+		Dir:     "sqlitemigrations",
+	}); err != nil {
+		return nil, fmt.Errorf("new postgres event log: %w", err)
 	}
 
 	return sqliteLog, nil

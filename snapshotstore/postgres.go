@@ -3,11 +3,13 @@ package snapshotstore
 import (
 	"context"
 	"database/sql"
+	"embed"
 	"errors"
 	"fmt"
 
 	"github.com/DeluxeOwl/chronicle/aggregate"
 	"github.com/DeluxeOwl/chronicle/encoding"
+	"github.com/DeluxeOwl/chronicle/pkg/migrations"
 )
 
 // Compile-time check to ensure Postgres store implements the SnapshotStore interface.
@@ -16,100 +18,71 @@ var _ aggregate.SnapshotStore[aggregate.ID, aggregate.Snapshot[aggregate.ID]] = 
 )
 
 // Postgres provides a PostgreSQL-backed implementation of the aggregate.SnapshotStore interface.
-// It stores snapshots in a dedicated table, using an "UPSERT" operation to always keep the
-// latest snapshot for each aggregate, which is identified by its log_id.
+// It stores snapshots in the `chronicle_snapshots` table, using an "UPSERT" operation
+// to always keep the latest snapshot for each aggregate. Schema management is handled
+// via `goose` migrations.
 type Postgres[TID aggregate.ID, TS aggregate.Snapshot[TID]] struct {
 	db             *sql.DB
 	encoder        encoding.Codec
 	createSnapshot func() TS
-	useByteA       bool
-
-	qCreateTable  string
-	qSaveSnapshot string
-	qGetSnapshot  string
+	mopts          migrations.Options
 }
 
 // PostgresOption is a function that configures a Postgres store instance.
 type PostgresOption[TID aggregate.ID, TS aggregate.Snapshot[TID]] func(*Postgres[TID, TS])
 
-// PostgresSnapshotTableName allows customizing the name of the table used to store snapshots.
-// If not provided, it defaults to "chronicle_snapshots". This option regenerates internal SQL
-// queries to use the specified table name.
-//
-// Usage:
-//
-//	store, err := snapshotstore.NewPostgres(db, createFunc,
-//	    snapshotstore.PostgresSnapshotTableName("my_custom_snapshots"),
-//	)
-func PostgresSnapshotTableName[TID aggregate.ID, TS aggregate.Snapshot[TID]](
-	tableName string,
+// WithPGMigrations allows customizing the migration behavior, such as skipping migrations
+// or providing a custom logger.
+func WithPGMigrations[TID aggregate.ID, TS aggregate.Snapshot[TID]](
+	options migrations.Options,
 ) PostgresOption[TID, TS] {
 	return func(p *Postgres[TID, TS]) {
-		dataType := "JSONB"
-		if p.useByteA {
-			dataType = "BYTEA"
-		}
-
-		p.qCreateTable = fmt.Sprintf(`
-        CREATE TABLE IF NOT EXISTS %s (
-            log_id  TEXT PRIMARY KEY,
-            version BIGINT NOT NULL,
-            data    %s NOT NULL
-        );`, tableName, dataType)
-
-		// This "UPSERT" statement is atomic and efficient. It inserts a new snapshot
-		// or, if a snapshot for the log_id already exists, updates it.
-		p.qSaveSnapshot = fmt.Sprintf(`
-        INSERT INTO %s (log_id, version, data)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (log_id) DO UPDATE SET
-            version = EXCLUDED.version,
-            data = EXCLUDED.data;
-        `, tableName)
-
-		p.qGetSnapshot = fmt.Sprintf(
-			"SELECT data FROM %s WHERE log_id = $1",
-			tableName,
-		)
+		p.mopts = options
 	}
 }
 
-// PostgresSnapshotUseBYTEA configures the snapshot store to use a BYTEA column for snapshot data
-// instead of the default JSONB. This is useful for binary encoding formats like Protobuf.
-func PostgresSnapshotUseBYTEA[TID aggregate.ID, TS aggregate.Snapshot[TID]]() PostgresOption[TID, TS] {
-	return func(p *Postgres[TID, TS]) {
-		p.useByteA = true
-	}
-}
+//go:embed postgresmigrations/*.sql
+var postgresMigrations embed.FS
 
 // NewPostgres creates and returns a new PostgreSQL-backed snapshot store.
-// It requires a database connection and a factory function for creating new snapshot instances,
-// which is used during decoding.
 //
-// Upon initialization, it ensures the necessary database table exists by executing a
-// `CREATE TABLE IF NOT EXISTS` command.
+// It requires a database connection, a factory function for creating new snapshot instances,
+// and an encoder for serializing/deserializing snapshot data.
+//
+// Upon initialization, it runs database migrations using goose to ensure the necessary
+// `chronicle_snapshots` table exists. The snapshot data is stored in a `BYTEA` column,
+// so a binary encoder (like Protobuf or Gob) is appropriate.
 func NewPostgres[TID aggregate.ID, TS aggregate.Snapshot[TID]](
 	db *sql.DB,
 	createSnapshot func() TS,
 	opts ...PostgresOption[TID, TS],
 ) (*Postgres[TID, TS], error) {
-	//nolint:exhaustruct // Fields are set below
 	s := &Postgres[TID, TS]{
 		db:             db,
 		createSnapshot: createSnapshot,
-		encoder:        encoding.NewJSONB(), // Default to JSON encoding
+		encoder:        encoding.NewJSONB(),
+		mopts: migrations.Options{
+			SkipMigrations: false,
+			Logger:         migrations.NopLogger(),
+		},
 	}
 
 	for _, opt := range opts {
 		opt(s)
 	}
 
-	if s.qCreateTable == "" {
-		PostgresSnapshotTableName[TID, TS]("chronicle_snapshots")(s)
+	if s.mopts.SkipMigrations {
+		return s, nil
 	}
 
-	if _, err := s.db.Exec(s.qCreateTable); err != nil {
-		return nil, fmt.Errorf("new postgres snapshot store: create snapshots table: %w", err)
+	if err := migrations.RunMigrations(migrations.Migrations{
+		DB:      db,
+		Fsys:    postgresMigrations,
+		Logger:  s.mopts.Logger,
+		Dialect: "pgx",
+		Dir:     "postgresmigrations",
+	}); err != nil {
+		return nil, fmt.Errorf("new postgres snapshot store: %w", err)
 	}
 
 	return s, nil
@@ -130,7 +103,13 @@ func (s *Postgres[TID, TS]) SaveSnapshot(ctx context.Context, snapshot TS) error
 		return fmt.Errorf("save snapshot: encode: %w", err)
 	}
 
-	_, err = s.db.ExecContext(ctx, s.qSaveSnapshot, id, snapshot.Version(), data)
+	_, err = s.db.ExecContext(ctx, `
+        INSERT INTO chronicle_snapshots (log_id, version, data)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (log_id) DO UPDATE SET
+            version = EXCLUDED.version,
+            data = EXCLUDED.data;
+    `, id, snapshot.Version(), data)
 	if err != nil {
 		return fmt.Errorf("save snapshot: exec upsert: %w", err)
 	}
@@ -154,10 +133,11 @@ func (s *Postgres[TID, TS]) GetSnapshot(
 	id := aggregateID.String()
 	var data []byte
 
-	err := s.db.QueryRowContext(ctx, s.qGetSnapshot, id).Scan(&data)
+	const qGetSnapshot = "SELECT data FROM chronicle_snapshots WHERE log_id = $1"
+	err := s.db.QueryRowContext(ctx, qGetSnapshot, id).Scan(&data)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			// This is not a fatal error. It correctly indicates that no snapshot exists for this aggregate.
+			// This is not a fatal error, but the expected outcome when no snapshot exists.
 			return empty, false, nil
 		}
 		return empty, false, fmt.Errorf("get snapshot: query row: %w", err)
