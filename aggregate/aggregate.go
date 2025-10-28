@@ -170,6 +170,19 @@ func ReadAndLoadFromStore[TID ID, E event.Any](
 	return nil
 }
 
+func ApplyReadTransformers[E event.Any](ctx context.Context, events []E, transformers []event.Transformer[E]) ([]E, error) {
+	var err error
+	// Apply transformers in reverse order for reading
+	for i := len(transformers) - 1; i >= 0; i-- {
+		events, err = transformers[i].TransformForRead(ctx, events)
+		if err != nil {
+			return nil, fmt.Errorf("read transform failed: %w", err)
+		}
+	}
+
+	return events, nil
+}
+
 // LoadFromRecords hydrates an aggregate root from an iterator of event records.
 // For each record, it decodes the data into a concrete event type, applies any
 // transformations, and then applies the event to the root.
@@ -216,14 +229,12 @@ func LoadFromRecords[TID ID, E event.Any](
 	// e.g. encrypt -> compress
 	// inverse is decompress -> decrypt
 	var err error
-	for i := len(transformers) - 1; i >= 0; i-- {
-		decodedEvents, err = transformers[i].TransformForRead(ctx, decodedEvents)
-		if err != nil {
-			return fmt.Errorf(
-				"load from records: read transform failed: %w",
-				err,
-			)
-		}
+	decodedEvents, err = ApplyReadTransformers(ctx, decodedEvents, transformers)
+	if err != nil {
+		return fmt.Errorf(
+			"load from records: %w",
+			err,
+		)
 	}
 
 	hasRecords := false
@@ -279,6 +290,18 @@ func FlushUncommittedEvents[TID ID, E event.Any, R Root[TID, E]](
 	return uncommitted
 }
 
+func ApplyWriteTransformers[E event.Any](ctx context.Context, events []E, transformers []event.Transformer[E]) ([]E, error) {
+	var err error
+	for _, t := range transformers {
+		events, err = t.TransformForWrite(ctx, events)
+		if err != nil {
+			return nil, fmt.Errorf("write transform failed: %w", err)
+		}
+	}
+
+	return events, nil
+}
+
 // RawEventsFromUncommitted converts a slice of strongly-typed uncommitted events
 // into a slice of `event.Raw` events. It applies write-side transformers
 // and encodes the event data during this process.
@@ -295,16 +318,14 @@ func RawEventsFromUncommitted[E event.Any](
 	uncommitted UncommittedEvents[E],
 ) ([]event.Raw, error) {
 	transformedEvents := []E(uncommitted)
-	var err error
 
-	for _, t := range transformers {
-		transformedEvents, err = t.TransformForWrite(ctx, transformedEvents)
-		if err != nil {
-			return nil, fmt.Errorf(
-				"raw events from uncommitted: write transform failed: %w",
-				err,
-			)
-		}
+	var err error
+	transformedEvents, err = ApplyWriteTransformers(ctx, transformedEvents, transformers)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"raw events from uncommitted: %w",
+			err,
+		)
 	}
 
 	rawEvents := make([]event.Raw, len(transformedEvents))
