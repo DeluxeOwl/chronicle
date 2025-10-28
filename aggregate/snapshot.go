@@ -9,7 +9,7 @@ import (
 
 //go:generate go run github.com/matryer/moq@latest -pkg aggregate_test -skip-ensure -rm -out snapshot_mock_test.go . SnapshotStore Snapshotter Snapshot
 
-// Snapshot represents the contract for a serializable, point-in-time representation
+// Snapshot represents the contract for an encoded, point-in-time representation
 // of an aggregate's state. Implementations of this interface hold the necessary
 // data to reconstruct an aggregate, along with its ID and the version at which
 // the snapshot was taken.

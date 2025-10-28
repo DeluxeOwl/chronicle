@@ -15,7 +15,7 @@ var _ aggregate.SnapshotStore[aggregate.ID, aggregate.Snapshot[aggregate.ID]] = 
 
 // MemoryStore provides a thread-safe, in-memory implementation of the aggregate.SnapshotStore interface.
 // It is useful for testing, development, or applications where snapshot persistence is not required.
-// Snapshots are stored as serialized byte slices in a map, keyed by the aggregate ID.
+// Snapshots are stored as encoded byte slices in a map, keyed by the aggregate ID.
 type MemoryStore[TID aggregate.ID, TS aggregate.Snapshot[TID]] struct {
 	encoder        encoding.Codec
 	snapshots      map[string][]byte
@@ -25,7 +25,7 @@ type MemoryStore[TID aggregate.ID, TS aggregate.Snapshot[TID]] struct {
 
 type MemoryStoreOption[TID aggregate.ID, TS aggregate.Snapshot[TID]] func(*MemoryStore[TID, TS])
 
-func WithSerializer[TID aggregate.ID, TS aggregate.Snapshot[TID]](
+func WithCodec[TID aggregate.ID, TS aggregate.Snapshot[TID]](
 	s encoding.Codec,
 ) MemoryStoreOption[TID, TS] {
 	return func(store *MemoryStore[TID, TS]) {
@@ -35,7 +35,7 @@ func WithSerializer[TID aggregate.ID, TS aggregate.Snapshot[TID]](
 
 // NewMemoryStore creates and returns a new in-memory snapshot store.
 // It requires a constructor function for the specific snapshot type, which is used
-// to create new instances during deserialization. By default, it uses JSON for serialization.
+// to create new instances during decoding. By default, it uses JSON for encoding.
 //
 // Usage:
 //
@@ -63,7 +63,7 @@ func NewMemoryStore[TID aggregate.ID, TS aggregate.Snapshot[TID]](
 	return store
 }
 
-// SaveSnapshot serializes the provided snapshot using the configured serde and saves
+// SaveSnapshot encodes the provided snapshot using the configured encoder and saves
 // it to the in-memory map. The operation is thread-safe.
 //
 // Usage:
@@ -74,7 +74,7 @@ func NewMemoryStore[TID aggregate.ID, TS aggregate.Snapshot[TID]](
 //	    // handle error
 //	}
 //
-// Returns an error if the serialization fails or if the context is cancelled.
+// Returns an error if the encoding fails or if the context is cancelled.
 func (s *MemoryStore[TID, TS]) SaveSnapshot(ctx context.Context, snapshot TS) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -94,7 +94,7 @@ func (s *MemoryStore[TID, TS]) SaveSnapshot(ctx context.Context, snapshot TS) er
 	return nil
 }
 
-// GetSnapshot retrieves a snapshot by its aggregate ID, deserializes it, and returns it.
+// GetSnapshot retrieves a snapshot by its aggregate ID, decodes it, and returns it.
 // The operation is thread-safe.
 //
 // Usage:
@@ -102,15 +102,15 @@ func (s *MemoryStore[TID, TS]) SaveSnapshot(ctx context.Context, snapshot TS) er
 //	// assuming 'id' is a valid aggregate.ID
 //	snapshot, found, err := store.GetSnapshot(ctx, id)
 //	if err != nil {
-//	    // handle storage or deserialization error
+//	    // handle storage or decoding error
 //	}
 //	if !found {
 //	    // handle case where no snapshot exists
 //	}
 //	// use snapshot
 //
-// Returns the deserialized snapshot, a boolean indicating if a snapshot was found for the
-// given ID, and an error if one occurred during retrieval or deserialization.
+// Returns the decoded snapshot, a boolean indicating if a snapshot was found for the
+// given ID, and an error if one occurred during retrieval or decoding.
 func (s *MemoryStore[TID, TS]) GetSnapshot(ctx context.Context, aggregateID TID) (TS, bool, error) {
 	var empty TS
 

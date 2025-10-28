@@ -65,7 +65,7 @@ func (re RawEvents) ToRecords(logID LogID, startingVersion version.Version) []*R
 	return records
 }
 
-// Raw represents an event that has been serialized into a byte slice. It bundles the
+// Raw represents an event that has been encoded into a byte slice. It bundles the
 // event's name with its data payload. This is the format required by the Appender
 // interface for writing events to the log.
 type Raw struct {
@@ -92,7 +92,7 @@ func (raw *Raw) EventName() string {
 	return raw.name
 }
 
-// Data returns the serialized event payload.
+// Data returns the encoded event payload.
 func (raw *Raw) Data() []byte {
 	return raw.data
 }
@@ -137,7 +137,7 @@ func (re *Record) EventName() string {
 	return re.raw.EventName()
 }
 
-// Data returns the serialized event payload from the record.
+// Data returns the encoded event payload from the record.
 func (re *Record) Data() []byte {
 	return re.raw.Data()
 }
@@ -203,7 +203,7 @@ func (gr *GlobalRecord) EventName() string {
 	return gr.raw.EventName()
 }
 
-// Data returns the serialized event payload from the global record.
+// Data returns the encoded event payload from the global record.
 func (gr *GlobalRecord) Data() []byte {
 	return gr.raw.Data()
 }

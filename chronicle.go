@@ -37,7 +37,7 @@ func NewAnyEventRegistry() *event.EventRegistry[event.Any] {
 // NewEventSourcedRepository creates a new event sourced repository.
 // It requires an event log for storage, a factory function to create new aggregate
 // instances, and an optional slice of event transformers. By default, it uses a JSON
-// serializer and automatically registers the aggregate's events.
+// encoder and automatically registers the aggregate's events.
 //
 // Usage:
 //

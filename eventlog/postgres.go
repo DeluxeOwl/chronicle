@@ -121,7 +121,8 @@ func PostgresTableName(tableName string) PostgresOption {
 
 // PostgresUseBYTEA configures the event log to use a BYTEA column for event data
 // instead of the default JSONB. This is useful if you are using a binary
-// serialization format like Protobuf instead of JSON.
+//
+//	format like Protobuf instead of JSON.
 //
 // Usage:
 //
@@ -141,7 +142,7 @@ func PostgresUseBYTEA() PostgresOption {
 // setup is performed within a transaction, making it safe to call on application startup.
 //
 // By default, this log uses a JSONB column and expects a JSON-based
-// serializer (e.g., codec.NewJSONBinary()) to be configured in the repository.
+// encoder (e.g., codec.NewJSONB()) to be configured in the repository.
 // Use the `PostgresUseBYTEA` option if you plan to use a different binary format.
 //
 // Usage:

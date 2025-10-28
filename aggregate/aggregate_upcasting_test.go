@@ -48,18 +48,18 @@ func (u *upcasterV1toV2) TransformForRead(
 func Test_EventTransformation_UpcastingSplitsEvent(t *testing.T) {
 	ctx := t.Context()
 	personID := PersonID("person-upcast")
-	serializer := encoding.NewJSONB()
+	encoder := encoding.NewJSONB()
 	memlog := eventlog.NewMemory()
 
 	// 1. Simulate old data being in the event log.
 	// We start with a `personWasBorn` event.
 	bornEvt := &personWasBorn{ID: personID, BornName: "Doc Brown"}
-	rawBorn, err := serializer.Encode(bornEvt)
+	rawBorn, err := encoder.Encode(bornEvt)
 	require.NoError(t, err)
 
 	// Then, we manually add a raw `nameAndAgeSetV1` event, as if it was written long ago.
 	v1Evt := &nameAndAgeSetV1{Name: "Marty McFly", Age: 17}
-	rawV1, err := serializer.Encode(v1Evt)
+	rawV1, err := encoder.Encode(v1Evt)
 	require.NoError(t, err)
 
 	// Append both to the log. The aggregate will be at version 2.
@@ -82,7 +82,7 @@ func Test_EventTransformation_UpcastingSplitsEvent(t *testing.T) {
 		loadedPerson,
 		memlog,
 		registry,
-		serializer,
+		encoder,
 		[]event.Transformer[PersonEvent]{upcaster},
 		personID,
 		version.SelectFromBeginning,

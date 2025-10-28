@@ -141,7 +141,7 @@ func (*accountOpened) EventName() string { return "account/opened" }
 func (*accountOpened) isAccountEvent()   {}
 ```
 
-By default, events are serialized to JSON (this can be changed when you configure the repository).
+By default, events are encoded to JSON (this can be changed when you configure the repository).
 
 To satisfy the `event.Any` interface (embedded in `AccountEvent`), you must add an `EventName() string` method to each event.
 
@@ -167,7 +167,7 @@ func (*moneyWithdrawn) isAccountEvent()   {}
 
 
 
-You must now "bind" these events to the aggregate by providing a constructor function for each one. This allows the library to correctly deserialize events from the event log back into their concrete types.
+You must now "bind" these events to the aggregate by providing a constructor function for each one. This allows the library to correctly decode events from the event log back into their concrete types.
 
 You need to make sure to create a constructor function for each event:
 
@@ -781,7 +781,7 @@ Loading such an aggregate would require fetching and replaying its entire histor
 
 Snapshots are a performance optimization that solves this problem. 
 
-A snapshot is a serialized copy of an aggregate's state at a specific version. Instead of replaying the entire event history, the system can load the *latest snapshot* and then replay only the events that have occurred _since_ that snapshot was taken.
+A snapshot is an encoded copy of an aggregate's state at a specific version. Instead of replaying the entire event history, the system can load the *latest snapshot* and then replay only the events that have occurred _since_ that snapshot was taken.
 
 Let's continue our `Account` example from the quickstart and add snapshot functionality. 
 
@@ -809,9 +809,9 @@ func (s *Snapshot) Version() version.Version {
 }
 ```
 
-It's a "snapshot" (a point in time picture) of the `Account`'s state at a given point that can be serialized (JSON by default).
+It's a "snapshot" (a point in time picture) of the `Account`'s state at a given point that can be encoded (JSON by default).
 
-Next, we need a way to convert an `Account` aggregate to an `AccountSnapshot` and back. This is the job of a `Snapshotter`. It acts as a bridge between your live aggregate and its serialized snapshot representation.
+Next, we need a way to convert an `Account` aggregate to an `AccountSnapshot` and back. This is the job of a `Snapshotter`. It acts as a bridge between your live aggregate and its encoded snapshot representation.
 
 We create a type that implements the `aggregate.Snapshotter` interface.
 
@@ -879,7 +879,7 @@ func main() {
 }
 ```
 
-We create a snapshot store for our snapshots. It needs a constructor for an empty snapshot, used for deserialization.
+We create a snapshot store for our snapshots. It needs a constructor for an empty snapshot, used for decoding.
 
 While the library provides an in-memory snapshot store out of the box, the `aggregate.SnapshotStore` interface makes it straightforward to implement your own persistent store (e.g., using a database table, Redis, or a file-based store).
 
@@ -1362,7 +1362,7 @@ Saving a snapshot is usually an "UPSERT" (update or insert) operation.
 ## Event transformers
 You can find this example in in [./examples/4_transformers_crypto/main.go](./examples/4_transformers_crypto/main.go) and [account_aes_crypto_transformer.go](./examples/internal/account/account_aes_crypto_transformer.go).
 
-Transformers allow you to modify events just before they are serialized and written to the event log, and right after they are read and deserialized. This is a powerful hook for implementing cross-cutting concerns.
+Transformers allow you to modify events just before they are encoded and written to the event log, and right after they are read and decoded. This is a powerful hook for implementing cross-cutting concerns.
 
 Common use cases include:
 
@@ -1704,7 +1704,7 @@ func (u *upcasterV1toV2) TransformForWrite(
 
 When this transformer is added to the repository, here's what happens during a `repo.Get()` call: 
 1. The repository reads the raw event records from the event log (e.g., `personWasBorn` at version 1, `nameAndAgeSetV1` at version 2).
-2. The event data is deserialized into the Go structs. Your `EventFuncs` must include constructors for both old and new event types so they can be deserialized.
+2. The event data is decoded into the Go structs. Your `EventFuncs` must include constructors for both old and new event types so they can be decoded.
 3. The `upcasterV1toV2.TransformForRead` method is called.
 4. It sees the `nameAndAgeSetV1` event and replaces it in memory with a `nameSetV2` and an `ageSetV2` event.
 5. The aggregate's `Apply` method is then called with the transformed list of events. The aggregate's state is built correctly using the new event types.
@@ -1966,7 +1966,7 @@ sqlprinter.Query(
 )
 ```
 
-**Note:** we're using JSON serialization and we're using `json_extract(data, '$')` to see the data (saved as `BLOB` in sqlite) in a readable format
+**Note:** we're using JSON encoding and we're using `json_extract(data, '$')` to see the data (saved as `BLOB` in sqlite) in a readable format
 
 Running
 ```bash
@@ -2027,7 +2027,7 @@ func NewAccountOutboxProcessor(db *sql.DB) (*AccountOutboxProcessor, error) {
 }
 ```
 
-The Process logic is simple: it serializes each event to JSON and inserts it into the `outbox_account_events` table using the provided transaction `tx`. This guarantees atomicity with the event log persistence.
+The Process logic is simple: it encoded each event to JSON and inserts it into the `outbox_account_events` table using the provided transaction `tx`. This guarantees atomicity with the event log persistence.
 
 ```go
 // Process writes committed AccountEvents to the outbox table within the same transaction.
@@ -2454,7 +2454,7 @@ The most important rule for `AppendEvents` is that the entire operation must be 
 
 Checking the expected version and inserting new events either happens together or not at all.
 
-The `AppendEvents` method receives `event.RawEvents`, which is a slice of events that have already been serialized into bytes. Your job is to persist them.
+The `AppendEvents` method receives `event.RawEvents`, which is a slice of events that have already been encoded into bytes. Your job is to persist them.
 
 The overall structure of an `AppendEvents` implementation is nearly identical across different databases. Example for SQL databases:
 
@@ -2477,7 +2477,7 @@ The overall structure of an `AppendEvents` implementation is nearly identical ac
 	// EventName returns the name of the event from the record.
 	func (re *Record) EventName() string
 
-	// Data returns the serialized event payload from the record.
+	// Data returns the encoded event payload from the record.
 	func (re *Record) Data() []byte
 
 	// LogID returns the identifier of the event stream this record belongs to.
@@ -2486,7 +2486,7 @@ The overall structure of an `AppendEvents` implementation is nearly identical ac
 	// Version returns the sequential version of this event within its log stream.
 	func (re *Record) Version() version.Version
    ```
-   Note: If your users must follow a specific schema, like [cloudevents](https://cloudevents.io/), you need to enforce it at the serializer (see the `serde` package) and at the events level (maybe by having a "base" event type). Then you can work with the `[]byte` however you want.
+   Note: If your users must follow a specific schema, like [cloudevents](https://cloudevents.io/), you need to enforce it at the encoder (see the `encoding` package) and at the events level (maybe by having a "base" event type). Then you can work with the `[]byte` however you want.
 7. **Commit the transaction.**
 8. **Return the new version.** The new version will be `actualVersion` plus the number of events you just inserted.
 	```go
@@ -2559,7 +2559,7 @@ This could be to integrate with a different kind of storage, add custom caching,
 
 `chronicle` provides a set of reusable helper functions that handle the most complex parts of the event sourcing workflow. Implementing a repository is often just a matter of wiring these components together.
 
-First, you'll define your repository struct. It needs dependencies to function: an `event.Log` for storage, a factory function `createRoot` to instantiate your aggregate, an `event.Registry` to map event names to types, and a `codec.Codec` for serialization.
+First, you'll define your repository struct. It needs dependencies to function: an `event.Log` for storage, a factory function `createRoot` to instantiate your aggregate, an `event.Registry` to map event names to types, and a `codec.Codec` for encoding and decoding.
 
 ```go
 import (
@@ -2573,14 +2573,14 @@ type CustomRepository[TID ID, E event.Any, R Root[TID, E]] struct {
 	eventlog   event.Log
 	createRoot func() R
 	registry   event.Registry[E]
-	serde      codec.Codec
+	encoder      codec.Codec
 
 	// Optional: for encrypting, compressing, or upcasting events
 	transformers []event.Transformer[E]
 }
 ```
 
-Next, you need a constructor. An optional step here is to **register the aggregate's events**. The repository must know how to deserialize event data from the log back into concrete Go types. 
+Next, you need a constructor. An optional step here is to **register the aggregate's events**. The repository must know how to decode event data from the log back into concrete Go types. 
 
 You can also tell your users to ensure that events are registered beforehand, but that is error-prone.
 
@@ -2596,7 +2596,7 @@ func NewCustomRepository[...](
 		eventlog:   eventLog,
 		createRoot: createRoot,
 		registry:   event.NewRegistry[E](),
-		serde:      codec.NewJSONBinary(), // Default to JSON, you can also change this.
+		encoder:    codec.NewJSONB(), // Default to JSON, you can also change this.
 	}
 
 	err := repo.registry.RegisterEvents(createRoot())
@@ -2608,7 +2608,7 @@ func NewCustomRepository[...](
 }
 ```
 
-To implement the `Get` method for loading an aggregate, you can use the `aggregate.ReadAndLoadFromStore` helper. This function orchestrates the entire loading process: it queries the `event.Log`, then uses the registry and serde to deserialize and apply each event to a fresh aggregate instance.
+To implement the `Get` method for loading an aggregate, you can use the `aggregate.ReadAndLoadFromStore` helper. This function orchestrates the entire loading process: it queries the `event.Log`, then uses the registry and the encoder to decode and apply each event to a fresh aggregate instance.
 
 ```go
 func (r *CustomRepository[...]) Get(ctx context.Context, id TID) (R, error) {
@@ -2636,9 +2636,9 @@ func (r *CustomRepository[...]) Get(ctx context.Context, id TID) (R, error) {
 
 If you need more fine grained control over the loading process, you can look at the implementation of `ReadAndLoadFromStore`, which in turn uses `aggregate.LoadFromRecords`. 
 
-This lower level helper takes an iterator of `event.Record` instances and handles the core loop of deserializing event data, applying read-side transformers, and calling the aggregate's `Apply` method for each event.
+This lower level helper takes an iterator of `event.Record` instances and handles the core loop of decoding event data, applying read-side transformers, and calling the aggregate's `Apply` method for each event.
 
-For the `Save` method, the framework provides the `aggregate.CommitEvents` helper. It handles flushing uncommitted events from the aggregate, applying write-side transformers, serializing the events, and appending them to the event log with the correct optimistic concurrency check.
+For the `Save` method, the framework provides the `aggregate.CommitEvents` helper. It handles flushing uncommitted events from the aggregate, applying write-side transformers, encoding the events, and appending them to the event log with the correct optimistic concurrency check.
 
 ```go
 func (r *CustomRepository[...]) Save(
@@ -2646,7 +2646,7 @@ func (r *CustomRepository[...]) Save(
 	root R,
 ) (version.Version, aggregate.CommittedEvents[E], error) {
 	
-	// This helper handles flushing, transforming, serializing, and committing.
+	// This helper handles flushing, transforming, encoding, and committing.
 	newVersion, committedEvents, err := aggregate.CommitEvents(
 		ctx,
 		r.eventlog,
@@ -2760,7 +2760,7 @@ These packages define the core abstractions and contracts of the framework.
 * `aggregate/`: Contains the building blocks for your domain models, like `aggregate.Base` and `aggregate.Root`. It also provides the main `Repository` interfaces for loading and saving your aggregates.
 * `event/`: This package defines the contracts (interfaces) for fundamental concepts. It includes `event.Any` (the base for all events), `event.Log` (the interface for any event store), and `event.Registry`.
 * `version/`: This package defines `version.Version` and the `version.ConflictError` that is returned on write conflicts.
-* `serde/`: This package (serde = **ser**ializer/**de**serializer) provides the interface and default JSON implementation for converting your event structs into a storable format and back again.
+* `encoding/`: This package provides the interface and default JSON implementation for encoding and decoding your event structs into a storable format.
 * `examples/`: This package contains the examples from this README.
 
 ### Pluggable Implementations

@@ -110,7 +110,7 @@ var _ Repository[testAggID, testAggEvent, *testAgg] = (*ESRepo[testAggID, testAg
 
 // ESRepo is the standard event-sourced repository implementation.
 // It orchestrates loading and saving aggregates by interacting with an event log
-// and an event registry. By default, it uses JSON for serialization.
+// and an event registry. By default, it uses JSON for encoding.
 type ESRepo[TID ID, E event.Any, R Root[TID, E]] struct {
 	registry   event.Registry[E]
 	encoder    encoding.Codec
@@ -125,7 +125,7 @@ type ESRepo[TID ID, E event.Any, R Root[TID, E]] struct {
 // NewESRepo creates a new event sourced repository.
 // It requires an event log for storage, a factory function to create new aggregate
 // instances, and an optional slice of event transformers. By default, it uses a JSON
-// serializer and automatically registers the aggregate's events.
+// encoder and automatically registers the aggregate's events.
 //
 // Usage:
 //
@@ -225,7 +225,7 @@ func (repo *ESRepo[TID, E, R]) Save(
 	return newVersion, committedEvents, nil
 }
 
-func (esr *ESRepo[TID, E, R]) setSerializer(s encoding.Codec) {
+func (esr *ESRepo[TID, E, R]) setCodec(s encoding.Codec) {
 	esr.encoder = s
 }
 
@@ -239,7 +239,7 @@ func (esr *ESRepo[TID, E, R]) setAnyRegistry(anyRegistry event.Registry[event.An
 
 // Note: we do it this way because otherwise go can't infer the type.
 type esRepoConfigurator interface {
-	setSerializer(s encoding.Codec)
+	setCodec(s encoding.Codec)
 	setShouldRegisterRoot(b bool)
 	setAnyRegistry(anyRegistry event.Registry[event.Any])
 }
@@ -248,15 +248,15 @@ type esRepoConfigurator interface {
 // It is used with `NewESRepo` to customize its behavior.
 type ESRepoOption func(esRepoConfigurator)
 
-// EventSerializer provides an option to override the default JSON serializer
-// with a custom implementation. See the `serde` package.
+// EventCodec provides an option to override the default JSON encoder
+// with a custom implementation. See the `encoding` package.
 //
 // Usage:
 //
-//	repo, err := NewESRepo(..., aggregate.EventSerializer(myCustomSerializer))
-func EventSerializer(serializer encoding.Codec) ESRepoOption {
+//	repo, err := NewESRepo(..., aggregate.EventCodec(myCustomCodec))
+func EventCodec(encoder encoding.Codec) ESRepoOption {
 	return func(c esRepoConfigurator) {
-		c.setSerializer(serializer)
+		c.setCodec(encoder)
 	}
 }
 

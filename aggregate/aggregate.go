@@ -144,14 +144,14 @@ var ErrRootNotFound = errors.New("root not found")
 //
 //	err := aggregate.ReadAndLoadFromStore(ctx, root, store, registry, ser, transformers, id, selector)
 //
-// Returns an error if reading from the store, deserializing, or applying any event fails.
+// Returns an error if reading from the store, decoding, or applying any event fails.
 // Returns an error if the aggregate is not found (i.e., has no events).
 func ReadAndLoadFromStore[TID ID, E event.Any](
 	ctx context.Context,
 	root Root[TID, E],
 	store event.Log,
 	registry event.Registry[E],
-	deserializer encoding.Decoder,
+	decoder encoding.Decoder,
 	transformers []event.Transformer[E],
 	id TID,
 	selector version.Selector,
@@ -159,7 +159,7 @@ func ReadAndLoadFromStore[TID ID, E event.Any](
 	logID := event.LogID(id.String())
 	recordedEvents := store.ReadEvents(ctx, logID, selector)
 
-	if err := LoadFromRecords(ctx, root, registry, deserializer, transformers, recordedEvents); err != nil {
+	if err := LoadFromRecords(ctx, root, registry, decoder, transformers, recordedEvents); err != nil {
 		return fmt.Errorf("read and load from store: %w", err)
 	}
 
@@ -171,23 +171,23 @@ func ReadAndLoadFromStore[TID ID, E event.Any](
 }
 
 // LoadFromRecords hydrates an aggregate root from an iterator of event records.
-// For each record, it deserializes the data into a concrete event type, applies any
+// For each record, it decodes the data into a concrete event type, applies any
 // transformations, and then applies the event to the root.
 //
 // Usage (used by `ReadAndLoadFromStore` and snapshot loading logic):
 //
 //	err := aggregate.LoadFromRecords(ctx, root, registry, ser, transformers, records)
 //
-// Returns an error if deserialization, transformation, or application of an event fails.
+// Returns an error if decoding, transformation, or application of an event fails.
 func LoadFromRecords[TID ID, E event.Any](
 	ctx context.Context,
 	root Root[TID, E],
 	registry event.Registry[E],
-	deserializer encoding.Decoder,
+	decoder encoding.Decoder,
 	transformers []event.Transformer[E],
 	records event.Records,
 ) error {
-	deserializedEvents := []E{}
+	decodedEvents := []E{}
 	lastRecordedVersion := version.Zero
 
 	for record, err := range records {
@@ -204,10 +204,10 @@ func LoadFromRecords[TID ID, E event.Any](
 		}
 
 		evt := fact()
-		if err := deserializer.Decode(record.Data(), evt); err != nil {
+		if err := decoder.Decode(record.Data(), evt); err != nil {
 			return fmt.Errorf("load from records: unmarshal record data: %w", err)
 		}
-		deserializedEvents = append(deserializedEvents, evt)
+		decodedEvents = append(decodedEvents, evt)
 
 		lastRecordedVersion = record.Version()
 	}
@@ -217,7 +217,7 @@ func LoadFromRecords[TID ID, E event.Any](
 	// inverse is decompress -> decrypt
 	var err error
 	for i := len(transformers) - 1; i >= 0; i-- {
-		deserializedEvents, err = transformers[i].TransformForRead(ctx, deserializedEvents)
+		decodedEvents, err = transformers[i].TransformForRead(ctx, decodedEvents)
 		if err != nil {
 			return fmt.Errorf(
 				"load from records: read transform failed: %w",
@@ -227,7 +227,7 @@ func LoadFromRecords[TID ID, E event.Any](
 	}
 
 	hasRecords := false
-	for _, transformedEvt := range deserializedEvents {
+	for _, transformedEvt := range decodedEvents {
 		hasRecords = true
 		if err := root.Apply(transformedEvt); err != nil {
 			return fmt.Errorf(
@@ -281,16 +281,16 @@ func FlushUncommittedEvents[TID ID, E event.Any, R Root[TID, E]](
 
 // RawEventsFromUncommitted converts a slice of strongly-typed uncommitted events
 // into a slice of `event.Raw` events. It applies write-side transformers
-// and serializes the event data during this process.
+// and encodes the event data during this process.
 //
 // Usage (called by `CommitEvents`):
 //
-//	rawEvents, err := aggregate.RawEventsFromUncommitted(ctx, serializer, transformers, uncommitted)
+//	rawEvents, err := aggregate.RawEventsFromUncommitted(ctx, encoder, transformers, uncommitted)
 //
-// Returns a slice of `event.Raw` ready for storage, or an error if transformation or serialization fails.
+// Returns a slice of `event.Raw` ready for storage, or an error if transformation or encoding fails.
 func RawEventsFromUncommitted[E event.Any](
 	ctx context.Context,
-	serializer encoding.Encoder,
+	encoder encoding.Encoder,
 	transformers []event.Transformer[E],
 	uncommitted UncommittedEvents[E],
 ) ([]event.Raw, error) {
@@ -309,7 +309,7 @@ func RawEventsFromUncommitted[E event.Any](
 
 	rawEvents := make([]event.Raw, len(transformedEvents))
 	for i, transformedEvent := range transformedEvents {
-		bytes, err := serializer.Encode(transformedEvent)
+		bytes, err := encoder.Encode(transformedEvent)
 		if err != nil {
 			return nil, fmt.Errorf(
 				"raw events from uncommitted %s: %w",
@@ -344,14 +344,14 @@ func (committed CommittedEvents[E]) All() iter.Seq[E] {
 //
 // Usage (inside a repository's `Save` method):
 //
-//	newVersion, committed, err := aggregate.CommitEvents(ctx, store, serializer, transformers, root)
+//	newVersion, committed, err := aggregate.CommitEvents(ctx, store, encoder, transformers, root)
 //
 // Returns the new version of the aggregate, a slice of the events that were just committed,
 // and an error if persistence fails (e.g., `version.ConflictError`).
 func CommitEvents[TID ID, E event.Any, R Root[TID, E]](
 	ctx context.Context,
 	store event.Log,
-	serializer encoding.Encoder,
+	encoder encoding.Encoder,
 	transformers []event.Transformer[E],
 	root R,
 ) (version.Version, CommittedEvents[E], error) {
@@ -368,7 +368,7 @@ func CommitEvents[TID ID, E event.Any, R Root[TID, E]](
 		root.Version() - version.Version(len(uncommittedEvents)),
 	)
 
-	rawEvents, err := RawEventsFromUncommitted(ctx, serializer, transformers, uncommittedEvents)
+	rawEvents, err := RawEventsFromUncommitted(ctx, encoder, transformers, uncommittedEvents)
 	if err != nil {
 		return version.Zero, nil, fmt.Errorf("aggregate commit: events to raw: %w", err)
 	}
@@ -390,7 +390,7 @@ func CommitEvents[TID ID, E event.Any, R Root[TID, E]](
 // Usage (inside a transactional repository's `Save` method):
 //
 //	newVersion, committed, err := aggregate.CommitEventsWithTX(
-//	    ctx, transactor, txLog, processor, serializer, transformers, root)
+//	    ctx, transactor, txLog, processor, encoder, transformers, root)
 //
 // Returns the new aggregate version, the committed events, and an error if the transaction fails.
 func CommitEventsWithTX[TX any, TID ID, E event.Any, R Root[TID, E]](
@@ -398,7 +398,7 @@ func CommitEventsWithTX[TX any, TID ID, E event.Any, R Root[TID, E]](
 	transactor event.Transactor[TX],
 	txLog event.TransactionalLog[TX],
 	processor TransactionalAggregateProcessor[TX, TID, E, R],
-	serializer encoding.Encoder,
+	encoder encoding.Encoder,
 	transformers []event.Transformer[E],
 	root R,
 ) (version.Version, CommittedEvents[E], error) {
@@ -417,7 +417,7 @@ func CommitEventsWithTX[TX any, TID ID, E event.Any, R Root[TID, E]](
 		root.Version() - version.Version(len(uncommittedEvents)),
 	)
 
-	rawEvents, err := RawEventsFromUncommitted(ctx, serializer, transformers, uncommittedEvents)
+	rawEvents, err := RawEventsFromUncommitted(ctx, encoder, transformers, uncommittedEvents)
 	if err != nil {
 		return version.Zero, nil, fmt.Errorf("aggregate commit with tx: events to raw: %w", err)
 	}

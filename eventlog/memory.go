@@ -161,8 +161,8 @@ func (store *Memory) ReadEvents(
 			return
 		}
 
-		for _, internalSerialized := range events {
-			record := store.memoryRecordToRecord(&internalSerialized)
+		for _, internalEncoded := range events {
+			record := store.memoryRecordToRecord(&internalEncoded)
 
 			if record.Version() < selector.From {
 				continue

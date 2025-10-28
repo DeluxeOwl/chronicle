@@ -1,8 +1,8 @@
 package event
 
 // Any is the fundamental interface that all event types in the system must implement.
-// It ensures that every event has a distinct name, which is used for serialization,
-// deserialization, and routing within the framework.
+// It ensures that every event has a distinct name, which is used for encoding,
+// decoding, and routing within the framework.
 //
 // Usage:
 //
@@ -18,7 +18,7 @@ type Any interface {
 
 // AnyToConcrete is a generic helper function that safely performs a type assertion
 // from the abstract event.Any interface to a specific, concrete event type `E`.
-// This is typically used after deserializing an event from the event store.
+// This is typically used after decoding an event from the event store.
 //
 // Usage:
 //

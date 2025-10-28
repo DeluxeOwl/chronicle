@@ -8,7 +8,7 @@ import (
 )
 
 // FuncFor creates a new, zero-value instance of a specific event type.
-// This function acts as a factory, enabling the framework to deserialize event data
+// This function acts as a factory, enabling the framework to decode event data
 // from the event store into concrete Go types without knowing the types at compile time.
 //
 // Usage:
@@ -69,7 +69,7 @@ type EventFuncGetter[E Any] interface {
 }
 
 // Registry maps event names (strings) to factory functions that create concrete
-// event types. It is a critical component for deserialization, allowing the
+// event types. It is a critical component for decoding, allowing the
 // framework to reconstruct typed events from the raw data stored in the event log.
 type Registry[E Any] interface {
 	EventRegistrar[E]
@@ -129,7 +129,7 @@ func (r *EventRegistry[E]) RegisterEvents(root EventFuncCreator[E]) error {
 }
 
 // GetFunc retrieves an event factory function from the registry using its unique name.
-// The framework uses this during deserialization to create a concrete event instance
+// The framework uses this during decoding to create a concrete event instance
 // before unmarshaling the data.
 //
 // Usage:

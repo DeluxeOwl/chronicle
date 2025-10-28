@@ -63,14 +63,14 @@ import (
 //		return newEvents, nil
 //	}
 type Transformer[E Any] interface {
-	// TransformForWrite is called BEFORE events are serialized and saved to the event log.
+	// TransformForWrite is called BEFORE events are encoded and saved to the event log.
 	// It receives a concrete event types and must returns events of the same type.
 	// Use this to encrypt, compress, or otherwise modify the events for storage.
 	//
 	// Returns the transformed events and an error if the transformation fails.
 	TransformForWrite(ctx context.Context, event []E) ([]E, error)
 
-	// TransformForRead is called AFTER events are loaded and deserialized from the event log.
+	// TransformForRead is called AFTER events are loaded and decoded from the event log.
 	// It should perform the inverse operation of TransformForWrite (e.g., decrypt, decompress).
 	//
 	// Returns the transformed events and an error if the transformation fails.

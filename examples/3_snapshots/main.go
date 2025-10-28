@@ -21,7 +21,7 @@ func main() {
 	)
 
 	// 1. Create a snapshot store for our AccountSnapshot
-	// It needs a constructor for an empty snapshot, used for deserialization.
+	// It needs a constructor for an empty snapshot, used for decoding.
 	accountSnapshotStore := snapshotstore.NewMemoryStore(
 		func() *account.Snapshot { return new(account.Snapshot) },
 	)

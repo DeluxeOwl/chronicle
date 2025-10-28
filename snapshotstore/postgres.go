@@ -75,7 +75,7 @@ func PostgresSnapshotTableName[TID aggregate.ID, TS aggregate.Snapshot[TID]](
 }
 
 // PostgresSnapshotUseBYTEA configures the snapshot store to use a BYTEA column for snapshot data
-// instead of the default JSONB. This is useful for binary serialization formats like Protobuf.
+// instead of the default JSONB. This is useful for binary encoding formats like Protobuf.
 func PostgresSnapshotUseBYTEA[TID aggregate.ID, TS aggregate.Snapshot[TID]]() PostgresStoreOption[TID, TS] {
 	return func(p *PostgresStore[TID, TS]) {
 		p.useByteA = true
@@ -84,7 +84,7 @@ func PostgresSnapshotUseBYTEA[TID aggregate.ID, TS aggregate.Snapshot[TID]]() Po
 
 // NewPostgresStore creates and returns a new PostgreSQL-backed snapshot store.
 // It requires a database connection and a factory function for creating new snapshot instances,
-// which is used during deserialization.
+// which is used during decoding.
 //
 // Upon initialization, it ensures the necessary database table exists by executing a
 // `CREATE TABLE IF NOT EXISTS` command.
@@ -97,7 +97,7 @@ func NewPostgresStore[TID aggregate.ID, TS aggregate.Snapshot[TID]](
 	s := &PostgresStore[TID, TS]{
 		db:             db,
 		createSnapshot: createSnapshot,
-		encoder:        encoding.NewJSONB(), // Default to JSON serialization
+		encoder:        encoding.NewJSONB(), // Default to JSON encoding
 	}
 
 	for _, opt := range opts {
@@ -115,7 +115,7 @@ func NewPostgresStore[TID aggregate.ID, TS aggregate.Snapshot[TID]](
 	return s, nil
 }
 
-// SaveSnapshot serializes the provided snapshot and saves it to the PostgreSQL database.
+// SaveSnapshot encodes the provided snapshot and saves it to the PostgreSQL database.
 // It uses an UPSERT (INSERT ... ON CONFLICT) operation to either create a new snapshot record
 // or update the existing one for the aggregate.
 func (s *PostgresStore[TID, TS]) SaveSnapshot(ctx context.Context, snapshot TS) error {
@@ -127,7 +127,7 @@ func (s *PostgresStore[TID, TS]) SaveSnapshot(ctx context.Context, snapshot TS) 
 
 	data, err := s.encoder.Encode(snapshot)
 	if err != nil {
-		return fmt.Errorf("save snapshot: serialize: %w", err)
+		return fmt.Errorf("save snapshot: encode: %w", err)
 	}
 
 	_, err = s.db.ExecContext(ctx, s.qSaveSnapshot, id, snapshot.Version(), data)
@@ -139,7 +139,7 @@ func (s *PostgresStore[TID, TS]) SaveSnapshot(ctx context.Context, snapshot TS) 
 }
 
 // GetSnapshot retrieves the latest snapshot for a given aggregate ID from the database.
-// It returns the deserialized snapshot, a boolean indicating if a snapshot was found,
+// It returns the decoded snapshot, a boolean indicating if a snapshot was found,
 // and an error if one occurred. If no snapshot is found for the ID, it returns `false`
 // and a nil error, which is the expected behavior.
 func (s *PostgresStore[TID, TS]) GetSnapshot(
@@ -163,10 +163,10 @@ func (s *PostgresStore[TID, TS]) GetSnapshot(
 		return empty, false, fmt.Errorf("get snapshot: query row: %w", err)
 	}
 
-	// A snapshot was found, now deserialize it.
+	// A snapshot was found, now decode it.
 	snapshot := s.createSnapshot()
 	if err := s.encoder.Decode(data, snapshot); err != nil {
-		return empty, false, fmt.Errorf("get snapshot: deserialize: %w", err)
+		return empty, false, fmt.Errorf("get snapshot: decode: %w", err)
 	}
 
 	return snapshot, true, nil

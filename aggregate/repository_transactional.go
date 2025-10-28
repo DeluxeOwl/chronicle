@@ -203,7 +203,7 @@ func (repo *TransactionalRepository[TX, TID, E, R]) GetVersion(
 	return root, nil
 }
 
-func (repo *TransactionalRepository[T, TID, E, R]) setSerializer(s encoding.Codec) {
+func (repo *TransactionalRepository[T, TID, E, R]) setCodec(s encoding.Codec) {
 	repo.encoder = s
 }
 
