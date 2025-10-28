@@ -62,7 +62,7 @@ type Snapshotter[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]] interfac
 //
 // Usage:
 //
-//	// snapStore is an implementation of SnapshotStore, e.g., snapshotstore.NewMemoryStore()
+//	// snapStore is an implementation of SnapshotStore, e.g., snapshotstore.NewMemory()
 //	err := snapStore.SaveSnapshot(ctx, mySnapshot)
 //	if err != nil {
 //	    // handle error

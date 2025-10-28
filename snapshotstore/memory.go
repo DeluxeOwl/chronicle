@@ -9,47 +9,47 @@ import (
 	"github.com/DeluxeOwl/chronicle/encoding"
 )
 
-var _ aggregate.SnapshotStore[aggregate.ID, aggregate.Snapshot[aggregate.ID]] = (*MemoryStore[aggregate.ID, aggregate.Snapshot[aggregate.ID]])(
+var _ aggregate.SnapshotStore[aggregate.ID, aggregate.Snapshot[aggregate.ID]] = (*Memory[aggregate.ID, aggregate.Snapshot[aggregate.ID]])(
 	nil,
 )
 
-// MemoryStore provides a thread-safe, in-memory implementation of the aggregate.SnapshotStore interface.
+// Memory provides a thread-safe, in-memory implementation of the aggregate.SnapshotStore interface.
 // It is useful for testing, development, or applications where snapshot persistence is not required.
 // Snapshots are stored as encoded byte slices in a map, keyed by the aggregate ID.
-type MemoryStore[TID aggregate.ID, TS aggregate.Snapshot[TID]] struct {
+type Memory[TID aggregate.ID, TS aggregate.Snapshot[TID]] struct {
 	encoder        encoding.Codec
 	snapshots      map[string][]byte
 	createSnapshot func() TS
 	mu             sync.RWMutex
 }
 
-type MemoryStoreOption[TID aggregate.ID, TS aggregate.Snapshot[TID]] func(*MemoryStore[TID, TS])
+type MemoryOption[TID aggregate.ID, TS aggregate.Snapshot[TID]] func(*Memory[TID, TS])
 
 func WithCodec[TID aggregate.ID, TS aggregate.Snapshot[TID]](
 	s encoding.Codec,
-) MemoryStoreOption[TID, TS] {
-	return func(store *MemoryStore[TID, TS]) {
+) MemoryOption[TID, TS] {
+	return func(store *Memory[TID, TS]) {
 		store.encoder = s
 	}
 }
 
-// NewMemoryStore creates and returns a new in-memory snapshot store.
+// NewMemory creates and returns a new in-memory snapshot store.
 // It requires a constructor function for the specific snapshot type, which is used
 // to create new instances during decoding. By default, it uses JSON for encoding.
 //
 // Usage:
 //
 //	// Assuming account.Snapshot is your snapshot type
-//	accountSnapshotStore := snapshotstore.NewMemoryStore(
+//	accountSnapshotStore := snapshotstore.NewMemory(
 //		func() *account.Snapshot { return new(account.Snapshot) },
 //	)
 //
-// Returns a pointer to a fully initialized MemoryStore.
-func NewMemoryStore[TID aggregate.ID, TS aggregate.Snapshot[TID]](
+// Returns a pointer to a fully initialized Memory store.
+func NewMemory[TID aggregate.ID, TS aggregate.Snapshot[TID]](
 	createSnapshot func() TS,
-	opts ...MemoryStoreOption[TID, TS],
-) *MemoryStore[TID, TS] {
-	store := &MemoryStore[TID, TS]{
+	opts ...MemoryOption[TID, TS],
+) *Memory[TID, TS] {
+	store := &Memory[TID, TS]{
 		mu:             sync.RWMutex{},
 		snapshots:      make(map[string][]byte),
 		createSnapshot: createSnapshot,
@@ -75,7 +75,7 @@ func NewMemoryStore[TID aggregate.ID, TS aggregate.Snapshot[TID]](
 //	}
 //
 // Returns an error if the encoding fails or if the context is cancelled.
-func (s *MemoryStore[TID, TS]) SaveSnapshot(ctx context.Context, snapshot TS) error {
+func (s *Memory[TID, TS]) SaveSnapshot(ctx context.Context, snapshot TS) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -111,7 +111,7 @@ func (s *MemoryStore[TID, TS]) SaveSnapshot(ctx context.Context, snapshot TS) er
 //
 // Returns the decoded snapshot, a boolean indicating if a snapshot was found for the
 // given ID, and an error if one occurred during retrieval or decoding.
-func (s *MemoryStore[TID, TS]) GetSnapshot(ctx context.Context, aggregateID TID) (TS, bool, error) {
+func (s *Memory[TID, TS]) GetSnapshot(ctx context.Context, aggregateID TID) (TS, bool, error) {
 	var empty TS
 
 	if err := ctx.Err(); err != nil {

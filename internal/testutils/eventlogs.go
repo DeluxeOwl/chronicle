@@ -32,10 +32,10 @@ func SetupSnapStores[TID aggregate.ID, TS aggregate.Snapshot[TID]](
 	createSnapshot func() TS,
 ) ([]SnapStore[TID, TS], func()) {
 	pg, cleanupPostgres := SetupPostgres(t)
-	pgsnapstore, err := snapshotstore.NewPostgresStore(pg, createSnapshot)
+	pgsnapstore, err := snapshotstore.NewPostgres(pg, createSnapshot)
 	require.NoError(t, err)
 
-	memsnapstore := snapshotstore.NewMemoryStore(createSnapshot)
+	memsnapstore := snapshotstore.NewMemory(createSnapshot)
 
 	return []SnapStore[TID, TS]{
 			{

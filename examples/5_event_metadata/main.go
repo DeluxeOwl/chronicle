@@ -35,7 +35,7 @@ func main() {
 		nil,
 	)
 
-	accountSnapshotStore := snapshotstore.NewMemoryStore(
+	accountSnapshotStore := snapshotstore.NewMemory(
 		func() *accountv2.Snapshot { return new(accountv2.Snapshot) },
 	)
 

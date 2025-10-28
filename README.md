@@ -872,7 +872,7 @@ func main() {
 		nil,
 	)
 
-	accountSnapshotStore := snapshotstore.NewMemoryStore(
+	accountSnapshotStore := snapshotstore.NewMemory(
 		func() *account.Snapshot { return new(account.Snapshot) },
 	)
 	// ...
@@ -887,7 +887,7 @@ Then, we wrap the base repository with the snapshotting functionality.
 
 Now, we need to decide _when_ to take a snapshot. You probably don't want to create one on every single change, as that would be inefficient. The framework provides a flexible `SnapshotStrategy` to define this policy and a builder for various strategies:
 ```go
-	accountSnapshotStore := snapshotstore.NewMemoryStore(
+	accountSnapshotStore := snapshotstore.NewMemory(
 		func() *account.Snapshot { return new(account.Snapshot) },
 	)
 
@@ -1348,10 +1348,10 @@ If the versions don't line up, the database transaction itself fails and raises 
 
 ### Snapshot stores
 
-- **In-Memory**: `snapshotstore.NewMemoryStore(...)`
+- **In-Memory**: `snapshotstore.NewMemory(...)`
     - Stores snapshots in a simple map. Perfect for testing.
     - **Tradeoff**: Single process only, lost on restart.
-- **PostgreSQL**: `snapshotstore.NewPostgresStore(...)`
+- **PostgreSQL**: `snapshotstore.NewPostgres(...)`
     - A persistent implementation that stores snapshots in a PostgreSQL table using an atomic `INSERT ... ON CONFLICT DO UPDATE` statement.
     - **Use Case**: When you need durable snapshots.
 
@@ -2772,8 +2772,8 @@ These packages provide concrete implementations for the interfaces defined in th
     * `eventlog.NewSqlite(...)`
     * `eventlog.NewPostgres(...)`
 * `snapshotstore`: Contains implementations of the `aggregate.SnapshotStore` interface.
-    * `snapshotstore.NewMemoryStore(...)`
-    * `snapshotstore.NewPostgresStore(...)`
+    * `snapshotstore.NewMemory(...)`
+    * `snapshotstore.NewPostgres(...)`
 
 ### Package Dependencies
 

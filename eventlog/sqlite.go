@@ -13,9 +13,9 @@ import (
 )
 
 var (
-	_ event.GlobalLog                      = new(Sqlite)
-	_ event.Log                            = new(Sqlite)
-	_ event.TransactionalEventLog[*sql.Tx] = new(Sqlite)
+	_ event.GlobalLog                      = (*Sqlite)(nil)
+	_ event.Log                            = (*Sqlite)(nil)
+	_ event.TransactionalEventLog[*sql.Tx] = (*Sqlite)(nil)
 )
 
 var (
@@ -23,6 +23,12 @@ var (
 	ErrNoEvents         = errors.New("empty events")
 )
 
+// Sqlite is an implementation of event.Log for a SQLite database.
+// It uses a dedicated table for events and a trigger to enforce optimistic
+// concurrency control at the database level. This approach is highly reliable
+// as it prevents race conditions during writes.
+//
+// See `NewSqlite` for initialization.
 type Sqlite struct {
 	db    *sql.DB
 	mopts MigrationsOptions
@@ -30,6 +36,8 @@ type Sqlite struct {
 
 type SqliteOption func(*Sqlite)
 
+// WithSqliteMigrations configures migration behavior for the SQLite event log.
+// Use this to skip automatic migrations or provide a custom logger.
 func WithSqliteMigrations(options MigrationsOptions) SqliteOption {
 	return func(s *Sqlite) {
 		s.mopts = options
@@ -39,6 +47,26 @@ func WithSqliteMigrations(options MigrationsOptions) SqliteOption {
 //go:embed sqlitemigrations/*.sql
 var sqliteMigrations embed.FS
 
+// NewSqlite creates a new Sqlite event log. Upon initialization, it ensures that
+// the necessary database schema (table and trigger) is created. This setup is
+// performed within a transaction, making it safe to call on application startup.
+//
+// IMPORTANT: By default, this log uses a BLOB column and expects a binary-based
+// encoder (e.g., codec.NewGOB() or codec.NewJSONB()) to be configured in the repository.
+// Modify the migrations or create your own implementation of a store if you want a different format.
+//
+// Usage:
+//
+//	db, err := sql.Open("sqlite3", "file:chronicle.db?cache=shared&mode=rwc")
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	sqliteLog, err := eventlog.NewSqlite(db)
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//
+// Returns a configured `*Sqlite` instance or an error if the setup fails.
 func NewSqlite(db *sql.DB, opts ...SqliteOption) (*Sqlite, error) {
 	sqliteLog := &Sqlite{
 		db: db,
@@ -70,6 +98,21 @@ func NewSqlite(db *sql.DB, opts ...SqliteOption) (*Sqlite, error) {
 	return sqliteLog, nil
 }
 
+// AppendEvents writes a batch of raw events for a given aggregate ID to the log.
+// It wraps the entire operation in a new database transaction to ensure atomicity.
+//
+// Usage:
+//
+//	newVersion, err := sqliteLog.AppendEvents(ctx, logID, expectedVersion, rawEvents)
+//	if err != nil {
+//	    var conflictErr *version.ConflictError
+//	    if errors.As(err, &conflictErr) {
+//	        // handle optimistic concurrency failure
+//	    }
+//	}
+//
+// Returns the new version of the aggregate after the append, or an error.
+// A `version.ConflictError` is returned if the expected version does not match.
 func (s *Sqlite) AppendEvents(
 	ctx context.Context,
 	id event.LogID,
@@ -92,6 +135,14 @@ func (s *Sqlite) AppendEvents(
 	return newVersion, nil
 }
 
+// AppendInTx writes events within an existing database transaction.
+// It relies on the database trigger to perform the optimistic concurrency check.
+// If the check fails, the trigger raises an exception which is parsed into a
+// `version.ConflictError`.
+//
+// This method is primarily for internal use by `TransactionalRepository` or advanced scenarios.
+//
+// Returns the new aggregate version, the records that were created, and an error if the operation fails.
 func (s *Sqlite) AppendInTx(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -147,6 +198,19 @@ func (s *Sqlite) AppendInTx(
 	return newStreamVersion, records, nil
 }
 
+// WithinTx executes a function within a database transaction. It begins a new
+// transaction, executes the provided function, and then commits it. If the
+// function returns an error or a panic occurs, the transaction is rolled back.
+//
+// Usage:
+//
+//	err := sqliteLog.WithinTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+//	    // Perform database operations with tx
+//	    return nil
+//	})
+//
+// Returns an error if the transaction fails to begin, commit, or if the
+// provided function returns an error.
 func (s *Sqlite) WithinTx(
 	ctx context.Context,
 	fn func(ctx context.Context, tx *sql.Tx) error,
@@ -170,6 +234,17 @@ func (s *Sqlite) WithinTx(
 	return nil
 }
 
+// ReadEvents retrieves the event history for a single aggregate, starting from
+// a specified version. It returns an iterator for efficiently processing the stream.
+//
+// Usage:
+//
+//	records := sqliteLog.ReadEvents(ctx, logID, version.SelectFromBeginning)
+//	for record, err := range records {
+//	    // process record
+//	}
+//
+// Returns an `event.Records` iterator.
 func (s *Sqlite) ReadEvents(
 	ctx context.Context,
 	id event.LogID,
@@ -196,7 +271,7 @@ func (s *Sqlite) ReadEvents(
 				return
 			}
 
-			var eventVersion uint64 // Scan into uint64, which database/sql handles from INTEGER
+			var eventVersion uint64
 			var eventName string
 			var data []byte
 
@@ -217,6 +292,18 @@ func (s *Sqlite) ReadEvents(
 	}
 }
 
+// ReadAllEvents retrieves the global stream of all events across all aggregates,
+// ordered chronologically by their global sequence number. This is useful for
+// building projections or other system-wide consumers.
+//
+// Usage:
+//
+//	globalRecords := sqliteLog.ReadAllEvents(ctx, version.Selector{From: 1})
+//	for gRecord, err := range globalRecords {
+//	    // process global record for a projection
+//	}
+//
+// Returns an `event.GlobalRecords` iterator.
 func (s *Sqlite) ReadAllEvents(
 	ctx context.Context,
 	globalSelector version.Selector,

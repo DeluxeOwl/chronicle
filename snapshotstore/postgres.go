@@ -10,15 +10,15 @@ import (
 	"github.com/DeluxeOwl/chronicle/encoding"
 )
 
-// Compile-time check to ensure PostgresStore implements the SnapshotStore interface.
-var _ aggregate.SnapshotStore[aggregate.ID, aggregate.Snapshot[aggregate.ID]] = (*PostgresStore[aggregate.ID, aggregate.Snapshot[aggregate.ID]])(
+// Compile-time check to ensure Postgres store implements the SnapshotStore interface.
+var _ aggregate.SnapshotStore[aggregate.ID, aggregate.Snapshot[aggregate.ID]] = (*Postgres[aggregate.ID, aggregate.Snapshot[aggregate.ID]])(
 	nil,
 )
 
-// PostgresStore provides a PostgreSQL-backed implementation of the aggregate.SnapshotStore interface.
+// Postgres provides a PostgreSQL-backed implementation of the aggregate.SnapshotStore interface.
 // It stores snapshots in a dedicated table, using an "UPSERT" operation to always keep the
 // latest snapshot for each aggregate, which is identified by its log_id.
-type PostgresStore[TID aggregate.ID, TS aggregate.Snapshot[TID]] struct {
+type Postgres[TID aggregate.ID, TS aggregate.Snapshot[TID]] struct {
 	db             *sql.DB
 	encoder        encoding.Codec
 	createSnapshot func() TS
@@ -29,8 +29,8 @@ type PostgresStore[TID aggregate.ID, TS aggregate.Snapshot[TID]] struct {
 	qGetSnapshot  string
 }
 
-// PostgresStoreOption is a function that configures a PostgresStore instance.
-type PostgresStoreOption[TID aggregate.ID, TS aggregate.Snapshot[TID]] func(*PostgresStore[TID, TS])
+// PostgresOption is a function that configures a Postgres store instance.
+type PostgresOption[TID aggregate.ID, TS aggregate.Snapshot[TID]] func(*Postgres[TID, TS])
 
 // PostgresSnapshotTableName allows customizing the name of the table used to store snapshots.
 // If not provided, it defaults to "chronicle_snapshots". This option regenerates internal SQL
@@ -38,13 +38,13 @@ type PostgresStoreOption[TID aggregate.ID, TS aggregate.Snapshot[TID]] func(*Pos
 //
 // Usage:
 //
-//	store, err := snapshotstore.NewPostgresStore(db, createFunc,
+//	store, err := snapshotstore.NewPostgres(db, createFunc,
 //	    snapshotstore.PostgresSnapshotTableName("my_custom_snapshots"),
 //	)
 func PostgresSnapshotTableName[TID aggregate.ID, TS aggregate.Snapshot[TID]](
 	tableName string,
-) PostgresStoreOption[TID, TS] {
-	return func(p *PostgresStore[TID, TS]) {
+) PostgresOption[TID, TS] {
+	return func(p *Postgres[TID, TS]) {
 		dataType := "JSONB"
 		if p.useByteA {
 			dataType = "BYTEA"
@@ -76,25 +76,25 @@ func PostgresSnapshotTableName[TID aggregate.ID, TS aggregate.Snapshot[TID]](
 
 // PostgresSnapshotUseBYTEA configures the snapshot store to use a BYTEA column for snapshot data
 // instead of the default JSONB. This is useful for binary encoding formats like Protobuf.
-func PostgresSnapshotUseBYTEA[TID aggregate.ID, TS aggregate.Snapshot[TID]]() PostgresStoreOption[TID, TS] {
-	return func(p *PostgresStore[TID, TS]) {
+func PostgresSnapshotUseBYTEA[TID aggregate.ID, TS aggregate.Snapshot[TID]]() PostgresOption[TID, TS] {
+	return func(p *Postgres[TID, TS]) {
 		p.useByteA = true
 	}
 }
 
-// NewPostgresStore creates and returns a new PostgreSQL-backed snapshot store.
+// NewPostgres creates and returns a new PostgreSQL-backed snapshot store.
 // It requires a database connection and a factory function for creating new snapshot instances,
 // which is used during decoding.
 //
 // Upon initialization, it ensures the necessary database table exists by executing a
 // `CREATE TABLE IF NOT EXISTS` command.
-func NewPostgresStore[TID aggregate.ID, TS aggregate.Snapshot[TID]](
+func NewPostgres[TID aggregate.ID, TS aggregate.Snapshot[TID]](
 	db *sql.DB,
 	createSnapshot func() TS,
-	opts ...PostgresStoreOption[TID, TS],
-) (*PostgresStore[TID, TS], error) {
+	opts ...PostgresOption[TID, TS],
+) (*Postgres[TID, TS], error) {
 	//nolint:exhaustruct // Fields are set below
-	s := &PostgresStore[TID, TS]{
+	s := &Postgres[TID, TS]{
 		db:             db,
 		createSnapshot: createSnapshot,
 		encoder:        encoding.NewJSONB(), // Default to JSON encoding
@@ -118,7 +118,7 @@ func NewPostgresStore[TID aggregate.ID, TS aggregate.Snapshot[TID]](
 // SaveSnapshot encodes the provided snapshot and saves it to the PostgreSQL database.
 // It uses an UPSERT (INSERT ... ON CONFLICT) operation to either create a new snapshot record
 // or update the existing one for the aggregate.
-func (s *PostgresStore[TID, TS]) SaveSnapshot(ctx context.Context, snapshot TS) error {
+func (s *Postgres[TID, TS]) SaveSnapshot(ctx context.Context, snapshot TS) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -142,7 +142,7 @@ func (s *PostgresStore[TID, TS]) SaveSnapshot(ctx context.Context, snapshot TS) 
 // It returns the decoded snapshot, a boolean indicating if a snapshot was found,
 // and an error if one occurred. If no snapshot is found for the ID, it returns `false`
 // and a nil error, which is the expected behavior.
-func (s *PostgresStore[TID, TS]) GetSnapshot(
+func (s *Postgres[TID, TS]) GetSnapshot(
 	ctx context.Context,
 	aggregateID TID,
 ) (TS, bool, error) {

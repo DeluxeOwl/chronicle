@@ -22,7 +22,7 @@ func main() {
 
 	// 1. Create a snapshot store for our AccountSnapshot
 	// It needs a constructor for an empty snapshot, used for decoding.
-	accountSnapshotStore := snapshotstore.NewMemoryStore(
+	accountSnapshotStore := snapshotstore.NewMemory(
 		func() *account.Snapshot { return new(account.Snapshot) },
 	)
 
