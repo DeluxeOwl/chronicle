@@ -164,3 +164,106 @@ func TestNewGroup_InvalidPattern(t *testing.T) {
 
 	require.ErrorIs(t, err, projection.ErrBadPattern)
 }
+
+func TestProjection_MultipleMatchingPatterns(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	log := eventlog.NewMemory()
+	checkpointer := newMemoryCheckpointer()
+	pollInterval := 50 * time.Millisecond
+
+	handledEvents := make(chan *event.GlobalRecord, 10)
+
+	// This projection listens to two distinct glob patterns.
+	multiPatternProjection := &ProjectionMock{
+		NameFunc: func() string { return "multi-pattern" },
+		EventNamesFunc: func() []string {
+			return []string{"account.*", "shipping.initiated"}
+		},
+		HandleFunc: func(_ context.Context, rec *event.GlobalRecord) error {
+			handledEvents <- rec
+			return nil
+		},
+	}
+
+	group, err := projection.NewGroup(
+		log,
+		checkpointer,
+		[]projection.Projection{multiPatternProjection},
+		projection.WithPollInterval(pollInterval),
+	)
+	require.NoError(t, err)
+
+	go group.Run(ctx)
+
+	// Append a series of events, some matching the patterns, some not.
+	// 1. Matches "account.*"
+	_, err = log.AppendEvents(
+		ctx,
+		"account-1",
+		version.CheckExact(0),
+		event.RawEvents{event.NewRaw("account.opened", []byte(`{}`))},
+	)
+	require.NoError(t, err)
+
+	// 2. Does NOT match
+	_, err = log.AppendEvents(
+		ctx,
+		"order-1",
+		version.CheckExact(0),
+		event.RawEvents{event.NewRaw("order.placed", []byte(`{}`))},
+	)
+	require.NoError(t, err)
+
+	// 3. Matches "shipping.initiated"
+	_, err = log.AppendEvents(
+		ctx,
+		"shipping-1",
+		version.CheckExact(0),
+		event.RawEvents{event.NewRaw("shipping.initiated", []byte(`{}`))},
+	)
+	require.NoError(t, err)
+
+	// 4. Matches "account.*"
+	_, err = log.AppendEvents(
+		ctx,
+		"account-1",
+		version.CheckExact(1),
+		event.RawEvents{event.NewRaw("account.closed", []byte(`{}`))},
+	)
+	require.NoError(t, err)
+
+	// Assert: Wait for the projection to handle the 3 matching events.
+	var received []*event.GlobalRecord
+	for range 3 {
+		select {
+		case rec := <-handledEvents:
+			received = append(received, rec)
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for events to be handled")
+		}
+	}
+
+	// Verify the correct events were handled.
+	require.Len(t, received, 3)
+	assert.ElementsMatch(t, []string{"account.opened", "shipping.initiated", "account.closed"},
+		[]string{received[0].EventName(), received[1].EventName(), received[2].EventName()})
+	assert.ElementsMatch(t, []version.Version{1, 3, 4},
+		[]version.Version{received[0].GlobalVersion(), received[1].GlobalVersion(), received[2].GlobalVersion()})
+
+	// The checkpoint must advance to the version of the LATEST event processed by the
+	// projection loop, which includes events it was not interested in.
+	expectedCheckpoint := version.Version(4)
+	require.Eventually(t, func() bool {
+		checkpointer.mu.Lock()
+		defer checkpointer.mu.Unlock()
+		return checkpointer.lastSaved["multi-pattern"] == expectedCheckpoint
+	}, 1*time.Second, pollInterval, "checkpoint should have been saved at version %d", expectedCheckpoint)
+
+	// Shutdown and verify a clean exit.
+	cancel()
+	err = group.Wait()
+	require.NoError(t, err, "group.Wait() should return no error on clean shutdown")
+	require.Len(t, multiPatternProjection.HandleCalls(), 3)
+}
