@@ -26,12 +26,40 @@ type Checkpointer interface {
 }
 
 type Group struct {
-	log          event.GlobalLog
+	eventlog     event.GlobalLog
 	checkpointer Checkpointer
-	pollInterval time.Duration
+
+	// configurable
+	pollInterval            time.Duration
+	cancelCheckpointTimeout time.Duration
+	log                     *slog.Logger
 
 	managedProjections []managedProjection
-	wg                 *errgroup.Group
+	wg                 *errgroup.Group `exhaustruct:"optional"`
+}
+
+type GroupOption func(*Group)
+
+func WithPollInterval(interval time.Duration) GroupOption {
+	return func(g *Group) {
+		g.pollInterval = interval
+	}
+}
+
+func WithCancelCheckpointTimeout(timeout time.Duration) GroupOption {
+	return func(g *Group) {
+		g.cancelCheckpointTimeout = timeout
+	}
+}
+
+func WithSlogHandler(handler slog.Handler) GroupOption {
+	return func(g *Group) {
+		if handler == nil {
+			g.log = slog.New(slog.DiscardHandler)
+			return
+		}
+		g.log = slog.New(handler)
+	}
 }
 
 type managedProjection struct {
@@ -39,26 +67,40 @@ type managedProjection struct {
 	eventNames map[string]struct{}
 }
 
+const (
+	DefaultPollInterval            = 200 * time.Millisecond
+	DefaultCancelCheckpointTimeout = 5 * time.Second
+)
+
 // NewGroup creates a new projection group. The pollInterval determines how often each projection checks for new events.
-func NewGroup(log event.GlobalLog, checkpointer Checkpointer, pollInterval time.Duration, projections []Projection) *Group {
-	if pollInterval == 0 {
-		pollInterval = 250 * time.Millisecond // Default poll interval
-	}
+func NewGroup(
+	log event.GlobalLog,
+	checkpointer Checkpointer,
+	projections []Projection,
+	opts ...GroupOption,
+) *Group {
 	g := &Group{
-		log:          log,
-		checkpointer: checkpointer,
-		pollInterval: pollInterval,
+		eventlog:                log,
+		checkpointer:            checkpointer,
+		pollInterval:            DefaultPollInterval,
+		cancelCheckpointTimeout: DefaultCancelCheckpointTimeout,
+		log:                     slog.Default(),
+		managedProjections:      make([]managedProjection, len(projections)),
 	}
 
-	for _, p := range projections {
+	for _, o := range opts {
+		o(g)
+	}
+
+	for i, p := range projections {
 		namesSet := map[string]struct{}{}
 		for _, name := range p.EventNames() {
 			namesSet[name] = struct{}{}
 		}
-		g.managedProjections = append(g.managedProjections, managedProjection{
+		g.managedProjections[i] = managedProjection{
 			projection: p,
 			eventNames: namesSet,
-		})
+		}
 	}
 
 	return g
@@ -68,9 +110,7 @@ func (g *Group) Run(ctx context.Context) {
 	wg, ctx := errgroup.WithContext(ctx)
 	g.wg = wg
 
-	for i := range g.managedProjections {
-		// Create a new variable for the closure
-		p := g.managedProjections[i]
+	for _, p := range g.managedProjections {
 		g.wg.Go(func() error {
 			return g.runProjectionLoop(ctx, p)
 		})
@@ -88,16 +128,23 @@ func (g *Group) Wait() error {
 	return err
 }
 
+//nolint:gocognit // Channels.
 func (g *Group) runProjectionLoop(ctx context.Context, mp managedProjection) error {
 	pname := mp.projection.Name()
-	slog.Info("Starting projection", "name", pname, "poll_interval", g.pollInterval)
+	g.log.InfoContext(ctx, "Starting projection", "name", pname, "poll_interval", g.pollInterval)
 
-	// 1. Get the initial checkpoint before starting the loop.
 	currentVersion, err := g.checkpointer.GetCheckpoint(ctx, pname)
 	if err != nil {
 		return fmt.Errorf("projection %q: failed to get initial checkpoint: %w", pname, err)
 	}
-	slog.Info("Loaded initial checkpoint", "projection", pname, "version", currentVersion)
+	g.log.InfoContext(
+		ctx,
+		"Loaded initial checkpoint",
+		"projection",
+		pname,
+		"version",
+		currentVersion,
+	)
 
 	ticker := time.NewTicker(g.pollInterval)
 	defer ticker.Stop()
@@ -105,52 +152,74 @@ func (g *Group) runProjectionLoop(ctx context.Context, mp managedProjection) err
 	for {
 		select {
 		case <-ctx.Done():
-			// 2. Context canceled: perform a final checkpoint save and exit cleanly.
-			slog.Info("Projection stopping, saving final checkpoint", "projection", pname, "version", currentVersion)
-			// Use a background context for the final save to ensure it runs even if the parent ctx is canceled.
-			saveCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			g.log.InfoContext(
+				ctx,
+				"Projection stopping, saving final checkpoint",
+				"projection",
+				pname,
+				"version",
+				currentVersion,
+			)
+			saveCtx, cancel := context.WithTimeout(context.Background(), g.cancelCheckpointTimeout)
 			defer cancel()
 			if err := g.checkpointer.SaveCheckpoint(saveCtx, pname, currentVersion); err != nil {
-				slog.Error("Failed to save final checkpoint on shutdown", "projection", pname, "error", err)
+				g.log.ErrorContext(
+					saveCtx,
+					"Failed to save final checkpoint on shutdown",
+					"projection",
+					pname,
+					"error",
+					err,
+				)
 			}
 			return ctx.Err()
 
 		case <-ticker.C:
-			// 3. This is our main polling loop.
-			stream := g.log.ReadAllEvents(ctx, version.SelectFrom(currentVersion))
+			stream := g.eventlog.ReadAllEvents(ctx, version.SelectFrom(currentVersion))
 
 			var processedInBatch int
-			// The `range` here is now fine, as it's contained within a single tick.
-			// It will process all available events and then the outer `select` can continue.
 			for rec, streamErr := range stream {
 				if streamErr != nil {
-					// An error from the stream is likely a permanent issue with the event log.
-					slog.Error("Stream error, stopping projection", "projection", pname, "error", streamErr)
+					g.log.ErrorContext(
+						ctx,
+						"Stream error, stopping projection",
+						"projection",
+						pname,
+						"error",
+						streamErr,
+					)
 					return fmt.Errorf("projection %q: stream error: %w", pname, streamErr)
 				}
 
-				// If the projection is interested, handle the event.
 				if _, interested := mp.eventNames[rec.EventName()]; interested {
 					if err := mp.projection.Handle(ctx, rec); err != nil {
-						// A handler error is critical. Stop this projection to prevent inconsistent state.
-						return fmt.Errorf("projection %q: handler failed on event %d: %w", pname, rec.GlobalVersion(), err)
+						return fmt.Errorf(
+							"projection %q: handler failed on event %d: %w",
+							pname,
+							rec.GlobalVersion(),
+							err,
+						)
 					}
 				}
 
-				// VERY IMPORTANT: Always advance the version, even for events we don't handle.
+				// Always advance the version, even for events we don't handle.
 				currentVersion = rec.GlobalVersion()
 				processedInBatch++
 			}
 
-			// 4. After a batch is processed, save the new checkpoint.
-			// Only save if we actually processed events to avoid unnecessary writes.
+			// Only save if we actually processed events.
 			if processedInBatch > 0 {
 				if err := g.checkpointer.SaveCheckpoint(ctx, pname, currentVersion); err != nil {
-					// Don't stop the whole projection for a checkpoint save error.
-					// Log it and we'll retry on the next tick's batch.
-					slog.Error("Failed to save checkpoint", "projection", pname, "error", err)
+					g.log.ErrorContext(
+						ctx,
+						"Failed to save checkpoint",
+						"projection",
+						pname,
+						"error",
+						err,
+					)
 				} else {
-					slog.Debug("Processed batch and saved checkpoint", "projection", pname, "count", processedInBatch, "new_version", currentVersion)
+					g.log.DebugContext(ctx, "Processed batch and saved checkpoint", "projection", pname, "count", processedInBatch, "new_version", currentVersion)
 				}
 			}
 		}

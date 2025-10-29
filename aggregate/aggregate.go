@@ -170,7 +170,11 @@ func ReadAndLoadFromStore[TID ID, E event.Any](
 	return nil
 }
 
-func ApplyReadTransformers[E event.Any](ctx context.Context, events []E, transformers []event.Transformer[E]) ([]E, error) {
+func ApplyReadTransformers[E event.Any](
+	ctx context.Context,
+	events []E,
+	transformers []event.Transformer[E],
+) ([]E, error) {
 	var err error
 	// Apply transformers in reverse order for reading
 	for i := len(transformers) - 1; i >= 0; i-- {
@@ -290,7 +294,11 @@ func FlushUncommittedEvents[TID ID, E event.Any, R Root[TID, E]](
 	return uncommitted
 }
 
-func ApplyWriteTransformers[E event.Any](ctx context.Context, events []E, transformers []event.Transformer[E]) ([]E, error) {
+func ApplyWriteTransformers[E event.Any](
+	ctx context.Context,
+	events []E,
+	transformers []event.Transformer[E],
+) ([]E, error) {
 	var err error
 	for _, t := range transformers {
 		events, err = t.TransformForWrite(ctx, events)
