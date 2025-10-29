@@ -2943,3 +2943,5 @@ I found that none of them were as flexible as I'd like - a lot of them were only
 - observability
 - add another selector which allows me to get a specific version ✅
 - things like joins, maybe differential dataflow
+
+could ask "what would you like to see more as a dev"
