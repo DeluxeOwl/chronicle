@@ -5,6 +5,7 @@ go 1.24.0
 require (
 	github.com/avast/retry-go/v4 v4.6.1
 	github.com/docker/go-connections v0.5.0
+	github.com/emirpasic/gods/v2 v2.0.0-alpha
 	github.com/gofrs/uuid/v5 v5.3.2
 	github.com/jackc/pgx/v5 v5.7.5
 	github.com/mattn/go-sqlite3 v1.14.29
