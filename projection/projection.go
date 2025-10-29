@@ -16,7 +16,7 @@ import (
 
 type Projection interface {
 	Name() string
-	EventNames() []string
+	EventNames() []string // TODO regex event names, like account.*.opened, or account-*-opened, or * for everything
 	Handle(ctx context.Context, rec *event.GlobalRecord) error
 }
 
@@ -208,20 +208,23 @@ func (g *Group) runProjectionLoop(ctx context.Context, mp managedProjection) err
 			}
 
 			// Only save if we actually processed events.
-			if processedInBatch > 0 {
-				if err := g.checkpointer.SaveCheckpoint(ctx, pname, currentVersion); err != nil {
-					g.log.ErrorContext(
-						ctx,
-						"Failed to save checkpoint",
-						"projection",
-						pname,
-						"error",
-						err,
-					)
-				} else {
-					g.log.DebugContext(ctx, "Processed batch and saved checkpoint", "projection", pname, "count", processedInBatch, "new_version", currentVersion)
-				}
+			if processedInBatch == 0 {
+				continue
 			}
+
+			if err := g.checkpointer.SaveCheckpoint(ctx, pname, currentVersion); err != nil {
+				g.log.ErrorContext(
+					ctx,
+					"Failed to save checkpoint",
+					"projection",
+					pname,
+					"error",
+					err,
+				)
+				continue
+			}
+
+			g.log.DebugContext(ctx, "Processed batch and saved checkpoint", "projection", pname, "count", processedInBatch, "new_version", currentVersion)
 		}
 	}
 }
