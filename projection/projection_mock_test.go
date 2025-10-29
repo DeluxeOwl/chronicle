@@ -16,11 +16,11 @@ import (
 //
 //		// make and configure a mocked projection.Checkpointer
 //		mockedCheckpointer := &CheckpointerMock{
-//			GetFunc: func(ctx context.Context, projectionType string) (version.Version, error) {
-//				panic("mock out the Get method")
+//			GetCheckpointFunc: func(ctx context.Context, projectionName string) (version.Version, error) {
+//				panic("mock out the GetCheckpoint method")
 //			},
-//			SetFunc: func(ctx context.Context, projectionType string, v version.Version) error {
-//				panic("mock out the Set method")
+//			SaveCheckpointFunc: func(ctx context.Context, projectionName string, v version.Version) error {
+//				panic("mock out the SaveCheckpoint method")
 //			},
 //		}
 //
@@ -29,108 +29,108 @@ import (
 //
 //	}
 type CheckpointerMock struct {
-	// GetFunc mocks the Get method.
-	GetFunc func(ctx context.Context, projectionType string) (version.Version, error)
+	// GetCheckpointFunc mocks the GetCheckpoint method.
+	GetCheckpointFunc func(ctx context.Context, projectionName string) (version.Version, error)
 
-	// SetFunc mocks the Set method.
-	SetFunc func(ctx context.Context, projectionType string, v version.Version) error
+	// SaveCheckpointFunc mocks the SaveCheckpoint method.
+	SaveCheckpointFunc func(ctx context.Context, projectionName string, v version.Version) error
 
 	// calls tracks calls to the methods.
 	calls struct {
-		// Get holds details about calls to the Get method.
-		Get []struct {
+		// GetCheckpoint holds details about calls to the GetCheckpoint method.
+		GetCheckpoint []struct {
 			// Ctx is the ctx argument value.
 			Ctx context.Context
-			// ProjectionType is the projectionType argument value.
-			ProjectionType string
+			// ProjectionName is the projectionName argument value.
+			ProjectionName string
 		}
-		// Set holds details about calls to the Set method.
-		Set []struct {
+		// SaveCheckpoint holds details about calls to the SaveCheckpoint method.
+		SaveCheckpoint []struct {
 			// Ctx is the ctx argument value.
 			Ctx context.Context
-			// ProjectionType is the projectionType argument value.
-			ProjectionType string
+			// ProjectionName is the projectionName argument value.
+			ProjectionName string
 			// V is the v argument value.
 			V version.Version
 		}
 	}
-	lockGet sync.RWMutex
-	lockSet sync.RWMutex
+	lockGetCheckpoint  sync.RWMutex
+	lockSaveCheckpoint sync.RWMutex
 }
 
-// Get calls GetFunc.
-func (mock *CheckpointerMock) Get(ctx context.Context, projectionType string) (version.Version, error) {
-	if mock.GetFunc == nil {
-		panic("CheckpointerMock.GetFunc: method is nil but Checkpointer.Get was just called")
+// GetCheckpoint calls GetCheckpointFunc.
+func (mock *CheckpointerMock) GetCheckpoint(ctx context.Context, projectionName string) (version.Version, error) {
+	if mock.GetCheckpointFunc == nil {
+		panic("CheckpointerMock.GetCheckpointFunc: method is nil but Checkpointer.GetCheckpoint was just called")
 	}
 	callInfo := struct {
 		Ctx            context.Context
-		ProjectionType string
+		ProjectionName string
 	}{
 		Ctx:            ctx,
-		ProjectionType: projectionType,
+		ProjectionName: projectionName,
 	}
-	mock.lockGet.Lock()
-	mock.calls.Get = append(mock.calls.Get, callInfo)
-	mock.lockGet.Unlock()
-	return mock.GetFunc(ctx, projectionType)
+	mock.lockGetCheckpoint.Lock()
+	mock.calls.GetCheckpoint = append(mock.calls.GetCheckpoint, callInfo)
+	mock.lockGetCheckpoint.Unlock()
+	return mock.GetCheckpointFunc(ctx, projectionName)
 }
 
-// GetCalls gets all the calls that were made to Get.
+// GetCheckpointCalls gets all the calls that were made to GetCheckpoint.
 // Check the length with:
 //
-//	len(mockedCheckpointer.GetCalls())
-func (mock *CheckpointerMock) GetCalls() []struct {
+//	len(mockedCheckpointer.GetCheckpointCalls())
+func (mock *CheckpointerMock) GetCheckpointCalls() []struct {
 	Ctx            context.Context
-	ProjectionType string
+	ProjectionName string
 } {
 	var calls []struct {
 		Ctx            context.Context
-		ProjectionType string
+		ProjectionName string
 	}
-	mock.lockGet.RLock()
-	calls = mock.calls.Get
-	mock.lockGet.RUnlock()
+	mock.lockGetCheckpoint.RLock()
+	calls = mock.calls.GetCheckpoint
+	mock.lockGetCheckpoint.RUnlock()
 	return calls
 }
 
-// Set calls SetFunc.
-func (mock *CheckpointerMock) Set(ctx context.Context, projectionType string, v version.Version) error {
-	if mock.SetFunc == nil {
-		panic("CheckpointerMock.SetFunc: method is nil but Checkpointer.Set was just called")
+// SaveCheckpoint calls SaveCheckpointFunc.
+func (mock *CheckpointerMock) SaveCheckpoint(ctx context.Context, projectionName string, v version.Version) error {
+	if mock.SaveCheckpointFunc == nil {
+		panic("CheckpointerMock.SaveCheckpointFunc: method is nil but Checkpointer.SaveCheckpoint was just called")
 	}
 	callInfo := struct {
 		Ctx            context.Context
-		ProjectionType string
+		ProjectionName string
 		V              version.Version
 	}{
 		Ctx:            ctx,
-		ProjectionType: projectionType,
+		ProjectionName: projectionName,
 		V:              v,
 	}
-	mock.lockSet.Lock()
-	mock.calls.Set = append(mock.calls.Set, callInfo)
-	mock.lockSet.Unlock()
-	return mock.SetFunc(ctx, projectionType, v)
+	mock.lockSaveCheckpoint.Lock()
+	mock.calls.SaveCheckpoint = append(mock.calls.SaveCheckpoint, callInfo)
+	mock.lockSaveCheckpoint.Unlock()
+	return mock.SaveCheckpointFunc(ctx, projectionName, v)
 }
 
-// SetCalls gets all the calls that were made to Set.
+// SaveCheckpointCalls gets all the calls that were made to SaveCheckpoint.
 // Check the length with:
 //
-//	len(mockedCheckpointer.SetCalls())
-func (mock *CheckpointerMock) SetCalls() []struct {
+//	len(mockedCheckpointer.SaveCheckpointCalls())
+func (mock *CheckpointerMock) SaveCheckpointCalls() []struct {
 	Ctx            context.Context
-	ProjectionType string
+	ProjectionName string
 	V              version.Version
 } {
 	var calls []struct {
 		Ctx            context.Context
-		ProjectionType string
+		ProjectionName string
 		V              version.Version
 	}
-	mock.lockSet.RLock()
-	calls = mock.calls.Set
-	mock.lockSet.RUnlock()
+	mock.lockSaveCheckpoint.RLock()
+	calls = mock.calls.SaveCheckpoint
+	mock.lockSaveCheckpoint.RUnlock()
 	return calls
 }
 
@@ -143,8 +143,11 @@ func (mock *CheckpointerMock) SetCalls() []struct {
 //			EventNamesFunc: func() []string {
 //				panic("mock out the EventNames method")
 //			},
-//			HandleFunc: func(ctx context.Context, rec event.GlobalRecord) error {
+//			HandleFunc: func(ctx context.Context, rec *event.GlobalRecord) error {
 //				panic("mock out the Handle method")
+//			},
+//			NameFunc: func() string {
+//				panic("mock out the Name method")
 //			},
 //		}
 //
@@ -157,7 +160,10 @@ type ProjectionMock struct {
 	EventNamesFunc func() []string
 
 	// HandleFunc mocks the Handle method.
-	HandleFunc func(ctx context.Context, rec event.GlobalRecord) error
+	HandleFunc func(ctx context.Context, rec *event.GlobalRecord) error
+
+	// NameFunc mocks the Name method.
+	NameFunc func() string
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -169,11 +175,15 @@ type ProjectionMock struct {
 			// Ctx is the ctx argument value.
 			Ctx context.Context
 			// Rec is the rec argument value.
-			Rec event.GlobalRecord
+			Rec *event.GlobalRecord
+		}
+		// Name holds details about calls to the Name method.
+		Name []struct {
 		}
 	}
 	lockEventNames sync.RWMutex
 	lockHandle     sync.RWMutex
+	lockName       sync.RWMutex
 }
 
 // EventNames calls EventNamesFunc.
@@ -204,13 +214,13 @@ func (mock *ProjectionMock) EventNamesCalls() []struct {
 }
 
 // Handle calls HandleFunc.
-func (mock *ProjectionMock) Handle(ctx context.Context, rec event.GlobalRecord) error {
+func (mock *ProjectionMock) Handle(ctx context.Context, rec *event.GlobalRecord) error {
 	if mock.HandleFunc == nil {
 		panic("ProjectionMock.HandleFunc: method is nil but Projection.Handle was just called")
 	}
 	callInfo := struct {
 		Ctx context.Context
-		Rec event.GlobalRecord
+		Rec *event.GlobalRecord
 	}{
 		Ctx: ctx,
 		Rec: rec,
@@ -227,14 +237,41 @@ func (mock *ProjectionMock) Handle(ctx context.Context, rec event.GlobalRecord) 
 //	len(mockedProjection.HandleCalls())
 func (mock *ProjectionMock) HandleCalls() []struct {
 	Ctx context.Context
-	Rec event.GlobalRecord
+	Rec *event.GlobalRecord
 } {
 	var calls []struct {
 		Ctx context.Context
-		Rec event.GlobalRecord
+		Rec *event.GlobalRecord
 	}
 	mock.lockHandle.RLock()
 	calls = mock.calls.Handle
 	mock.lockHandle.RUnlock()
+	return calls
+}
+
+// Name calls NameFunc.
+func (mock *ProjectionMock) Name() string {
+	if mock.NameFunc == nil {
+		panic("ProjectionMock.NameFunc: method is nil but Projection.Name was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockName.Lock()
+	mock.calls.Name = append(mock.calls.Name, callInfo)
+	mock.lockName.Unlock()
+	return mock.NameFunc()
+}
+
+// NameCalls gets all the calls that were made to Name.
+// Check the length with:
+//
+//	len(mockedProjection.NameCalls())
+func (mock *ProjectionMock) NameCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockName.RLock()
+	calls = mock.calls.Name
+	mock.lockName.RUnlock()
 	return calls
 }

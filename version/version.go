@@ -56,6 +56,10 @@ func SelectExact(to Version) Selector {
 	}
 }
 
+func SelectFrom(from Version) Selector {
+	return Selector{From: from}
+}
+
 // Check defines the contract for an optimistic concurrency version check. Implementations
 // of this interface are passed to the `AppendEvents` method of an event log to ensure
 // that the state of the aggregate has not changed since it was last read.
