@@ -106,6 +106,10 @@ const (
 
 var ErrBadPattern = errors.New("bad event name pattern")
 
+// TODO: change this to only run one projection, not a group. Let users handle concurrency.
+// TODO: how would a ProjectionTx even make sense? Maybe combine TransactionalAggregateProcessor + another one that doesn't take the events
+// TODO: Then rename this to "EventualProjection"? "eventual projection runner"?
+
 // NewGroup creates a new projection group. The pollInterval determines how often each projection checks for new events.
 // It returns an error if any projection provides a malformed event name pattern.
 func NewGroup(
