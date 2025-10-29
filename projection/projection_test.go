@@ -10,16 +10,26 @@ import (
 	"github.com/DeluxeOwl/chronicle/eventlog"
 	"github.com/DeluxeOwl/chronicle/projection"
 	"github.com/DeluxeOwl/chronicle/version"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// In-memory implementation of Checkpointer for testing.
 type memoryCheckpointer struct {
 	mu        sync.Mutex
 	versions  map[string]version.Version
-	saveCalls int
-	getCalls  int
-	lastSaved version.Version
+	saveCalls map[string]int
+	getCalls  map[string]int
+	lastSaved map[string]version.Version
+}
+
+//nolint:exhaustruct // not needed.
+func newMemoryCheckpointer() *memoryCheckpointer {
+	return &memoryCheckpointer{
+		versions:  make(map[string]version.Version),
+		saveCalls: make(map[string]int),
+		getCalls:  make(map[string]int),
+		lastSaved: make(map[string]version.Version),
+	}
 }
 
 func (m *memoryCheckpointer) GetCheckpoint(
@@ -28,7 +38,7 @@ func (m *memoryCheckpointer) GetCheckpoint(
 ) (version.Version, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.getCalls++
+	m.getCalls[projectionName]++
 	return m.versions[projectionName], nil
 }
 
@@ -39,29 +49,26 @@ func (m *memoryCheckpointer) SaveCheckpoint(
 ) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.saveCalls++
+	m.saveCalls[projectionName]++
 	m.versions[projectionName] = v
-	m.lastSaved = v
+	m.lastSaved[projectionName] = v
 	return nil
 }
 
-func TestProjectionGroup_RunAndShutdown(t *testing.T) {
-	ctx := t.Context()
-	// Setup
-	log := eventlog.NewMemory()
+func TestProjectionGroup_RunAndShutdown_WithGlob(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
 
-	//nolint:exhaustruct // not needed.
-	checkpointer := &memoryCheckpointer{versions: make(map[string]version.Version)}
+	log := eventlog.NewMemory()
+	checkpointer := newMemoryCheckpointer()
 	pollInterval := 50 * time.Millisecond
 
-	// Use a channel to receive handled events for synchronization.
 	handledEvents := make(chan *event.GlobalRecord, 10)
 
-	// Mock projection that sends handled events to our channel.
 	accountProjection := &ProjectionMock{
 		NameFunc: func() string { return "accounts" },
 		EventNamesFunc: func() []string {
-			return []string{"account/opened", "account/closed"}
+			return []string{"account.*"}
 		},
 		HandleFunc: func(_ context.Context, rec *event.GlobalRecord) error {
 			handledEvents <- rec
@@ -69,61 +76,91 @@ func TestProjectionGroup_RunAndShutdown(t *testing.T) {
 		},
 	}
 
-	// Create and run the projection group in a background goroutine.
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	group := projection.NewGroup(
+	group, err := projection.NewGroup(
 		log,
 		checkpointer,
 		[]projection.Projection{accountProjection},
 		projection.WithPollInterval(pollInterval),
 	)
+	require.NoError(t, err)
+
 	go group.Run(ctx)
 
-	_, err := log.AppendEvents(
+	_, err = log.AppendEvents(
 		ctx,
-		event.LogID("account-1"),
+		"account-1",
 		version.CheckExact(0),
-		event.RawEvents{
-			event.NewRaw("account/opened", []byte(`{}`)),
-		},
+		event.RawEvents{event.NewRaw("account.opened", []byte(`{}`))},
 	)
 	require.NoError(t, err)
 
-	_, err = log.AppendEvents(ctx, event.LogID("order-1"), version.CheckExact(0), event.RawEvents{
-		event.NewRaw("order/placed", []byte(`{}`)), // This should be ignored
-	})
+	_, err = log.AppendEvents(
+		ctx,
+		"order-1",
+		version.CheckExact(0),
+		event.RawEvents{event.NewRaw("order.placed", []byte(`{}`))},
+	)
 	require.NoError(t, err)
 
-	_, err = log.AppendEvents(ctx, event.LogID("account-2"), version.CheckExact(0), event.RawEvents{
-		event.NewRaw("account/opened", []byte(`{}`)),
-	})
+	_, err = log.AppendEvents(
+		ctx,
+		"account-1",
+		version.CheckExact(1),
+		event.RawEvents{event.NewRaw("account.closed", []byte(`{}`))},
+	)
 	require.NoError(t, err)
 
 	// Assert: Wait for the projection to handle the events.
 	var received []*event.GlobalRecord
-
 	for range 2 {
-		rec := <-handledEvents
-		received = append(received, rec)
+		select {
+		case rec := <-handledEvents:
+			received = append(received, rec)
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for events to be handled")
+		}
 	}
 
 	// Verify the correct events were handled.
 	require.Len(t, received, 2)
-	require.Equal(t, version.Version(1), received[0].GlobalVersion()) // Event 1
-	require.Equal(t, version.Version(3), received[1].GlobalVersion()) // Event 3
+	assert.Equal(t, version.Version(1), received[0].GlobalVersion()) // Event 1
+	assert.Equal(t, "account.opened", received[0].EventName())
+	assert.Equal(t, version.Version(3), received[1].GlobalVersion()) // Event 3
+	assert.Equal(t, "account.closed", received[1].EventName())
 
+	// The checkpoint should advance to the version of the LATEST event seen,
+	// even the ones it didn't handle. This is a key behavior.
+	expectedCheckpoint := version.Version(3)
 	require.Eventually(t, func() bool {
 		checkpointer.mu.Lock()
 		defer checkpointer.mu.Unlock()
-		return checkpointer.lastSaved == version.Version(3)
-	}, 1*time.Second, pollInterval, "checkpoint should have been saved at version 3")
+		return checkpointer.lastSaved["accounts"] == expectedCheckpoint
+	}, 1*time.Second, pollInterval, "checkpoint should have been saved at version %d", expectedCheckpoint)
 
+	// Shutdown and verify a clean exit.
 	cancel()
 	err = group.Wait()
 
 	require.NoError(t, err, "group.Wait() should return no error on clean shutdown")
-
 	require.Len(t, accountProjection.HandleCalls(), 2)
+}
+
+func TestNewGroup_InvalidPattern(t *testing.T) {
+	log := eventlog.NewMemory()
+	checkpointer := newMemoryCheckpointer()
+
+	badProjection := &ProjectionMock{
+		NameFunc:       func() string { return "bad-pattern-proj" },
+		EventNamesFunc: func() []string { return []string{"account.["} }, // Invalid glob pattern
+	}
+
+	_, err := projection.NewGroup(log, checkpointer, []projection.Projection{badProjection})
+	require.Error(t, err)
+	assert.Contains(
+		t,
+		err.Error(),
+		`projection "bad-pattern-proj" has an invalid event name pattern "account.["`,
+	)
+
+	require.ErrorIs(t, err, projection.ErrBadPattern)
 }

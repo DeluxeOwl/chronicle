@@ -23,6 +23,12 @@ tasks:
       - golines --no-reformat-tags -w .
       - golangci-lint run
 
+  format:
+    desc: Runs formatters
+    cmds:
+      - golangci-lint run --fix .
+      - golines --no-reformat-tags -w .
+
   gen:
     desc: Runs the code generation - mostly for moq
     cmds:

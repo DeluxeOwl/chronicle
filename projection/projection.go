@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"time"
 
 	"github.com/DeluxeOwl/chronicle/event"
@@ -16,7 +17,9 @@ import (
 
 type Projection interface {
 	Name() string
-	EventNames() []string // TODO regex event names, like account.*.opened, or account-*-opened, or * for everything
+	// EventNames returns a slice of glob patterns to match against event names.
+	// For example: "account.created", "account.*", or "*" for all events.
+	EventNames() []string
 	Handle(ctx context.Context, rec *event.GlobalRecord) error
 }
 
@@ -75,8 +78,25 @@ func WithOnSaveCheckpointErrFunc(errFunc OnSaveCheckpointErrFunc) GroupOption {
 }
 
 type managedProjection struct {
-	projection Projection
-	eventNames map[string]struct{}
+	projection        Projection
+	eventNamePatterns []string
+	matchesAll        bool // Optimization for the "*" pattern.
+}
+
+// isInterested checks if a projection should handle a given event name.
+func (mp *managedProjection) isInterested(eventName string) bool {
+	if mp.matchesAll {
+		return true
+	}
+	for _, pattern := range mp.eventNamePatterns {
+		// We can safely ignore the error from filepath.Match because we validate
+		// all patterns when the Group is created in NewGroup. A malformed pattern
+		// is a startup-time error, not a runtime one.
+		if matched, _ := filepath.Match(pattern, eventName); matched {
+			return true
+		}
+	}
+	return false
 }
 
 const (
@@ -84,13 +104,16 @@ const (
 	DefaultCancelCheckpointTimeout = 5 * time.Second
 )
 
+var ErrBadPattern = errors.New("bad event name pattern")
+
 // NewGroup creates a new projection group. The pollInterval determines how often each projection checks for new events.
+// It returns an error if any projection provides a malformed event name pattern.
 func NewGroup(
 	log event.GlobalLog,
 	checkpointer Checkpointer,
 	projections []Projection,
 	opts ...GroupOption,
-) *Group {
+) (*Group, error) {
 	g := &Group{
 		eventlog:                log,
 		checkpointer:            checkpointer,
@@ -106,26 +129,48 @@ func NewGroup(
 	}
 
 	for i, p := range projections {
-		namesSet := map[string]struct{}{}
-		for _, name := range p.EventNames() {
-			namesSet[name] = struct{}{}
+		patterns := p.EventNames()
+		if len(patterns) == 0 {
+			// A projection that listens to nothing. This is valid.
+			//nolint:exhaustruct // not needed.
+			g.managedProjections[i] = managedProjection{projection: p}
+			continue
 		}
+
+		// Validate patterns and check for the special "*" wildcard.
+		matchesAll := false
+		for _, pattern := range patterns {
+			if _, err := filepath.Match(pattern, ""); err != nil {
+				return nil, fmt.Errorf(
+					"projection %q has an invalid event name pattern %q: %w",
+					p.Name(),
+					pattern,
+					ErrBadPattern,
+				)
+			}
+			if pattern == "*" {
+				matchesAll = true
+				break // If we match all, no need to check other patterns.
+			}
+		}
+
 		g.managedProjections[i] = managedProjection{
-			projection: p,
-			eventNames: namesSet,
+			projection:        p,
+			eventNamePatterns: patterns,
+			matchesAll:        matchesAll,
 		}
 	}
 
-	return g
+	return g, nil
 }
 
 func (g *Group) Run(ctx context.Context) {
 	wg, ctx := errgroup.WithContext(ctx)
 	g.wg = wg
 
-	for _, p := range g.managedProjections {
+	for _, mp := range g.managedProjections {
 		g.wg.Go(func() error {
-			return g.runProjectionLoop(ctx, p)
+			return g.runProjectionLoop(ctx, mp)
 		})
 	}
 }
@@ -141,9 +186,20 @@ func (g *Group) Wait() error {
 	return err
 }
 
-//nolint:gocognit // Channels.
+//nolint:gocognit,funlen // Channels.
 func (g *Group) runProjectionLoop(ctx context.Context, mp managedProjection) error {
 	pname := mp.projection.Name()
+	// A projection with no event names to listen to is a no-op that just gets a checkpoint.
+	if len(mp.eventNamePatterns) == 0 {
+		g.log.InfoContext(
+			ctx,
+			"Projection has no event names to handle, will not run.",
+			"name",
+			pname,
+		)
+		return nil
+	}
+
 	g.log.InfoContext(ctx, "Starting projection", "name", pname, "poll_interval", g.pollInterval)
 
 	currentVersion, err := g.checkpointer.GetCheckpoint(ctx, pname)
@@ -191,10 +247,8 @@ func (g *Group) runProjectionLoop(ctx context.Context, mp managedProjection) err
 			return ctx.Err()
 
 		case <-ticker.C:
-			stream := g.eventlog.ReadAllEvents(ctx, version.SelectFrom(currentVersion))
-
 			var processedInBatch int
-			for rec, streamErr := range stream {
+			for rec, streamErr := range g.eventlog.ReadAllEvents(ctx, version.SelectFrom(currentVersion)) { // This is a go 1.23+ iterator, NOT a channel
 				if streamErr != nil {
 					g.log.ErrorContext(
 						ctx,
@@ -207,7 +261,7 @@ func (g *Group) runProjectionLoop(ctx context.Context, mp managedProjection) err
 					return fmt.Errorf("projection %q: stream error: %w", pname, streamErr)
 				}
 
-				if _, interested := mp.eventNames[rec.EventName()]; interested {
+				if mp.isInterested(rec.EventName()) {
 					if err := mp.projection.Handle(ctx, rec); err != nil {
 						return fmt.Errorf(
 							"projection %q: handler failed on event %d: %w",
@@ -243,7 +297,16 @@ func (g *Group) runProjectionLoop(ctx context.Context, mp managedProjection) err
 				continue
 			}
 
-			g.log.DebugContext(ctx, "Processed batch and saved checkpoint", "projection", pname, "count", processedInBatch, "new_version", currentVersion)
+			g.log.DebugContext(
+				ctx,
+				"Processed batch and saved checkpoint",
+				"projection",
+				pname,
+				"count",
+				processedInBatch,
+				"new_version",
+				currentVersion,
+			)
 		}
 	}
 }
