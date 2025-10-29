@@ -25,6 +25,8 @@ type Checkpointer interface {
 	SaveCheckpoint(ctx context.Context, projectionName string, v version.Version) error
 }
 
+type OnSaveCheckpointErrFunc = func(ctx context.Context, err error) error
+
 type Group struct {
 	eventlog     event.GlobalLog
 	checkpointer Checkpointer
@@ -33,6 +35,7 @@ type Group struct {
 	pollInterval            time.Duration
 	cancelCheckpointTimeout time.Duration
 	log                     *slog.Logger
+	onSaveCheckpointErrFunc OnSaveCheckpointErrFunc
 
 	managedProjections []managedProjection
 	wg                 *errgroup.Group `exhaustruct:"optional"`
@@ -62,6 +65,15 @@ func WithSlogHandler(handler slog.Handler) GroupOption {
 	}
 }
 
+func WithOnSaveCheckpointErrFunc(errFunc OnSaveCheckpointErrFunc) GroupOption {
+	return func(g *Group) {
+		if errFunc == nil {
+			return
+		}
+		g.onSaveCheckpointErrFunc = errFunc
+	}
+}
+
 type managedProjection struct {
 	projection Projection
 	eventNames map[string]struct{}
@@ -86,6 +98,7 @@ func NewGroup(
 		cancelCheckpointTimeout: DefaultCancelCheckpointTimeout,
 		log:                     slog.Default(),
 		managedProjections:      make([]managedProjection, len(projections)),
+		onSaveCheckpointErrFunc: func(ctx context.Context, err error) error { return nil },
 	}
 
 	for _, o := range opts {
@@ -171,6 +184,9 @@ func (g *Group) runProjectionLoop(ctx context.Context, mp managedProjection) err
 					"error",
 					err,
 				)
+				if cerr := g.onSaveCheckpointErrFunc(saveCtx, err); cerr != nil {
+					return fmt.Errorf("projection %q: save checkpoint err: %w", pname, cerr)
+				}
 			}
 			return ctx.Err()
 
@@ -221,6 +237,9 @@ func (g *Group) runProjectionLoop(ctx context.Context, mp managedProjection) err
 					"error",
 					err,
 				)
+				if cerr := g.onSaveCheckpointErrFunc(ctx, err); cerr != nil {
+					return fmt.Errorf("projection %q: save checkpoint err: %w", pname, cerr)
+				}
 				continue
 			}
 
