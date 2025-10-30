@@ -2246,12 +2246,12 @@ There's a lot of projection types, choosing which fits you best requires some co
 
 #### By Consistency Guarantees
 
-1. **Eventually consistent projections**
+1. **Eventually consistent projections (also called asynchronous projections)**
    * Most common - projections lag slightly behind the event stream.
    * ⚠️ In `chronicle`:
      * This happens if you're using the outbox pattern or have any kind of pub/sub mechanism in your code
 
-2. **Strongly consistent projections**
+2. **Strongly consistent projections (also called synchronous projections)**
    * Rare in event sourcing, but sometimes required for critical counters or invariants.
    * ⚠️ In `chronicle`:
      * This is done when the backing store is an `event.TransactionalLog` at it exposes the transaction AND you want to store your projections in the same store
