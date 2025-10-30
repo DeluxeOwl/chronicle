@@ -41,7 +41,7 @@ func Test_SnapshotRepo(t *testing.T) {
 			esRepo,
 			snapstore,
 			NewEmpty(),
-			aggregate.SnapStrategyFor[*Person]().EveryNEvents(10),
+			aggregate.SnapPolicyFor[*Person]().EveryNEvents(10),
 		)
 		require.NoError(t, err)
 
@@ -108,7 +108,7 @@ func Test_SnapshotRepo(t *testing.T) {
 			esRepo,
 			snapstore,
 			NewEmpty(),
-			aggregate.SnapStrategyFor[*Person]().AfterCommit(),
+			aggregate.SnapPolicyFor[*Person]().AfterCommit(),
 			aggregate.OnSnapshotError(func(ctx context.Context, err error) error {
 				return nil
 			}),
@@ -149,7 +149,7 @@ func Test_SnapshotRepo(t *testing.T) {
 			esRepo,
 			snapstore,
 			NewEmpty(),
-			aggregate.SnapStrategyFor[*Person]().AfterCommit(),
+			aggregate.SnapPolicyFor[*Person]().AfterCommit(),
 			aggregate.OnSnapshotError(func(_ context.Context, err error) error {
 				// Received a non-nil error, but return nil anyway.
 				require.ErrorContains(t, err, "snapshot error")
@@ -193,7 +193,7 @@ func Test_SnapshotRepo(t *testing.T) {
 			esRepo,
 			snapstore,
 			NewEmpty(),
-			aggregate.SnapStrategyFor[*Person]().AfterCommit(),
+			aggregate.SnapPolicyFor[*Person]().AfterCommit(),
 			aggregate.OnSnapshotError(func(_ context.Context, err error) error {
 				return fmt.Errorf("user customized message %w", err)
 			}),
