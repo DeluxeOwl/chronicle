@@ -341,7 +341,13 @@ func (mem *Memory) subscribeToAllEvents(
 				yield(nil, err)
 				return
 			}
-			record := event.NewGlobalRecord(memRecord.GlobalVersion, memRecord.Version, memRecord.LogID, memRecord.EventName, memRecord.Data)
+			record := event.NewGlobalRecord(
+				memRecord.GlobalVersion,
+				memRecord.Version,
+				memRecord.LogID,
+				memRecord.EventName,
+				memRecord.Data,
+			)
 			if !yield(record, nil) {
 				return
 			}
@@ -410,7 +416,13 @@ func (mem *Memory) subscribeToAllEvents(
 				if globalSelector.To > 0 && memRecord.GlobalVersion > globalSelector.To {
 					return
 				}
-				record := event.NewGlobalRecord(memRecord.GlobalVersion, memRecord.Version, memRecord.LogID, memRecord.EventName, memRecord.Data)
+				record := event.NewGlobalRecord(
+					memRecord.GlobalVersion,
+					memRecord.Version,
+					memRecord.LogID,
+					memRecord.EventName,
+					memRecord.Data,
+				)
 				if !yield(record, nil) {
 					return
 				}

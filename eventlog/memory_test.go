@@ -9,7 +9,9 @@ import (
 
 	"github.com/DeluxeOwl/chronicle/event"
 	"github.com/DeluxeOwl/chronicle/eventlog"
+
 	"github.com/DeluxeOwl/chronicle/version"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -42,7 +44,7 @@ func TestMemory_ReadAllEvents_WithTailing(t *testing.T) {
 					return
 				}
 
-				require.NoError(t, err, "Iterator returned an unexpected error")
+				assert.NoError(t, err, "Iterator returned an unexpected error")
 				return
 			}
 

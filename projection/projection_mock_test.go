@@ -146,9 +146,6 @@ func (mock *CheckpointerMock) SaveCheckpointCalls() []struct {
 //			MatchesEventFunc: func(eventName string) bool {
 //				panic("mock out the MatchesEvent method")
 //			},
-//			NameFunc: func() string {
-//				panic("mock out the Name method")
-//			},
 //		}
 //
 //		// use mockedAsyncProjection in code that requires projection.AsyncProjection
@@ -161,9 +158,6 @@ type AsyncProjectionMock struct {
 
 	// MatchesEventFunc mocks the MatchesEvent method.
 	MatchesEventFunc func(eventName string) bool
-
-	// NameFunc mocks the Name method.
-	NameFunc func() string
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -179,13 +173,9 @@ type AsyncProjectionMock struct {
 			// EventName is the eventName argument value.
 			EventName string
 		}
-		// Name holds details about calls to the Name method.
-		Name []struct {
-		}
 	}
 	lockHandle       sync.RWMutex
 	lockMatchesEvent sync.RWMutex
-	lockName         sync.RWMutex
 }
 
 // Handle calls HandleFunc.
@@ -253,32 +243,5 @@ func (mock *AsyncProjectionMock) MatchesEventCalls() []struct {
 	mock.lockMatchesEvent.RLock()
 	calls = mock.calls.MatchesEvent
 	mock.lockMatchesEvent.RUnlock()
-	return calls
-}
-
-// Name calls NameFunc.
-func (mock *AsyncProjectionMock) Name() string {
-	if mock.NameFunc == nil {
-		panic("AsyncProjectionMock.NameFunc: method is nil but AsyncProjection.Name was just called")
-	}
-	callInfo := struct {
-	}{}
-	mock.lockName.Lock()
-	mock.calls.Name = append(mock.calls.Name, callInfo)
-	mock.lockName.Unlock()
-	return mock.NameFunc()
-}
-
-// NameCalls gets all the calls that were made to Name.
-// Check the length with:
-//
-//	len(mockedAsyncProjection.NameCalls())
-func (mock *AsyncProjectionMock) NameCalls() []struct {
-} {
-	var calls []struct {
-	}
-	mock.lockName.RLock()
-	calls = mock.calls.Name
-	mock.lockName.RUnlock()
 	return calls
 }

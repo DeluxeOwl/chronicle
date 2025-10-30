@@ -78,7 +78,6 @@ func TestProjectionRunner_Run(t *testing.T) {
 	pollInterval := 50 * time.Millisecond
 
 	accountProjection := &AsyncProjectionMock{
-		NameFunc: func() string { return "accounts" },
 		MatchesEventFunc: func(eventName string) bool {
 			return strings.HasPrefix(eventName, "account.")
 		},
@@ -91,6 +90,7 @@ func TestProjectionRunner_Run(t *testing.T) {
 		log,
 		checkpointer,
 		accountProjection,
+		"accounts",
 		projection.WithPollInterval(pollInterval),
 	)
 	require.NoError(t, err)
@@ -161,7 +161,6 @@ func TestProjectionRunner_StopsOnHandleError(t *testing.T) {
 	handleErr := errors.New("handler failed catastrophically")
 
 	proj := &AsyncProjectionMock{
-		NameFunc: func() string { return "failing-proj" },
 		MatchesEventFunc: func(eventName string) bool {
 			return strings.HasPrefix(eventName, "account.")
 		},
@@ -178,6 +177,7 @@ func TestProjectionRunner_StopsOnHandleError(t *testing.T) {
 		log,
 		checkpointer,
 		proj,
+		"failing-proj",
 		projection.WithPollInterval(pollInterval),
 		//nolint:exhaustruct // not needed
 		projection.WithSlogHandler(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
@@ -263,12 +263,11 @@ func TestProjectionRunner_CheckpointPolicies(t *testing.T) {
 		log := eventlog.NewMemory()
 		checkpointer := newMemoryCheckpointer()
 		projMock := &AsyncProjectionMock{
-			NameFunc:         func() string { return projName },
 			MatchesEventFunc: func(eventName string) bool { return true },
 			HandleFunc:       func(ctx context.Context, rec *event.GlobalRecord) error { return nil },
 		}
 
-		runner, err := projection.NewAsyncProjectionRunner(log, checkpointer, projMock,
+		runner, err := projection.NewAsyncProjectionRunner(log, checkpointer, projMock, projName,
 			projection.WithPollInterval(pollInterval),
 		)
 		require.NoError(t, err)
@@ -299,13 +298,12 @@ func TestProjectionRunner_CheckpointPolicies(t *testing.T) {
 		log := eventlog.NewMemory()
 		checkpointer := newMemoryCheckpointer()
 		projMock := &AsyncProjectionMock{
-			NameFunc:         func() string { return projName },
 			MatchesEventFunc: func(eventName string) bool { return true },
 			HandleFunc:       func(ctx context.Context, rec *event.GlobalRecord) error { return nil },
 		}
 
 		policy := projection.EveryNEvents(2)
-		runner, err := projection.NewAsyncProjectionRunner(log, checkpointer, projMock,
+		runner, err := projection.NewAsyncProjectionRunner(log, checkpointer, projMock, projName,
 			projection.WithPollInterval(pollInterval),
 			projection.WithCheckpointPolicy(policy),
 		)
@@ -342,7 +340,6 @@ func TestProjectionRunner_CheckpointPolicies(t *testing.T) {
 		// The handler will sleep, allowing the duration policy to trigger
 		handlerSleep := 60 * time.Millisecond
 		projMock := &AsyncProjectionMock{
-			NameFunc:         func() string { return projName },
 			MatchesEventFunc: func(eventName string) bool { return true },
 			HandleFunc: func(ctx context.Context, rec *event.GlobalRecord) error {
 				time.Sleep(handlerSleep)
@@ -356,7 +353,7 @@ func TestProjectionRunner_CheckpointPolicies(t *testing.T) {
 			projection.EveryNEvents(3),
 			projection.AfterDuration(100*time.Millisecond),
 		)
-		runner, err := projection.NewAsyncProjectionRunner(log, checkpointer, projMock,
+		runner, err := projection.NewAsyncProjectionRunner(log, checkpointer, projMock, projName,
 			projection.WithPollInterval(pollInterval),
 			projection.WithCheckpointPolicy(policy),
 		)
