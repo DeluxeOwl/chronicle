@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -382,4 +383,115 @@ func TestProjectionRunner_CheckpointPolicies(t *testing.T) {
 		assert.Equal(t, expectedVersions, saved)
 		assert.Len(t, projMock.HandleCalls(), 5, "expected all 5 events to be handled")
 	})
+}
+
+func TestAsyncProjectionRunner_WithTailing(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Use an in-memory event log configured for tailing.
+	log := eventlog.NewMemory(eventlog.WithMemoryGlobalTailing())
+
+	var finalVersion atomic.Int64
+	checkpointer := &CheckpointerMock{
+		GetCheckpointFunc: func(ctx context.Context, projectionName string) (version.Version, error) {
+			return 0, nil
+		},
+		SaveCheckpointFunc: func(ctx context.Context, projectionName string, v version.Version) error {
+			finalVersion.Store(int64(v))
+			t.Logf("Checkpointer received SaveCheckpoint for version %d", v)
+			return nil
+		},
+	}
+
+	handledEvents := make(chan *event.GlobalRecord, 5)
+	proj := &AsyncProjectionMock{
+		MatchesEventFunc: func(eventName string) bool {
+			return true
+		},
+		HandleFunc: func(ctx context.Context, rec *event.GlobalRecord) error {
+			t.Logf("Projection handled event with version %d", rec.GlobalVersion())
+			handledEvents <- rec
+			return nil
+		},
+	}
+
+	_, err := log.AppendEvents(ctx, "stream-1", version.CheckExact(0), event.RawEvents{
+		event.NewRaw("event-1", []byte{}),
+	})
+	require.NoError(t, err) // Global version will be 1
+
+	runner, err := projection.NewAsyncProjectionRunner(
+		log,
+		checkpointer,
+		proj,
+		"test-tailing-projection",
+		projection.WithTailing(true),
+		// Use a simple checkpoint policy for predictability in this test
+		projection.WithCheckpointPolicy(projection.EveryNEvents(1)),
+	)
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		t.Log("Starting runner.Run() in goroutine...")
+		runErr := runner.Run(ctx)
+
+		// We expect a context.Canceled error on shutdown
+		require.ErrorIs(t, runErr, context.Canceled, "runner.Run() should exit with context.Canceled")
+		t.Log("runner.Run() finished.")
+	}()
+
+	// Wait for the runner to process the first, pre-existing event.
+	// Use a timeout to prevent the test from hanging if something is wrong.
+	select {
+	case <-handledEvents:
+		t.Log("Runner processed initial event.")
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timeout: Runner did not process the initial event")
+	}
+	require.Equal(t, int64(1), finalVersion.Load(), "Checkpoint should be saved after first event")
+
+	t.Log("Appending second event...")
+	_, err = log.AppendEvents(ctx, "stream-1", version.CheckExact(1), event.RawEvents{
+		event.NewRaw("event-2", []byte{}),
+	})
+	require.NoError(t, err) // Global version will be 2
+
+	select {
+	case <-handledEvents:
+		t.Log("Runner processed second (tailed) event.")
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timeout: Runner did not process the tailed event")
+	}
+	require.Equal(t, int64(2), finalVersion.Load(), "Checkpoint should be updated after second event")
+
+	t.Log("Appending third event...")
+	_, err = log.AppendEvents(ctx, "stream-1", version.CheckExact(2), event.RawEvents{
+		event.NewRaw("event-3", []byte{}),
+	})
+	require.NoError(t, err) // Global version will be 3
+
+	select {
+	case <-handledEvents:
+		t.Log("Runner processed third (tailed) event.")
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timeout: Runner did not process the third event")
+	}
+
+	// Note: With EveryNEvents(1), the checkpoint is saved inside the processing loop.
+	// handleShutdown will save it again, which is fine.
+	require.Equal(t, int64(3), finalVersion.Load(), "Checkpoint should be updated after third event")
+
+	t.Log("All events processed, sending shutdown signal...")
+	cancel()
+	wg.Wait()
+
+	t.Log("Runner has shut down.")
+
+	require.Len(t, proj.HandleCalls(), 3, "Projection.Handle should be called 3 times")
+
+	require.Equal(t, int64(3), finalVersion.Load(), "Final checkpoint on shutdown must be for the last processed event")
 }
