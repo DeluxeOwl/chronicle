@@ -34,10 +34,11 @@ type AsyncProjectionRunner struct {
 	checkpointer Checkpointer
 
 	// configurable
-	pollInterval            time.Duration
-	cancelCheckpointTimeout time.Duration
-	log                     *slog.Logger
-	onSaveCheckpointErrFunc OnSaveCheckpointErrFunc
+	pollInterval              time.Duration
+	cancelCheckpointTimeout   time.Duration
+	log                       *slog.Logger
+	lastCheckpointSaveEnabled bool
+	onSaveCheckpointErrFunc   OnSaveCheckpointErrFunc
 
 	projection AsyncProjection
 }
@@ -45,34 +46,41 @@ type AsyncProjectionRunner struct {
 type AsyncProjectionRunnerOption func(*AsyncProjectionRunner)
 
 func WithPollInterval(interval time.Duration) AsyncProjectionRunnerOption {
-	return func(g *AsyncProjectionRunner) {
-		g.pollInterval = interval
+	return func(r *AsyncProjectionRunner) {
+		r.pollInterval = interval
 	}
 }
 
 func WithCancelCheckpointTimeout(timeout time.Duration) AsyncProjectionRunnerOption {
-	return func(g *AsyncProjectionRunner) {
-		g.cancelCheckpointTimeout = timeout
+	return func(r *AsyncProjectionRunner) {
+		r.cancelCheckpointTimeout = timeout
 	}
 }
 
 func WithSlogHandler(handler slog.Handler) AsyncProjectionRunnerOption {
-	return func(g *AsyncProjectionRunner) {
+	return func(r *AsyncProjectionRunner) {
 		if handler == nil {
-			g.log = slog.New(slog.DiscardHandler)
+			r.log = slog.New(slog.DiscardHandler)
 			return
 		}
-		g.log = slog.New(handler)
+		r.log = slog.New(handler)
 	}
 }
 
 // The default is StopOnError
 func WithSaveCheckpointErrPolicy(errFunc OnSaveCheckpointErrFunc) AsyncProjectionRunnerOption {
-	return func(g *AsyncProjectionRunner) {
+	return func(r *AsyncProjectionRunner) {
 		if errFunc == nil {
 			return
 		}
-		g.onSaveCheckpointErrFunc = errFunc
+		r.onSaveCheckpointErrFunc = errFunc
+	}
+}
+
+// Defaults to true
+func WithLastCheckpointSaveEnabled(enabled bool) AsyncProjectionRunnerOption {
+	return func(r *AsyncProjectionRunner) {
+		r.lastCheckpointSaveEnabled = enabled
 	}
 }
 
@@ -93,13 +101,14 @@ func NewAsyncProjectionRunner(
 	opts ...AsyncProjectionRunnerOption,
 ) (*AsyncProjectionRunner, error) {
 	runner := &AsyncProjectionRunner{
-		eventlog:                log,
-		checkpointer:            checkpointer,
-		pollInterval:            DefaultPollInterval,
-		cancelCheckpointTimeout: DefaultCancelCheckpointTimeout,
-		log:                     slog.Default(),
-		onSaveCheckpointErrFunc: StopOnError,
-		projection:              projection,
+		eventlog:                  log,
+		checkpointer:              checkpointer,
+		pollInterval:              DefaultPollInterval,
+		cancelCheckpointTimeout:   DefaultCancelCheckpointTimeout,
+		log:                       slog.Default(),
+		onSaveCheckpointErrFunc:   StopOnError,
+		projection:                projection,
+		lastCheckpointSaveEnabled: true,
 	}
 
 	for _, o := range opts {
@@ -134,6 +143,9 @@ func (r *AsyncProjectionRunner) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			if !r.lastCheckpointSaveEnabled {
+				return ctx.Err()
+			}
 			return r.handleShutdown(ctx, pname, currentVersion)
 		case <-ticker.C:
 			newVersion, err := r.readAndProcess(ctx, pname, currentVersion)
