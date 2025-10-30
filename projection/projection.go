@@ -13,7 +13,6 @@ import (
 //go:generate go run github.com/matryer/moq@latest -pkg projection_test -skip-ensure -rm -out projection_mock_test.go . Checkpointer AsyncProjection
 
 // TODO: how would a ProjectionTx even make sense? Maybe combine TransactionalAggregateProcessor + another one that doesn't take the events
-// TODO: Checkpoint policy, every N events or checkpoint after duration. Batch size.
 // TODO: maybe polling is not needed if the event log blocks (e.g. channel, nats)
 
 type AsyncProjection interface {
