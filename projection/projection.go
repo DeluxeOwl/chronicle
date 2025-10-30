@@ -38,51 +38,13 @@ type AsyncProjectionRunner struct {
 	cancelCheckpointTimeout   time.Duration
 	log                       *slog.Logger
 	lastCheckpointSaveEnabled bool
+	checkpointPolicy          CheckpointPolicy
 	onSaveCheckpointErrFunc   OnSaveCheckpointErrFunc
 
 	projection AsyncProjection
 }
 
 type AsyncProjectionRunnerOption func(*AsyncProjectionRunner)
-
-func WithPollInterval(interval time.Duration) AsyncProjectionRunnerOption {
-	return func(r *AsyncProjectionRunner) {
-		r.pollInterval = interval
-	}
-}
-
-func WithCancelCheckpointTimeout(timeout time.Duration) AsyncProjectionRunnerOption {
-	return func(r *AsyncProjectionRunner) {
-		r.cancelCheckpointTimeout = timeout
-	}
-}
-
-func WithSlogHandler(handler slog.Handler) AsyncProjectionRunnerOption {
-	return func(r *AsyncProjectionRunner) {
-		if handler == nil {
-			r.log = slog.New(slog.DiscardHandler)
-			return
-		}
-		r.log = slog.New(handler)
-	}
-}
-
-// The default is StopOnError
-func WithSaveCheckpointErrPolicy(errFunc OnSaveCheckpointErrFunc) AsyncProjectionRunnerOption {
-	return func(r *AsyncProjectionRunner) {
-		if errFunc == nil {
-			return
-		}
-		r.onSaveCheckpointErrFunc = errFunc
-	}
-}
-
-// Defaults to true
-func WithLastCheckpointSaveEnabled(enabled bool) AsyncProjectionRunnerOption {
-	return func(r *AsyncProjectionRunner) {
-		r.lastCheckpointSaveEnabled = enabled
-	}
-}
 
 const (
 	DefaultPollInterval            = 200 * time.Millisecond
@@ -108,6 +70,7 @@ func NewAsyncProjectionRunner(
 		log:                       slog.Default(),
 		onSaveCheckpointErrFunc:   StopOnError,
 		projection:                projection,
+		checkpointPolicy:          &batchEndPolicy{},
 		lastCheckpointSaveEnabled: true,
 	}
 
@@ -181,43 +144,80 @@ func (r *AsyncProjectionRunner) handleShutdown(
 func (r *AsyncProjectionRunner) readAndProcess(
 	ctx context.Context,
 	pname string,
-	currentVersion version.Version,
+	lastSavedVersion version.Version,
 ) (version.Version, error) {
-	var processedInBatch int
-	newVersion := currentVersion
+	var (
+		eventsSinceLastSave int
+		lastSaveTime        = time.Now()
+		// versionToSave tracks the version of the latest processed event.
+		versionToSave = lastSavedVersion
+	)
 
-	for rec, streamErr := range r.eventlog.ReadAllEvents(ctx, version.SelectFrom(currentVersion+1)) {
+	stream := r.eventlog.ReadAllEvents(ctx, version.SelectFrom(lastSavedVersion+1))
+	for rec, streamErr := range stream {
 		if streamErr != nil {
 			r.log.ErrorContext(ctx, "Stream error, stopping projection",
 				"projection", pname, "error", streamErr)
-			return currentVersion, fmt.Errorf("projection %q: stream error: %w", pname, streamErr)
+			// On stream error, return the last known good version.
+			return lastSavedVersion, fmt.Errorf("projection %q: stream error: %w", pname, streamErr)
 		}
 
 		if r.projection.MatchesEvent(rec.EventName()) {
 			if err := r.projection.Handle(ctx, rec); err != nil {
-				return currentVersion, fmt.Errorf(
+				// On handler error, we MUST return the last successfully saved version,
+				// NOT a partially processed one.
+				return lastSavedVersion, fmt.Errorf(
 					"projection %q: handler failed on event %d: %w",
 					pname, rec.GlobalVersion(), err)
 			}
 		}
 
-		newVersion = rec.GlobalVersion()
-		processedInBatch++
+		versionToSave = rec.GlobalVersion()
+		eventsSinceLastSave++
+
+		info := CheckpointInfo{
+			EventsSinceLastSave: eventsSinceLastSave,
+			TimeSinceLastSave:   time.Since(lastSaveTime),
+		}
+		if r.checkpointPolicy.ShouldCheckpoint(info) {
+			r.log.DebugContext(
+				ctx,
+				"Policy triggered checkpoint save",
+				"projection",
+				pname,
+				"events",
+				eventsSinceLastSave,
+				"duration",
+				info.TimeSinceLastSave,
+			)
+
+			if err := r.saveCheckpoint(ctx, pname, versionToSave); err != nil {
+				// We failed a mid-batch save. Return the last known good version and the error.
+				return lastSavedVersion, err
+			}
+
+			// A mid-batch checkpoint was saved successfully.
+			// This now becomes our new "last saved version".
+			lastSavedVersion = versionToSave
+			eventsSinceLastSave = 0
+			lastSaveTime = time.Now()
+		}
 	}
 
-	// Only save if we actually processed events
-	if processedInBatch == 0 {
-		return currentVersion, nil
+	// After the loop, check if we processed any events since the last save (either the initial one or a mid-batch one).
+	if versionToSave > lastSavedVersion {
+		if err := r.saveCheckpoint(ctx, pname, versionToSave); err != nil {
+			// Failed to save the final part of the batch. Return the last known good version.
+			return lastSavedVersion, err
+		}
+		// The final part of the batch was saved. The new checkpoint is versionToSave.
+		lastSavedVersion = versionToSave
+		r.log.DebugContext(ctx, "Processed batch and saved checkpoint",
+			"projection", pname, "count", eventsSinceLastSave, "new_version", versionToSave)
 	}
 
-	if err := r.saveCheckpoint(ctx, pname, newVersion); err != nil {
-		return currentVersion, err
-	}
-
-	r.log.DebugContext(ctx, "Processed batch and saved checkpoint",
-		"projection", pname, "count", processedInBatch, "new_version", newVersion)
-
-	return newVersion, nil
+	// Return the latest successfully saved version.
+	return lastSavedVersion, nil
 }
 
 func (r *AsyncProjectionRunner) saveCheckpoint(
@@ -233,4 +233,52 @@ func (r *AsyncProjectionRunner) saveCheckpoint(
 		}
 	}
 	return nil
+}
+
+func WithPollInterval(interval time.Duration) AsyncProjectionRunnerOption {
+	return func(r *AsyncProjectionRunner) {
+		r.pollInterval = interval
+	}
+}
+
+func WithCancelCheckpointTimeout(timeout time.Duration) AsyncProjectionRunnerOption {
+	return func(r *AsyncProjectionRunner) {
+		r.cancelCheckpointTimeout = timeout
+	}
+}
+
+func WithSlogHandler(handler slog.Handler) AsyncProjectionRunnerOption {
+	return func(r *AsyncProjectionRunner) {
+		if handler == nil {
+			r.log = slog.New(slog.DiscardHandler)
+			return
+		}
+		r.log = slog.New(handler)
+	}
+}
+
+// The default is StopOnError
+func WithSaveCheckpointErrPolicy(errFunc OnSaveCheckpointErrFunc) AsyncProjectionRunnerOption {
+	return func(r *AsyncProjectionRunner) {
+		if errFunc == nil {
+			return
+		}
+		r.onSaveCheckpointErrFunc = errFunc
+	}
+}
+
+// Defaults to true
+func WithLastCheckpointSaveEnabled(enabled bool) AsyncProjectionRunnerOption {
+	return func(r *AsyncProjectionRunner) {
+		r.lastCheckpointSaveEnabled = enabled
+	}
+}
+
+// WithCheckpointPolicy sets the policy for when to save checkpoints.
+// The default is to save a checkpoint at the end of each processed batch of events.
+// Use policies like EveryNEvents(100) or AfterDuration(5*time.Second) for more frequent checkpointing.
+func WithCheckpointPolicy(policy CheckpointPolicy) AsyncProjectionRunnerOption {
+	return func(r *AsyncProjectionRunner) {
+		r.checkpointPolicy = policy
+	}
 }
