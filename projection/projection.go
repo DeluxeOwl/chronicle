@@ -14,6 +14,7 @@ import (
 
 // TODO: how would a ProjectionTx even make sense? Maybe combine TransactionalAggregateProcessor + another one that doesn't take the events
 // TODO: Checkpoint policy, every N events or checkpoint after duration
+// TODO: maybe polling is not needed if the event log blocks (e.g. channel, nats)
 
 type AsyncProjection interface {
 	Name() string
@@ -173,7 +174,7 @@ func (r *AsyncProjectionRunner) readAndProcess(
 	var processedInBatch int
 	newVersion := currentVersion
 
-	for rec, streamErr := range r.eventlog.ReadAllEvents(ctx, version.SelectFrom(currentVersion)) {
+	for rec, streamErr := range r.eventlog.ReadAllEvents(ctx, version.SelectFrom(currentVersion+1)) {
 		if streamErr != nil {
 			r.log.ErrorContext(ctx, "Stream error, stopping projection",
 				"projection", pname, "error", streamErr)

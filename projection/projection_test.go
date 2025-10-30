@@ -2,6 +2,9 @@ package projection_test
 
 import (
 	"context"
+	"errors"
+	"log/slog"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -136,4 +139,79 @@ func TestProjectionRunner_Run(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, accountProjection.HandleCalls(), 2)
+}
+
+func TestProjectionRunner_StopsOnHandleError(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	log := eventlog.NewMemory()
+	checkpointer := newMemoryCheckpointer()
+	pollInterval := 50 * time.Millisecond
+	handleErr := errors.New("handler failed catastrophically")
+
+	proj := &AsyncProjectionMock{
+		NameFunc: func() string { return "failing-proj" },
+		MatchesEventFunc: func(eventName string) bool {
+			return strings.HasPrefix(eventName, "account.")
+		},
+		HandleFunc: func(_ context.Context, rec *event.GlobalRecord) error {
+			// This projection fails when it sees a "account.critical.failure" event
+			if rec.EventName() == "account.critical.failure" {
+				return handleErr
+			}
+			return nil
+		},
+	}
+
+	runner, err := projection.NewAsyncProjectionRunner(
+		log,
+		checkpointer,
+		proj,
+		projection.WithPollInterval(pollInterval),
+		projection.WithSlogHandler(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+			Level: slog.LevelDebug,
+		})),
+	)
+	require.NoError(t, err)
+
+	runnerErrChan := make(chan error, 1)
+	go func() {
+		runnerErrChan <- runner.Run(ctx)
+	}()
+
+	// Append a successful event first
+	_, err = log.AppendEvents(ctx, "account-1", version.CheckExact(0), event.RawEvents{event.NewRaw("account.opened", nil)})
+	require.NoError(t, err)
+
+	// Wait for the first checkpoint to be saved successfully
+	require.Eventually(t, func() bool {
+		cp, _ := checkpointer.GetCheckpoint(ctx, "failing-proj")
+		return cp == 1
+	}, time.Second, pollInterval, "checkpoint for first event was not saved")
+
+	// Append the event that will cause the handler to fail
+	_, err = log.AppendEvents(ctx, "account-2", version.CheckExact(0), event.RawEvents{event.NewRaw("account.critical.failure", nil)})
+	require.NoError(t, err)
+
+	// The runner should stop and return the handler's error, wrapped
+	select {
+	case err := <-runnerErrChan:
+		require.Error(t, err)
+		assert.ErrorIs(t, err, handleErr, "the original error should be wrapped")
+		assert.Contains(t, err.Error(), `projection "failing-proj": handler failed on event 2`)
+	case <-time.After(2 * time.Second):
+		t.Fatal("runner did not stop after handler error")
+	}
+
+	// Verify Handle was called for both matching events
+	calls := proj.HandleCalls()
+	require.Len(t, calls, 2)
+	assert.Equal(t, "account.opened", calls[0].Rec.EventName())
+	assert.Equal(t, "account.critical.failure", calls[1].Rec.EventName())
+
+	// Verify the checkpoint was not advanced past the last successful batch
+	finalCheckpoint, err := checkpointer.GetCheckpoint(ctx, "failing-proj")
+	require.NoError(t, err)
+	assert.Equal(t, version.Version(1), finalCheckpoint, "checkpoint should not advance after a handler failure")
 }
