@@ -13,7 +13,7 @@ import (
 //go:generate go run github.com/matryer/moq@latest -pkg projection_test -skip-ensure -rm -out projection_mock_test.go . Checkpointer AsyncProjection
 
 // TODO: how would a ProjectionTx even make sense? Maybe combine TransactionalAggregateProcessor + another one that doesn't take the events
-// TODO: Then rename this to "EventualProjection"? "eventual projection runner"?
+// TODO: Checkpoint policy, every N events or checkpoint after duration
 
 type AsyncProjection interface {
 	Name() string
@@ -65,7 +65,8 @@ func WithSlogHandler(handler slog.Handler) AsyncProjectionRunnerOption {
 	}
 }
 
-func WithOnSaveCheckpointErrFunc(errFunc OnSaveCheckpointErrFunc) AsyncProjectionRunnerOption {
+// The default is StopOnError
+func WithSaveCheckpointErrPolicy(errFunc OnSaveCheckpointErrFunc) AsyncProjectionRunnerOption {
 	return func(g *AsyncProjectionRunner) {
 		if errFunc == nil {
 			return
@@ -77,6 +78,11 @@ func WithOnSaveCheckpointErrFunc(errFunc OnSaveCheckpointErrFunc) AsyncProjectio
 const (
 	DefaultPollInterval            = 200 * time.Millisecond
 	DefaultCancelCheckpointTimeout = 5 * time.Second
+)
+
+var (
+	ContinueOnError = func(ctx context.Context, err error) error { return nil }
+	StopOnError     = func(ctx context.Context, err error) error { return err }
 )
 
 func NewAsyncProjectionRunner(
@@ -91,7 +97,7 @@ func NewAsyncProjectionRunner(
 		pollInterval:            DefaultPollInterval,
 		cancelCheckpointTimeout: DefaultCancelCheckpointTimeout,
 		log:                     slog.Default(),
-		onSaveCheckpointErrFunc: func(ctx context.Context, err error) error { return nil },
+		onSaveCheckpointErrFunc: StopOnError,
 		projection:              projection,
 	}
 
