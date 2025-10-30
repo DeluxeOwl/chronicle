@@ -18,10 +18,12 @@ var (
 )
 
 type Memory struct {
-	events        map[event.LogID][]memStoreRecord
-	logVersions   map[event.LogID]version.Version
-	globalVersion version.Version
-	mu            sync.RWMutex
+	events         map[event.LogID][]memStoreRecord
+	logVersions    map[event.LogID]version.Version
+	globalVersion  version.Version
+	mu             sync.RWMutex
+	tailingEnabled bool
+	cond           *sync.Cond
 }
 
 type memStoreRecord struct {
@@ -32,13 +34,39 @@ type memStoreRecord struct {
 	GlobalVersion version.Version `json:"globalVersion"`
 }
 
-func NewMemory() *Memory {
-	return &Memory{
-		mu:            sync.RWMutex{},
-		events:        map[event.LogID][]memStoreRecord{},
-		logVersions:   map[event.LogID]version.Version{},
-		globalVersion: version.Zero,
+type MemoryOption func(*Memory)
+
+// WithMemoryGlobalTailing enables the "tailing" or "subscription" mode for ReadAllEvents.
+// When enabled, the iterator will block and wait for new events after reading
+// all historical ones, behaving like a channel.
+func WithMemoryGlobalTailing() MemoryOption {
+	return func(m *Memory) {
+		m.tailingEnabled = true
 	}
+}
+
+// NewMemory creates a new in-memory event store.
+func NewMemory(opts ...MemoryOption) *Memory {
+	mem := &Memory{
+		mu:             sync.RWMutex{},
+		events:         make(map[event.LogID][]memStoreRecord),
+		logVersions:    make(map[event.LogID]version.Version),
+		globalVersion:  version.Zero,
+		cond:           nil,
+		tailingEnabled: false,
+	}
+
+	for _, opt := range opts {
+		opt(mem)
+	}
+
+	// If tailing is enabled, initialize the condition variable.
+	// It uses the RWMutex as its Locker, which is required for Wait/Broadcast.
+	if mem.tailingEnabled {
+		mem.cond = sync.NewCond(&mem.mu)
+	}
+
+	return mem
 }
 
 // MemTx is a dummy transaction handle for the in-memory store.
@@ -118,7 +146,15 @@ func (mem *Memory) WithinTx(
 	mem.mu.Lock()
 	defer mem.mu.Unlock()
 
-	return fn(ctx, MemTx{})
+	err := fn(ctx, MemTx{})
+
+	// If tailing is enabled, signal any waiting ReadAllEvents iterators that new
+	// data may be available. This must be done while the lock is still held.
+	if mem.tailingEnabled {
+		mem.cond.Broadcast()
+	}
+
+	return err
 }
 
 func (store *Memory) recordsToInternal(
@@ -185,52 +221,6 @@ func (store *Memory) ReadEvents(
 	}
 }
 
-func (mem *Memory) ReadAllEvents(
-	ctx context.Context,
-	globalSelector version.Selector,
-) event.GlobalRecords {
-	return func(yield func(*event.GlobalRecord, error) bool) {
-		mem.mu.RLock()
-		allEvents := make([]memStoreRecord, 0)
-		for _, logEvents := range mem.events {
-			allEvents = append(allEvents, logEvents...)
-		}
-		mem.mu.RUnlock()
-
-		sort.Slice(allEvents, func(i, j int) bool {
-			return allEvents[i].GlobalVersion < allEvents[j].GlobalVersion
-		})
-
-		for _, memRecord := range allEvents {
-			if memRecord.GlobalVersion < globalSelector.From {
-				continue
-			}
-
-			if globalSelector.To > 0 && memRecord.GlobalVersion > globalSelector.To {
-				break
-			}
-
-			if err := ctx.Err(); err != nil {
-				yield(nil, err)
-				return
-			}
-
-			// When reading all events, the record's version is the global version.
-			record := event.NewGlobalRecord(
-				memRecord.GlobalVersion,
-				memRecord.Version,
-				memRecord.LogID,
-				memRecord.EventName,
-				memRecord.Data,
-			)
-
-			if !yield(record, nil) {
-				return
-			}
-		}
-	}
-}
-
 func (mem *Memory) DangerouslyDeleteEventsUpTo(
 	ctx context.Context,
 	id event.LogID,
@@ -258,4 +248,190 @@ func (mem *Memory) DangerouslyDeleteEventsUpTo(
 	mem.events[id] = events[:n]
 
 	return nil
+}
+
+// ReadAllEvents returns an iterator over all events in the store.
+// If the store was created with WithGlobalTailing(), the iterator will first yield
+// all existing events and then block indefinitely, yielding new events as they are appended.
+func (mem *Memory) ReadAllEvents(
+	ctx context.Context,
+	globalSelector version.Selector,
+) event.GlobalRecords {
+	// If tailing is not enabled, use the original, non-blocking implementation.
+	if !mem.tailingEnabled {
+		return mem.readAllEventsOnce(ctx, globalSelector)
+	}
+	// Otherwise, use the blocking/subscription implementation.
+	return mem.subscribeToAllEvents(ctx, globalSelector)
+}
+
+func (mem *Memory) readAllEventsOnce(
+	ctx context.Context,
+	globalSelector version.Selector,
+) event.GlobalRecords {
+	return func(yield func(*event.GlobalRecord, error) bool) {
+		mem.mu.RLock()
+		allEvents := make([]memStoreRecord, 0)
+		for _, logEvents := range mem.events {
+			allEvents = append(allEvents, logEvents...)
+		}
+		mem.mu.RUnlock()
+
+		sort.Slice(allEvents, func(i, j int) bool {
+			return allEvents[i].GlobalVersion < allEvents[j].GlobalVersion
+		})
+
+		for _, memRecord := range allEvents {
+			if memRecord.GlobalVersion < globalSelector.From {
+				continue
+			}
+			if globalSelector.To > 0 && memRecord.GlobalVersion > globalSelector.To {
+				break
+			}
+			if err := ctx.Err(); err != nil {
+				yield(nil, err)
+				return
+			}
+			record := event.NewGlobalRecord(
+				memRecord.GlobalVersion,
+				memRecord.Version,
+				memRecord.LogID,
+				memRecord.EventName,
+				memRecord.Data,
+			)
+			if !yield(record, nil) {
+				return
+			}
+		}
+	}
+}
+
+// subscribeToAllEvents implements the blocking "tail" behavior.
+//
+//nolint:funlen,gocognit // will refactor.
+func (mem *Memory) subscribeToAllEvents(
+	ctx context.Context,
+	globalSelector version.Selector,
+) event.GlobalRecords {
+	return func(yield func(*event.GlobalRecord, error) bool) {
+		var lastVersionSeen version.Version
+		if globalSelector.From > 0 {
+			lastVersionSeen = globalSelector.From - 1
+		}
+
+		mem.mu.RLock()
+		initialEvents := make([]memStoreRecord, 0)
+		for _, logEvents := range mem.events {
+			initialEvents = append(initialEvents, logEvents...)
+		}
+		mem.mu.RUnlock()
+
+		sort.Slice(initialEvents, func(i, j int) bool {
+			return initialEvents[i].GlobalVersion < initialEvents[j].GlobalVersion
+		})
+
+		for _, memRecord := range initialEvents {
+			if memRecord.GlobalVersion <= lastVersionSeen {
+				continue
+			}
+			if globalSelector.To > 0 && memRecord.GlobalVersion > globalSelector.To {
+				break
+			}
+			if err := ctx.Err(); err != nil {
+				yield(nil, err)
+				return
+			}
+			record := event.NewGlobalRecord(
+				memRecord.GlobalVersion,
+				memRecord.Version,
+				memRecord.LogID,
+				memRecord.EventName,
+				memRecord.Data,
+			)
+			if !yield(record, nil) {
+				return
+			}
+			lastVersionSeen = memRecord.GlobalVersion
+		}
+
+		if globalSelector.To > 0 && lastVersionSeen >= globalSelector.To {
+			return
+		}
+
+		// This goroutine's job is to wake up the main loop when the context is cancelled.
+		if ctx.Done() != nil {
+			go func() {
+				<-ctx.Done()         // Block until context is cancelled.
+				mem.cond.Broadcast() // Wake up any waiting iterators.
+			}()
+		}
+
+		for {
+			mem.mu.Lock()
+
+			// Find new events that occurred since our last check.
+			var newEvents []memStoreRecord
+			for _, logEvents := range mem.events {
+				for i := range logEvents {
+					if logEvents[i].GlobalVersion > lastVersionSeen {
+						newEvents = append(newEvents, logEvents[i])
+					}
+				}
+			}
+
+			// Loop while there are no new events AND the context is not yet cancelled.
+			for len(newEvents) == 0 && ctx.Err() == nil {
+				// Atomically unlocks mem.mu, waits for a signal, and re-locks mem.mu.
+				mem.cond.Wait()
+
+				// After waking up (either from new data or cancellation), re-scan for events.
+				for _, logEvents := range mem.events {
+					for i := range logEvents {
+						if logEvents[i].GlobalVersion > lastVersionSeen {
+							newEvents = append(newEvents, logEvents[i])
+						}
+					}
+				}
+			}
+
+			// We are out of the wait loop. This can happen for two reasons:
+			// 1. New events have arrived.
+			// 2. The context was cancelled.
+
+			// Check for cancellation first, as it's the exit condition.
+			if err := ctx.Err(); err != nil {
+				mem.mu.Unlock()
+				yield(nil, err)
+				return
+			}
+
+			// If we got here, it must be because of new events.
+			mem.mu.Unlock()
+
+			sort.Slice(newEvents, func(i, j int) bool {
+				return newEvents[i].GlobalVersion < newEvents[j].GlobalVersion
+			})
+
+			for _, memRecord := range newEvents {
+				if globalSelector.To > 0 && memRecord.GlobalVersion > globalSelector.To {
+					return
+				}
+				record := event.NewGlobalRecord(
+					memRecord.GlobalVersion,
+					memRecord.Version,
+					memRecord.LogID,
+					memRecord.EventName,
+					memRecord.Data,
+				)
+				if !yield(record, nil) {
+					return
+				}
+				lastVersionSeen = memRecord.GlobalVersion
+			}
+
+			if globalSelector.To > 0 && lastVersionSeen >= globalSelector.To {
+				return
+			}
+		}
+	}
 }

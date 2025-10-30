@@ -68,7 +68,7 @@ func NewEventSourcedRepository[TID aggregate.ID, E event.Any, R aggregate.Root[T
 //		baseRepo,
 //		snapStore,
 //		snapshotter,
-//		aggregate.SnapStrategyFor[...].EveryNEvents(50), // Snapshot every 50 events.
+//		aggregate.SnapPolicyFor[...].EveryNEvents(50), // Snapshot every 50 events.
 //	)
 //
 // Returns a new repository equipped with snapshotting capabilities, or an error if
@@ -77,14 +77,14 @@ func NewEventSourcedRepositoryWithSnapshots[TID aggregate.ID, E event.Any, R agg
 	esRepo aggregate.Repository[TID, E, R],
 	snapstore aggregate.SnapshotStore[TID, TS],
 	snapshotter aggregate.Snapshotter[TID, E, R, TS],
-	snapstrategy aggregate.SnapshotStrategy[TID, E, R],
+	snapPolicy aggregate.SnapshotPolicy[TID, E, R],
 	opts ...aggregate.ESRepoWithSnapshotsOption,
 ) (*aggregate.ESRepoWithSnapshots[TID, E, R, TS], error) {
 	return aggregate.NewESRepoWithSnapshots(
 		esRepo,
 		snapstore,
 		snapshotter,
-		snapstrategy,
+		snapPolicy,
 		opts...)
 }
 

@@ -72,6 +72,43 @@ type Log interface {
 //	}
 type Records iter.Seq2[*Record, error]
 
+// RecordOrError wraps a record and a potential error for transport over a channel.
+type RecordOrError struct {
+	Record *Record
+	Err    error
+}
+
+// Chan converts the iterator into a channel-based stream.
+// It starts a new goroutine to iterate over the records and sends them to the
+// returned channel. The channel is closed when the iterator is exhausted or
+// the first error is encountered.
+//
+// The provided context can be used to cancel the streaming operation and shut
+// down the goroutine, preventing leaks if the consumer stops listening.
+func (r Records) Chan(ctx context.Context) <-chan RecordOrError {
+	ch := make(chan RecordOrError)
+
+	go func() {
+		defer close(ch)
+
+		for record, err := range r {
+			result := RecordOrError{Record: record, Err: err}
+
+			select {
+			case <-ctx.Done():
+				return
+			case ch <- result:
+			}
+
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	return ch
+}
+
 // Collect consumes the entire Records iterator and loads all event records into a slice in memory.
 // This is useful when you need to have all events available before processing.
 //
@@ -159,6 +196,43 @@ type DeleterLog interface {
 //	    // process gRec
 //	}
 type GlobalRecords iter.Seq2[*GlobalRecord, error]
+
+// GlobalRecordOrError wraps a record and a potential error for transport over a channel.
+type GlobalRecordOrError struct {
+	Record *GlobalRecord
+	Err    error
+}
+
+// Chan converts the iterator into a channel-based stream.
+// It starts a new goroutine to iterate over the records and sends them to the
+// returned channel. The channel is closed when the iterator is exhausted or
+// the first error is encountered.
+//
+// The provided context can be used to cancel the streaming operation and shut
+// down the goroutine, preventing leaks if the consumer stops listening.
+func (gr GlobalRecords) Chan(ctx context.Context) <-chan GlobalRecordOrError {
+	ch := make(chan GlobalRecordOrError)
+
+	go func() {
+		defer close(ch)
+
+		for gRec, err := range gr {
+			result := GlobalRecordOrError{Record: gRec, Err: err}
+
+			select {
+			case <-ctx.Done():
+				return
+			case ch <- result:
+			}
+
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	return ch
+}
 
 // Collect consumes the entire GlobalRecords iterator and loads all global event records
 // into a slice in memory.

@@ -19,7 +19,7 @@
 	- [How is this different from SQL transactions?](#how-is-this-different-from-sql-transactions)
 	- [Will conflicts be a bottleneck?](#will-conflicts-be-a-bottleneck)
 - [Snapshots](#snapshots)
-	- [Snapshot strategies](#snapshot-strategies)
+	- [Snapshot policies](#snapshot-policies)
 - [Shared event metadata](#shared-event-metadata)
 - [Ordering: Event log \& Global event log](#ordering-event-log--global-event-log)
 - [Storage backends](#storage-backends)
@@ -885,7 +885,7 @@ While the library provides an in-memory snapshot store out of the box, the `aggr
 
 Then, we wrap the base repository with the snapshotting functionality. 
 
-Now, we need to decide _when_ to take a snapshot. You probably don't want to create one on every single change, as that would be inefficient. The framework provides a flexible `SnapshotStrategy` to define this policy and a builder for various strategies:
+Now, we need to decide _when_ to take a snapshot. You probably don't want to create one on every single change, as that would be inefficient. The framework provides a flexible `SnapshotPolicy` to define this policy and a builder for various policies:
 ```go
 	accountSnapshotStore := snapshotstore.NewMemory(
 		func() *account.Snapshot { return new(account.Snapshot) },
@@ -895,7 +895,7 @@ Now, we need to decide _when_ to take a snapshot. You probably don't want to cre
 		baseRepo,
 		accountSnapshotStore,
 		&account.Snapshotter{},
-		aggregate.SnapStrategyFor[*account.Account]().EveryNEvents(3),
+		aggregate.SnapPolicyFor[*account.Account]().EveryNEvents(3),
 	)
 	if err != nil {
 		panic(err)
@@ -918,7 +918,7 @@ Let's issue some commands:
 	
 	// Saving the aggregate with 3 uncommitted events.
 	// The new version will be 3.
-	// Since 3 >= 3 (our N), the strategy will trigger a snapshot.
+	// Since 3 >= 3 (our N), the policy will trigger a snapshot.
 	_, _, err = accountRepo.Save(ctx, acc)
 	if err != nil {
 		panic(err)
@@ -947,17 +947,17 @@ We can also get the snapshot from the store to check:
 	// Found snapshot: true: &{AccountID:snap-123 OpenedAt:2025-08-25 10:53:57.970965 +0300 EEST Balance:200 HolderName:John Smith AggregateVersion:3}
 ```
 
-### Snapshot strategies
-If you type `aggregate.SnapStrategyFor[*account.Account]().` you will get autocomplete for various snapshot strategies:
+### Snapshot policies
+If you type `aggregate.SnapPolicyFor[*account.Account]().` you will get autocomplete for various snapshot policies:
 - `EveryNEvents(n)`: Takes a snapshot every n times the aggregate is saved.
 - `AfterCommit()`: Takes a snapshot after every successful save.
 - `OnEvents(eventNames...)`: Takes a snapshot only if one or more of the specified event types were part of the save.
-- `AllOf(strategies...)`: A composite strategy that triggers only if all of its child strategies match.
-- `AnyOf(strategies...)`: A composite strategy that triggers if any of its child strategies match.     
+- `AllOf(policies...)`: A composite policy that triggers only if all of its child policies match.
+- `AnyOf(policies...)`: A composite policy that triggers if any of its child policies match.     
 
-Or a `Custom(...)` strategy, which gives you complete control by allowing you to provide your own function. This function receives the aggregate's state, its versions, and the list of committed events, so you can decide when a snapshot should be taken:
+Or a `Custom(...)` policy, which gives you complete control by allowing you to provide your own function. This function receives the aggregate's state, its versions, and the list of committed events, so you can decide when a snapshot should be taken:
 ```go
-aggregate.SnapStrategyFor[*account.Account]().Custom(
+aggregate.SnapPolicyFor[*account.Account]().Custom(
 			func(ctx context.Context, root *account.Account, previousVersion, newVersion version.Version, committedEvents aggregate.CommittedEvents[account.AccountEvent]) bool {
 				return true // always snapshot
 			}),
@@ -975,7 +975,7 @@ func CustomSnapshot(
 }
 ```
 
-**Important**: Regardless of the snapshot strategy chosen, saving the snapshot happens after the new events are successfully committed to the event log. This means the two operations are not atomic. It is possible for the events to be saved successfully but for the subsequent snapshot save to fail. 
+**Important**: Regardless of the snapshot policy chosen, saving the snapshot happens after the new events are successfully committed to the event log. This means the two operations are not atomic. It is possible for the events to be saved successfully but for the subsequent snapshot save to fail. 
 
 By default, an error during a snapshot save will be returned by the Save method. You can customize this behavior with the `aggregate.OnSnapshotError` option, allowing you to log the error and continue, or ignore it entirely.
 
@@ -1259,7 +1259,7 @@ It's really important to pass the same `timeProvider` to the snapshotter:
 			&accountv2.Snapshotter{
 				TimeProvider: timeProvider, // ⚠️ The same timeProvider
 			},
-			aggregate.SnapStrategyFor[*accountv2.Account]().EveryNEvents(3),
+			aggregate.SnapPolicyFor[*accountv2.Account]().EveryNEvents(3),
 		)
 ```
 
@@ -2246,12 +2246,12 @@ There's a lot of projection types, choosing which fits you best requires some co
 
 #### By Consistency Guarantees
 
-1. **Eventually consistent projections**
+1. **Eventually consistent projections (also called asynchronous projections)**
    * Most common - projections lag slightly behind the event stream.
    * ⚠️ In `chronicle`:
      * This happens if you're using the outbox pattern or have any kind of pub/sub mechanism in your code
 
-2. **Strongly consistent projections**
+2. **Strongly consistent projections (also called synchronous projections)**
    * Rare in event sourcing, but sometimes required for critical counters or invariants.
    * ⚠️ In `chronicle`:
      * This is done when the backing store is an `event.TransactionalLog` at it exposes the transaction AND you want to store your projections in the same store

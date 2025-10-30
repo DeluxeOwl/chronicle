@@ -134,42 +134,33 @@ func (mock *CheckpointerMock) SaveCheckpointCalls() []struct {
 	return calls
 }
 
-// ProjectionMock is a mock implementation of projection.Projection.
+// AsyncProjectionMock is a mock implementation of projection.AsyncProjection.
 //
-//	func TestSomethingThatUsesProjection(t *testing.T) {
+//	func TestSomethingThatUsesAsyncProjection(t *testing.T) {
 //
-//		// make and configure a mocked projection.Projection
-//		mockedProjection := &ProjectionMock{
-//			EventNamesFunc: func() []string {
-//				panic("mock out the EventNames method")
-//			},
+//		// make and configure a mocked projection.AsyncProjection
+//		mockedAsyncProjection := &AsyncProjectionMock{
 //			HandleFunc: func(ctx context.Context, rec *event.GlobalRecord) error {
 //				panic("mock out the Handle method")
 //			},
-//			NameFunc: func() string {
-//				panic("mock out the Name method")
+//			MatchesEventFunc: func(eventName string) bool {
+//				panic("mock out the MatchesEvent method")
 //			},
 //		}
 //
-//		// use mockedProjection in code that requires projection.Projection
+//		// use mockedAsyncProjection in code that requires projection.AsyncProjection
 //		// and then make assertions.
 //
 //	}
-type ProjectionMock struct {
-	// EventNamesFunc mocks the EventNames method.
-	EventNamesFunc func() []string
-
+type AsyncProjectionMock struct {
 	// HandleFunc mocks the Handle method.
 	HandleFunc func(ctx context.Context, rec *event.GlobalRecord) error
 
-	// NameFunc mocks the Name method.
-	NameFunc func() string
+	// MatchesEventFunc mocks the MatchesEvent method.
+	MatchesEventFunc func(eventName string) bool
 
 	// calls tracks calls to the methods.
 	calls struct {
-		// EventNames holds details about calls to the EventNames method.
-		EventNames []struct {
-		}
 		// Handle holds details about calls to the Handle method.
 		Handle []struct {
 			// Ctx is the ctx argument value.
@@ -177,46 +168,20 @@ type ProjectionMock struct {
 			// Rec is the rec argument value.
 			Rec *event.GlobalRecord
 		}
-		// Name holds details about calls to the Name method.
-		Name []struct {
+		// MatchesEvent holds details about calls to the MatchesEvent method.
+		MatchesEvent []struct {
+			// EventName is the eventName argument value.
+			EventName string
 		}
 	}
-	lockEventNames sync.RWMutex
-	lockHandle     sync.RWMutex
-	lockName       sync.RWMutex
-}
-
-// EventNames calls EventNamesFunc.
-func (mock *ProjectionMock) EventNames() []string {
-	if mock.EventNamesFunc == nil {
-		panic("ProjectionMock.EventNamesFunc: method is nil but Projection.EventNames was just called")
-	}
-	callInfo := struct {
-	}{}
-	mock.lockEventNames.Lock()
-	mock.calls.EventNames = append(mock.calls.EventNames, callInfo)
-	mock.lockEventNames.Unlock()
-	return mock.EventNamesFunc()
-}
-
-// EventNamesCalls gets all the calls that were made to EventNames.
-// Check the length with:
-//
-//	len(mockedProjection.EventNamesCalls())
-func (mock *ProjectionMock) EventNamesCalls() []struct {
-} {
-	var calls []struct {
-	}
-	mock.lockEventNames.RLock()
-	calls = mock.calls.EventNames
-	mock.lockEventNames.RUnlock()
-	return calls
+	lockHandle       sync.RWMutex
+	lockMatchesEvent sync.RWMutex
 }
 
 // Handle calls HandleFunc.
-func (mock *ProjectionMock) Handle(ctx context.Context, rec *event.GlobalRecord) error {
+func (mock *AsyncProjectionMock) Handle(ctx context.Context, rec *event.GlobalRecord) error {
 	if mock.HandleFunc == nil {
-		panic("ProjectionMock.HandleFunc: method is nil but Projection.Handle was just called")
+		panic("AsyncProjectionMock.HandleFunc: method is nil but AsyncProjection.Handle was just called")
 	}
 	callInfo := struct {
 		Ctx context.Context
@@ -234,8 +199,8 @@ func (mock *ProjectionMock) Handle(ctx context.Context, rec *event.GlobalRecord)
 // HandleCalls gets all the calls that were made to Handle.
 // Check the length with:
 //
-//	len(mockedProjection.HandleCalls())
-func (mock *ProjectionMock) HandleCalls() []struct {
+//	len(mockedAsyncProjection.HandleCalls())
+func (mock *AsyncProjectionMock) HandleCalls() []struct {
 	Ctx context.Context
 	Rec *event.GlobalRecord
 } {
@@ -249,29 +214,34 @@ func (mock *ProjectionMock) HandleCalls() []struct {
 	return calls
 }
 
-// Name calls NameFunc.
-func (mock *ProjectionMock) Name() string {
-	if mock.NameFunc == nil {
-		panic("ProjectionMock.NameFunc: method is nil but Projection.Name was just called")
+// MatchesEvent calls MatchesEventFunc.
+func (mock *AsyncProjectionMock) MatchesEvent(eventName string) bool {
+	if mock.MatchesEventFunc == nil {
+		panic("AsyncProjectionMock.MatchesEventFunc: method is nil but AsyncProjection.MatchesEvent was just called")
 	}
 	callInfo := struct {
-	}{}
-	mock.lockName.Lock()
-	mock.calls.Name = append(mock.calls.Name, callInfo)
-	mock.lockName.Unlock()
-	return mock.NameFunc()
+		EventName string
+	}{
+		EventName: eventName,
+	}
+	mock.lockMatchesEvent.Lock()
+	mock.calls.MatchesEvent = append(mock.calls.MatchesEvent, callInfo)
+	mock.lockMatchesEvent.Unlock()
+	return mock.MatchesEventFunc(eventName)
 }
 
-// NameCalls gets all the calls that were made to Name.
+// MatchesEventCalls gets all the calls that were made to MatchesEvent.
 // Check the length with:
 //
-//	len(mockedProjection.NameCalls())
-func (mock *ProjectionMock) NameCalls() []struct {
+//	len(mockedAsyncProjection.MatchesEventCalls())
+func (mock *AsyncProjectionMock) MatchesEventCalls() []struct {
+	EventName string
 } {
 	var calls []struct {
+		EventName string
 	}
-	mock.lockName.RLock()
-	calls = mock.calls.Name
-	mock.lockName.RUnlock()
+	mock.lockMatchesEvent.RLock()
+	calls = mock.calls.MatchesEvent
+	mock.lockMatchesEvent.RUnlock()
 	return calls
 }

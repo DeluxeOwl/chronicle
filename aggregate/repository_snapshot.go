@@ -17,15 +17,15 @@ var _ Repository[testAggID, testAggEvent, *testAgg] = (*ESRepoWithSnapshots[test
 //
 // When retrieving an aggregate, it first attempts to load from a recent snapshot
 // and then replays only the events that occurred since. When saving, it commits
-// events and then, based on a configured strategy, creates and stores a new
+// events and then, based on a configured policy, creates and stores a new
 // snapshot of the aggregate's state.
 type ESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID]] struct {
 	internal Repository[TID, E, R]
 
-	snapstore        SnapshotStore[TID, TS]
-	snapshotter      Snapshotter[TID, E, R, TS]
-	onSnapshotErr    OnSnapshotErrFunc
-	snapshotStrategy SnapshotStrategy[TID, E, R]
+	snapstore      SnapshotStore[TID, TS]
+	snapshotter    Snapshotter[TID, E, R, TS]
+	onSnapshotErr  OnSnapshotErrFunc
+	SnapshotPolicy SnapshotPolicy[TID, E, R]
 
 	snapshotSaveEnabled bool
 }
@@ -57,7 +57,7 @@ type OnSnapshotErrFunc = func(ctx context.Context, err error) error
 //		baseRepo,
 //		snapStore,
 //		snapshotter,
-//		aggregate.SnapStrategyFor[...].EveryNEvents(50), // Snapshot every 50 events.
+//		aggregate.SnapPolicyFor[...].EveryNEvents(50), // Snapshot every 50 events.
 //	)
 //
 // Returns a new repository equipped with snapshotting capabilities, or an error if
@@ -66,7 +66,7 @@ func NewESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID
 	esRepo Repository[TID, E, R],
 	snapstore SnapshotStore[TID, TS],
 	snapshotter Snapshotter[TID, E, R, TS],
-	snapstrategy SnapshotStrategy[TID, E, R],
+	snapPolicy SnapshotPolicy[TID, E, R],
 	opts ...ESRepoWithSnapshotsOption,
 ) (*ESRepoWithSnapshots[TID, E, R, TS], error) {
 	esr := &ESRepoWithSnapshots[TID, E, R, TS]{
@@ -76,7 +76,7 @@ func NewESRepoWithSnapshots[TID ID, E event.Any, R Root[TID, E], TS Snapshot[TID
 		},
 		snapstore:           snapstore,
 		snapshotter:         snapshotter,
-		snapshotStrategy:    snapstrategy,
+		SnapshotPolicy:      snapPolicy,
 		snapshotSaveEnabled: true,
 	}
 
@@ -184,7 +184,7 @@ func (esr *ESRepoWithSnapshots[TID, E, R, TS]) LoadAggregate(
 }
 
 // Save persists the uncommitted events of an aggregate. After successfully saving
-// the events, it runs the configured SnapshotStrategy to determine whether
+// the events, it runs the configured SnapshotPolicy to determine whether
 // a new snapshot of the aggregate's state should also be saved.
 //
 // Usage:
@@ -215,7 +215,7 @@ func (esr *ESRepoWithSnapshots[TID, E, R, TS]) Save(
 
 	previousVersion := newVersion - version.Version(len(committedEvents))
 
-	if !esr.snapshotStrategy.ShouldSnapshot(
+	if !esr.SnapshotPolicy.ShouldSnapshot(
 		ctx,
 		root,
 		previousVersion,

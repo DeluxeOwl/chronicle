@@ -30,7 +30,7 @@ func main() {
 		baseRepo,
 		accountSnapshotStore,
 		&account.Snapshotter{},
-		aggregate.SnapStrategyFor[*account.Account]().EveryNEvents(3),
+		aggregate.SnapPolicyFor[*account.Account]().EveryNEvents(3),
 	)
 	if err != nil {
 		panic(err)
@@ -48,7 +48,7 @@ func main() {
 
 	// Saving the aggregate with 3 uncommitted events.
 	// The new version will be 3.
-	// Since 3 >= 3 (our N), the strategy will trigger a snapshot.
+	// Since 3 >= 3 (our N), the policy will trigger a snapshot.
 	_, _, err = accountRepo.Save(ctx, acc)
 	if err != nil {
 		panic(err)

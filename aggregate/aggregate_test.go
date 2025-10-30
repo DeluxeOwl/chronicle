@@ -268,13 +268,13 @@ func Test_Repos_With_Snapshots_And_Version(t *testing.T) {
 					)
 					require.NoError(t, err)
 
-					// You could also do: aggregate.SnapStrategyFor[*Person]().Custom(CustomSnapshot),
+					// You could also do: aggregate.SnapPolicyFor[*Person]().Custom(CustomSnapshot),
 					// Person is a snapshotter
 					repo, err := chronicle.NewEventSourcedRepositoryWithSnapshots(
 						esRepo,
 						ss.Store,
 						NewEmpty(),
-						aggregate.SnapStrategyFor[*Person]().EveryNEvents(10),
+						aggregate.SnapPolicyFor[*Person]().EveryNEvents(10),
 					)
 					require.NoError(t, err)
 

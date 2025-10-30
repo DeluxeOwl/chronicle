@@ -45,7 +45,7 @@ func main() {
 		&accountv2.Snapshotter{
 			TimeProvider: timeProvider, // ⚠️ The same timeProvider
 		},
-		aggregate.SnapStrategyFor[*accountv2.Account]().EveryNEvents(3),
+		aggregate.SnapPolicyFor[*accountv2.Account]().EveryNEvents(3),
 	)
 	if err != nil {
 		panic(err)
