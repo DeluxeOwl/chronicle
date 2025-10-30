@@ -102,7 +102,6 @@ func NewAsyncProjectionRunner(
 	return runner, nil
 }
 
-//nolint:gocognit,funlen // Channels.
 func (r *AsyncProjectionRunner) Run(ctx context.Context) error {
 	pname := r.projection.Name()
 
