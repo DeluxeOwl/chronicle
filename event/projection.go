@@ -1,4 +1,4 @@
-package projection
+package event
 
 import (
 	"context"
@@ -7,17 +7,26 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/DeluxeOwl/chronicle/event"
 	"github.com/DeluxeOwl/chronicle/version"
 )
 
-//go:generate go run github.com/matryer/moq@latest -pkg projection_test -skip-ensure -rm -out projection_mock_test.go . Checkpointer AsyncProjection
+//go:generate go run github.com/matryer/moq@latest -pkg event_test -skip-ensure -rm -out projection_mock_test.go . Checkpointer AsyncProjection
+//go:generate go run github.com/matryer/moq@latest -pkg eventlog_test -skip-ensure -rm -out ../eventlog/projection_mock_test.go . SyncProjection
 
-// TODO: how would a ProjectionTx even make sense? Maybe combine TransactionalAggregateProcessor + another one that doesn't take the events
-
+// AsyncProjection processes events asynchronously from the global event stream.
+// It processes one event at a time with explicit checkpoint management for
+// resumability and fault tolerance.
+//
+// Use cases:
+//   - Eventually consistent projections
+//   - Cross-service integration
+//   - Analytics and reporting
+//   - Email notifications, etc.
 type AsyncProjection interface {
 	MatchesEvent(eventName string) bool
-	Handle(ctx context.Context, rec *event.GlobalRecord) error
+	// Handle processes a single event from the global stream.
+	// Checkpoint is saved based on the configured CheckpointPolicy.
+	Handle(ctx context.Context, rec *GlobalRecord) error
 }
 
 type Checkpointer interface {
@@ -28,7 +37,7 @@ type Checkpointer interface {
 type OnSaveCheckpointErrFunc = func(ctx context.Context, err error) error
 
 type AsyncProjectionRunner struct {
-	eventlog       event.GlobalLog
+	eventlog       GlobalLog
 	checkpointer   Checkpointer
 	projectionName string
 
@@ -57,7 +66,7 @@ var (
 )
 
 func NewAsyncProjectionRunner(
-	log event.GlobalLog,
+	log GlobalLog,
 	checkpointer Checkpointer,
 	projection AsyncProjection,
 	projectionName string,

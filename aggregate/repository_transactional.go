@@ -60,7 +60,7 @@ func NewTransactionalRepository[TX any, TID ID, E event.Any, R Root[TID, E]](
 	repo := &TransactionalRepository[TX, TID, E, R]{
 		transactor:         log,
 		txLog:              log,
-		eventlog:           event.NewLogWithProcessor(log, nil),
+		eventlog:           event.NewLogWithProjection(log, nil),
 		createRoot:         createRoot,
 		registry:           event.NewConcreteRegistryFromAny[E](event.GlobalRegistry),
 		encoder:            encoding.DefaultJSONB,
@@ -110,7 +110,7 @@ func NewTransactionalRepositoryWithTransactor[TX any, TID ID, E event.Any, R Roo
 	repo := &TransactionalRepository[TX, TID, E, R]{
 		transactor:         transactor,
 		txLog:              txLog,
-		eventlog:           event.NewTransactableLogWithProcessor(transactor, txLog, nil),
+		eventlog:           event.NewTransactableLogWithProjection(transactor, txLog, nil),
 		createRoot:         createRoot,
 		registry:           event.NewConcreteRegistryFromAny[E](event.GlobalRegistry),
 		encoder:            encoding.DefaultJSONB,

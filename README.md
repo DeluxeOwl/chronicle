@@ -34,6 +34,9 @@
 	- [`event.TransactionalEventLog` and `aggregate.TransactionalRepository`](#eventtransactionaleventlog-and-aggregatetransactionalrepository)
 	- [Example](#example)
 	- [Example with outbox](#example-with-outbox)
+	- [Synchronous Projections (`event.SyncProjection`)](#synchronous-projections-eventsyncprojection)
+		- [Example: System Wide Constraints - Unique Usernames](#example-system-wide-constraints---unique-usernames)
+	- [Asynchronous Projections (`event.AsyncProjection`)](#asynchronous-projections-eventasyncprojection)
 	- [Types of projections](#types-of-projections)
 		- [By Scope](#by-scope)
 		- [By Behavior](#by-behavior)
@@ -2182,6 +2185,133 @@ Polling goroutine stopping.
 
 As you can see, the outbox table was populated atomically when the aggregates were saved. The poller then read each entry, published it, and deleted it, resulting in a reliably processed queue and an empty table at the end. 
 
+### Synchronous Projections (`event.SyncProjection`)
+
+A `SyncProjection` is a primitive for building strongly-consistent read models. It operates synchronously, ensuring that the projection is updated within the same database transaction as the events being saved.
+
+This approach is powerful for use cases that cannot tolerate eventual consistency, such as maintaining unique constraints across aggregates or building a transactional outbox. Unlike the aggregate-specific processors that work with type-safe events, `SyncProjection` operates on generic `event.Record`s. This gives it the flexibility to listen to events from different aggregate types, or even all events in the system.
+
+```go
+// SyncProjection processes events synchronously within the same transaction
+// that appends them. It receives ALL events from a single append operation
+// as a batch, ensuring atomic updates to both the event log and projection.
+//
+// Use cases:
+//   - Transactional outbox pattern
+//   - Denormalized read models requiring strong consistency
+//   - Cross-aggregate invariant enforcement
+type SyncProjection[TX any] interface {
+	MatchesEvent(eventName string) bool
+	// Handle processes a batch of events within a transaction.
+	// All events are from the same AppendEvents call.
+	Handle(ctx context.Context, tx TX, records []*Record) error
+}
+```
+
+-   `MatchesEvent(eventName string) bool`: A filter method called for each newly committed event. Your projection should return `true` for event names it wants to process.
+-   `Handle(ctx context.Context, tx TX, records []*Record) error`: The core processing logic. It receives the active transaction handle `tx` and a slice of `*Record`s that matched the filter. You can use the transaction to atomically update your read models. If this method returns an error, the entire transaction (including the event append) is rolled back.
+
+This interface is orchestrated by `event.TransactableLog`, which wraps a transactional event log and a `SyncProjection` to manage the atomic updates automatically.
+
+Use `event.NewLogWithProjection` or `event.NewTransactableLogWithProjection`. Works with most SQL and KV stores.
+
+#### Example: System Wide Constraints - Unique Usernames
+
+You can find this example in [examples/8_unique_constraint/main.go](./examples/8_unique_constraint/main.go).
+
+In event sourcing systems, all state changes are stored as immutable events. However, some business rules require unique constraints (e.g., unique usernames, email addresses, or account numbers) that must be enforced before events are persisted. And eventual consistency models can't guarantee uniqueness at write time.
+
+This example demonstrates how to implement unique constraints using synchronous projections that execute within the same transaction as event persistence. 
+
+This code uses a synchronous projection that runs in the same database transaction as event insertion: 
+```go
+type uniqueUsernameProjection struct{}
+
+func (u *uniqueUsernameProjection) Handle(
+    ctx context.Context,
+    tx *sql.Tx,
+    records []*event.Record,
+) error {
+    // Insert into unique constraint table within same transaction
+    _, err := stmt.ExecContext(ctx, holderName.HolderName)
+    if err != nil {
+        // Constraint violation rolls back entire transaction
+        return fmt.Errorf("username '%s' already exists: %w", holderName.HolderName, err)
+    }
+    return nil
+}
+```
+
+It uses a dedicated constraint table - basically we moved the constraint check into the db:
+```sql
+CREATE TABLE unique_usernames (
+    username TEXT NOT NULL UNIQUE
+);
+```
+
+Running the example:
+```bash
+❯ go run examples/8_unique_constraint/main.go
+
+State of unique usernames table:
+┌──────────┐
+│ USERNAME │
+├──────────┤
+│ Alice    │
+└──────────┘
+
+Attempting to create a duplicate user 'Alice'
+Successfully prevented duplicate user. Error: repo save: aggregate commit with tx: append events in tx: projection handle records: username 'Alice' already exists: UNIQUE constraint failed: unique_usernames.username
+
+Final state of unique usernames table:
+┌──────────┐
+│ USERNAME │
+├──────────┤
+│ Alice    │
+└──────────┘
+
+All events (note that the duplicate 'Alice' event was not saved):
+┌──────────────────┬─────────┬─────────────────────────┬────────────────────────────
+│      LOG ID      │ VERSION │       EVENT NAME        │              DATA                                                                                
+├──────────────────┼─────────┼─────────────────────────┼────────────────────────────
+│ alice-account-01 │ 1       │ account/opened          │ {..., "holderName":"Alice"} 
+│ alice-account-01 │ 2       │ account/money_deposited │ {..., "amount":100} 
+│ alice-account-01 │ 3       │ account/money_deposited │ {..., "amount":50} 
+
+```
+
+### Asynchronous Projections (`event.AsyncProjection`)
+
+An `AsyncProjection` is the primitive for building eventually-consistent read models. It works by processing events from the global, system-wide event stream *after* they have been successfully committed. This is the most common type of projection, ideal for analytics, reporting, search indexes, or notifying external systems where a slight delay is acceptable.
+
+It operates on generic `event.GlobalRecord`s and is designed for resilience.
+
+```go
+// AsyncProjection processes events asynchronously from the global event stream.
+// It processes one event at a time with explicit checkpoint management for
+// resumability and fault tolerance.
+//
+// Use cases:
+//   - Eventually consistent projections
+//   - Cross-service integration
+//   - Analytics and reporting
+//   - Email notifications, etc.
+type AsyncProjection interface {
+	MatchesEvent(eventName string) bool
+	// Handle processes a single event from the global stream.
+	// Checkpoint is saved based on the configured CheckpointPolicy.
+	Handle(ctx context.Context, rec *GlobalRecord) error
+}
+```
+
+-   `MatchesEvent(eventName string) bool`: Filters the global event stream, allowing you to process only the events relevant to your projection.
+-   `Handle(ctx context.Context, rec *GlobalRecord) error`: Called for each individual event that passes the filter. Your logic here is responsible for updating the read model.
+
+An `AsyncProjection` is driven by the `event.AsyncProjectionRunner`. This runner is a configurable component that manages the entire lifecycle:
+-   It polls or "tails" the global event log for new events (for event logs that support tailing)
+-   It passes matching events to your projection's `Handle` method.
+-   It manages checkpoints by saving the `globalVersion` of the last successfully processed event. This ensures that if the projection restarts, it can resume from exactly where it left off, guaranteeing no events are missed.
+
 ### Types of projections
 
 > [!WARNING] 
@@ -2201,7 +2331,7 @@ There's a lot of projection types, choosing which fits you best requires some co
    * Span across many aggregates to build a denormalized or system-wide view.
    * Example: a leaderboard across all players in a game.
    * ⚠️ In `chronicle`:
-     * This is handled by the `event.GlobalLog` interface, where you can `ReadAllEvents(...)`
+     * This is handled by the `event.GlobalLog` interface, where you can `ReadAllEvents(...)` and by `event.AsyncProjection`
      * Can also be done by directly querying the backing store of the event log, as seen in [examples/6_projections/main.go](./examples/6_projections/main.go) - where it can be done via sql queries directly.
 
 #### By Behavior
@@ -2212,6 +2342,7 @@ There's a lot of projection types, choosing which fits you best requires some co
    * ⚠️ In `chronicle`:
      * If you don't require durability, you can wrap the `Save(...)` method on the repository to publish to a queue
      * If you require durability, you can use an `*aggregate.TransactionalRepository` to ensure all writes are durable before publishing, or to update the projection directly etc.
+     * Or you can use `event.SyncProjection` with most SQL stores and KV stores.
 
 2. **On-demand / Ad-hoc projections**
    * Rebuilt only when needed, often discarded afterward.
@@ -2225,6 +2356,7 @@ There's a lot of projection types, choosing which fits you best requires some co
    * ⚠️ In `chronicle`:
      * Can be done by directly querying the backing store or via an `event.GlobalLog`
      * It will probably require you to "remember" (possibly in a different store) the last processed id, version etc.
+       * This is handled by `event.AsyncProjection`
      * You might also be interested in idempotency
 
 
@@ -2235,14 +2367,19 @@ There's a lot of projection types, choosing which fits you best requires some co
    * Example: total sales per day.
    * ⚠️ In `chronicle`:
      * This most definitely requires an `event.GlobalLog` or querying the backing store directly, since you need the events from a group of different aggregates
+     * Can be handled by either an `event.SyncProjection` or `event.AsyncProjection`
 
 2. **Materialized views (denormalized projections)**
    * Store data in a form that’s ready for querying, often optimized for UI.
    * Example: user profile with last login, recent purchases, and preferences.
+   * ⚠️ In `chronicle`:
+     * Can be handled by either an `event.SyncProjection` or `event.AsyncProjection`
 
 3. **Policy projections (process managers/sagas)**
    * React to certain event sequences to drive workflows.
    * Example: after "OrderPlaced" and "PaymentReceived," trigger "ShipOrder."
+   * ⚠️ In `chronicle`:
+     * Can be handled by either an `event.SyncProjection` or `event.AsyncProjection`
 
 #### By Consistency Guarantees
 
@@ -2250,11 +2387,13 @@ There's a lot of projection types, choosing which fits you best requires some co
    * Most common - projections lag slightly behind the event stream.
    * ⚠️ In `chronicle`:
      * This happens if you're using the outbox pattern or have any kind of pub/sub mechanism in your code
+     * Or handled by `event.AsyncProjection`
 
 2. **Strongly consistent projections (also called synchronous projections)**
-   * Rare in event sourcing, but sometimes required for critical counters or invariants.
+   * Rare in event sourcing, but sometimes required for critical counters or invariants. Works really well if the backing store is SQL or KV.
    * ⚠️ In `chronicle`:
      * This is done when the backing store is an `event.TransactionalLog` at it exposes the transaction AND you want to store your projections in the same store
+     * Use an `event.SyncProjection`
      * This is a reasonable and not expensive approach if you're using an SQL store (such as postgres)
      * It also makes the system easier to work with
 
@@ -2928,17 +3067,14 @@ I found that none of them were as flexible as I'd like - a lot of them were only
 - cqrs example
 - "as a service"
 - a "prod ready" sink with postgres, maybe with NATS
-- handling system wide constraints: like unique usernames
+- handling system wide constraints: like unique usernames ✅
 - event deletion/compaction ✅
 - archiving ✅
 - first class support for sagas/workflows (maybe a separate package)
 - jobs? that might be out of scope but could work as a separate project
 - event versioning + upcasting events ✅
 	- MultiTransformer that extends Transformer -> upcast to multiple events ✅
-- a projection package: subscribe to GLobalLog and manage state, checkpointing, replay, idempotency & retry
-  - lifecycle management
-  - parallel replay
-  - idempotency helpers, dlq
+- a projection package: subscribe to GlobalLog and manage state, checkpointing ✅
 - ci/cd & more tests
 - observability
 - add another selector which allows me to get a specific version ✅

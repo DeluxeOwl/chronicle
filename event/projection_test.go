@@ -1,4 +1,4 @@
-package projection_test
+package event_test
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 
 	"github.com/DeluxeOwl/chronicle/event"
 	"github.com/DeluxeOwl/chronicle/eventlog"
-	"github.com/DeluxeOwl/chronicle/projection"
+
 	"github.com/DeluxeOwl/chronicle/version"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -87,12 +87,12 @@ func TestProjectionRunner_Run(t *testing.T) {
 		},
 	}
 
-	runner, err := projection.NewAsyncProjectionRunner(
+	runner, err := event.NewAsyncProjectionRunner(
 		log,
 		checkpointer,
 		accountProjection,
 		"accounts",
-		projection.WithPollInterval(pollInterval),
+		event.WithPollInterval(pollInterval),
 	)
 	require.NoError(t, err)
 
@@ -174,14 +174,14 @@ func TestProjectionRunner_StopsOnHandleError(t *testing.T) {
 		},
 	}
 
-	runner, err := projection.NewAsyncProjectionRunner(
+	runner, err := event.NewAsyncProjectionRunner(
 		log,
 		checkpointer,
 		proj,
 		"failing-proj",
-		projection.WithPollInterval(pollInterval),
+		event.WithPollInterval(pollInterval),
 		//nolint:exhaustruct // not needed
-		projection.WithSlogHandler(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		event.WithSlogHandler(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 			Level: slog.LevelDebug,
 		})),
 	)
@@ -268,8 +268,8 @@ func TestProjectionRunner_CheckpointPolicies(t *testing.T) {
 			HandleFunc:       func(ctx context.Context, rec *event.GlobalRecord) error { return nil },
 		}
 
-		runner, err := projection.NewAsyncProjectionRunner(log, checkpointer, projMock, projName,
-			projection.WithPollInterval(pollInterval),
+		runner, err := event.NewAsyncProjectionRunner(log, checkpointer, projMock, projName,
+			event.WithPollInterval(pollInterval),
 		)
 		require.NoError(t, err)
 
@@ -303,10 +303,10 @@ func TestProjectionRunner_CheckpointPolicies(t *testing.T) {
 			HandleFunc:       func(ctx context.Context, rec *event.GlobalRecord) error { return nil },
 		}
 
-		policy := projection.EveryNEvents(2)
-		runner, err := projection.NewAsyncProjectionRunner(log, checkpointer, projMock, projName,
-			projection.WithPollInterval(pollInterval),
-			projection.WithCheckpointPolicy(policy),
+		policy := event.EveryNEvents(2)
+		runner, err := event.NewAsyncProjectionRunner(log, checkpointer, projMock, projName,
+			event.WithPollInterval(pollInterval),
+			event.WithCheckpointPolicy(policy),
 		)
 		require.NoError(t, err)
 
@@ -350,13 +350,13 @@ func TestProjectionRunner_CheckpointPolicies(t *testing.T) {
 
 		// Policy: Checkpoint every 3 events OR after 100ms.
 		// Since each event takes 60ms, the 100ms duration will trigger after the 2nd event.
-		policy := projection.AnyOf(
-			projection.EveryNEvents(3),
-			projection.AfterDuration(100*time.Millisecond),
+		policy := event.AnyOf(
+			event.EveryNEvents(3),
+			event.AfterDuration(100*time.Millisecond),
 		)
-		runner, err := projection.NewAsyncProjectionRunner(log, checkpointer, projMock, projName,
-			projection.WithPollInterval(pollInterval),
-			projection.WithCheckpointPolicy(policy),
+		runner, err := event.NewAsyncProjectionRunner(log, checkpointer, projMock, projName,
+			event.WithPollInterval(pollInterval),
+			event.WithCheckpointPolicy(policy),
 		)
 		require.NoError(t, err)
 
@@ -386,7 +386,7 @@ func TestProjectionRunner_CheckpointPolicies(t *testing.T) {
 }
 
 func TestAsyncProjectionRunner_WithTailing(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
 	// Use an in-memory event log configured for tailing.
@@ -421,14 +421,14 @@ func TestAsyncProjectionRunner_WithTailing(t *testing.T) {
 	})
 	require.NoError(t, err) // Global version will be 1
 
-	runner, err := projection.NewAsyncProjectionRunner(
+	runner, err := event.NewAsyncProjectionRunner(
 		log,
 		checkpointer,
 		proj,
 		"test-tailing-projection",
-		projection.WithTailing(true),
+		event.WithTailing(true),
 		// Use a simple checkpoint policy for predictability in this test
-		projection.WithCheckpointPolicy(projection.EveryNEvents(1)),
+		event.WithCheckpointPolicy(event.EveryNEvents(1)),
 	)
 	require.NoError(t, err)
 
@@ -440,7 +440,12 @@ func TestAsyncProjectionRunner_WithTailing(t *testing.T) {
 		runErr := runner.Run(ctx)
 
 		// We expect a context.Canceled error on shutdown
-		require.ErrorIs(t, runErr, context.Canceled, "runner.Run() should exit with context.Canceled")
+		assert.ErrorIs(
+			t,
+			runErr,
+			context.Canceled,
+			"runner.Run() should exit with context.Canceled",
+		)
 		t.Log("runner.Run() finished.")
 	}()
 
@@ -466,7 +471,12 @@ func TestAsyncProjectionRunner_WithTailing(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Timeout: Runner did not process the tailed event")
 	}
-	require.Equal(t, int64(2), finalVersion.Load(), "Checkpoint should be updated after second event")
+	require.Equal(
+		t,
+		int64(2),
+		finalVersion.Load(),
+		"Checkpoint should be updated after second event",
+	)
 
 	t.Log("Appending third event...")
 	_, err = log.AppendEvents(ctx, "stream-1", version.CheckExact(2), event.RawEvents{
@@ -483,7 +493,12 @@ func TestAsyncProjectionRunner_WithTailing(t *testing.T) {
 
 	// Note: With EveryNEvents(1), the checkpoint is saved inside the processing loop.
 	// handleShutdown will save it again, which is fine.
-	require.Equal(t, int64(3), finalVersion.Load(), "Checkpoint should be updated after third event")
+	require.Equal(
+		t,
+		int64(3),
+		finalVersion.Load(),
+		"Checkpoint should be updated after third event",
+	)
 
 	t.Log("All events processed, sending shutdown signal...")
 	cancel()
@@ -491,7 +506,12 @@ func TestAsyncProjectionRunner_WithTailing(t *testing.T) {
 
 	t.Log("Runner has shut down.")
 
-	require.Len(t, proj.HandleCalls(), 3, "Projection.Handle should be called 3 times")
+	require.Len(t, proj.HandleCalls(), 3, "event.Handle should be called 3 times")
 
-	require.Equal(t, int64(3), finalVersion.Load(), "Final checkpoint on shutdown must be for the last processed event")
+	require.Equal(
+		t,
+		int64(3),
+		finalVersion.Load(),
+		"Final checkpoint on shutdown must be for the last processed event",
+	)
 }
