@@ -11,6 +11,7 @@ import (
 )
 
 //go:generate go run github.com/matryer/moq@latest -pkg event_test -skip-ensure -rm -out projection_mock_test.go . Checkpointer AsyncProjection
+//go:generate go run github.com/matryer/moq@latest -pkg eventlog_test -skip-ensure -rm -out ../eventlog/projection_mock_test.go . SyncProjection
 
 type AsyncProjection interface {
 	MatchesEvent(eventName string) bool

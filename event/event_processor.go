@@ -7,19 +7,6 @@ import (
 	"github.com/DeluxeOwl/chronicle/version"
 )
 
-//go:generate go run github.com/matryer/moq@latest -pkg eventlog_test -skip-ensure -rm -out ../eventlog/processor_mock_test.go . TransactionalProcessor Transactor TransactionalLog
-
-// TransactionalProcessor defines the contract for processing messages within a transaction.
-// The user implements this interface for their specific database and schema.
-// T is the transaction handle type, e.g., *sql.Tx.
-// It can be used as an outbox, or to create projections.
-type TransactionalProcessor[TX any] interface {
-	// Process is called by the framework *inside* an active transaction,
-	// just after events have been successfully written to the event log.
-	// It receives the transaction handle and the newly created event records.
-	ProcessRecords(ctx context.Context, tx TX, records []*Record) error
-}
-
 type Transactor[TX any] interface {
 	WithinTx(ctx context.Context, fn func(ctx context.Context, tx TX) error) error
 }
@@ -41,33 +28,33 @@ type TransactionalEventLog[TX any] interface {
 }
 
 // TransactableLog is an event.Log that orchestrates writes within a transaction
-// and processes messages for a transactional processor.
+// and handles messages for a synchronous projection.
 type TransactableLog[TX any] struct {
 	transactor Transactor[TX]
 	txLog      TransactionalLog[TX]
-	processor  TransactionalProcessor[TX]
+	projection SyncProjection[TX]
 }
 
-func NewLogWithProcessor[TX any](
+func NewLogWithProjection[TX any](
 	log TransactionalEventLog[TX],
-	processor TransactionalProcessor[TX],
+	projection SyncProjection[TX],
 ) *TransactableLog[TX] {
 	return &TransactableLog[TX]{
 		transactor: log,
 		txLog:      log,
-		processor:  processor,
+		projection: projection,
 	}
 }
 
-func NewTransactableLogWithProcessor[TX any](
+func NewTransactableLogWithProjection[TX any](
 	transactor Transactor[TX],
 	txLog TransactionalLog[TX],
-	processor TransactionalProcessor[TX],
+	projection SyncProjection[TX],
 ) *TransactableLog[TX] {
 	return &TransactableLog[TX]{
 		transactor: transactor,
 		txLog:      txLog,
-		processor:  processor,
+		projection: projection,
 	}
 }
 
@@ -87,10 +74,21 @@ func (l *TransactableLog[TX]) AppendEvents(
 		}
 		newVersion = v
 
-		// If a processor is configured, call it with the same transaction.
-		if l.processor != nil {
-			if err := l.processor.ProcessRecords(ctx, tx, records); err != nil {
-				return fmt.Errorf("transactable log: process records: %w", err)
+		// If a projection is configured, call it with the same transaction.
+		if l.projection != nil {
+			// Filter records that match the projection's event criteria
+			var matchingRecords []*Record
+			for _, record := range records {
+				if l.projection.MatchesEvent(record.EventName()) {
+					matchingRecords = append(matchingRecords, record)
+				}
+			}
+
+			// Only call Handle if there are matching records
+			if len(matchingRecords) > 0 {
+				if err := l.projection.Handle(ctx, tx, matchingRecords); err != nil {
+					return fmt.Errorf("transactable log: projection handle records: %w", err)
+				}
 			}
 		}
 
