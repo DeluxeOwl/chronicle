@@ -64,7 +64,7 @@
 	- [Testing](#testing)
 - [Benchmarks](#benchmarks)
 - [Acknowledgements](#acknowledgements)
-- [TODOs \& day 2](#todos--day-2)
+- [TODO](#todo)
 
 
 ## Quickstart
@@ -3061,23 +3061,13 @@ Other resources for my event sourcing journey in no particular order:
 
 I found that none of them were as flexible as I'd like - a lot of them were only tied to specific storage (like postgres) or were **very** cumbersome to read (talking mostly about the java/dotnet ones here).
 
-## TODOs & day 2
+## TODO
 
-- add migrations as sql files ✅
-- cqrs example
-- "as a service"
-- a "prod ready" sink with postgres, maybe with NATS
-- handling system wide constraints: like unique usernames ✅
-- event deletion/compaction ✅
-- archiving ✅
-- first class support for sagas/workflows (maybe a separate package)
-- jobs? that might be out of scope but could work as a separate project
-- event versioning + upcasting events ✅
-	- MultiTransformer that extends Transformer -> upcast to multiple events ✅
-- a projection package: subscribe to GlobalLog and manage state, checkpointing ✅
-- ci/cd & more tests
-- observability
-- add another selector which allows me to get a specific version ✅
-- things like joins, maybe differential dataflow
-
-could ask "what would you like to see more as a dev"
+- Add an example e2e with CQRS, postgres and NATS. Something users can consider "prod ready". 
+- How would you provide this to Go (and not only Go) developers "as a service"? Maybe by having a nice UI interface.
+- First class support for sagas/workflows, but it can be a separate package.
+	- This also gets into the territory of "jobs" (workflows are jobs on steroids)
+- More testing in general
+- CI/CD
+- Observability: especially logs and otel.
+- An interesting thing would be to implement differential dataflow or CRDTs. Would help with joins.
