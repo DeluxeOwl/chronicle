@@ -59,7 +59,7 @@ func NewTransactableLogWithProjection[TX any](
 }
 
 func (l *TransactableLog[TX]) WithinTx(ctx context.Context, fn func(ctx context.Context, tx TX) error) error {
-	return l.WithinTx(ctx, fn)
+	return l.transactor.WithinTx(ctx, fn)
 }
 
 func (l *TransactableLog[TX]) AppendInTx(
@@ -69,7 +69,32 @@ func (l *TransactableLog[TX]) AppendInTx(
 	expected version.Check,
 	events RawEvents,
 ) (version.Version, []*Record, error) {
-	return l.AppendInTx(ctx, tx, id, expected, events)
+	var newVersion version.Version
+	v, records, err := l.txLog.AppendInTx(ctx, tx, id, expected, events)
+	if err != nil {
+		return version.Zero, nil, err
+	}
+	newVersion = v
+
+	// If a projection is configured, call it with the same transaction.
+	if l.projection != nil {
+		// Filter records that match the projection's event criteria
+		var matchingRecords []*Record
+		for _, record := range records {
+			if l.projection.MatchesEvent(record.EventName()) {
+				matchingRecords = append(matchingRecords, record)
+			}
+		}
+
+		// Only call Handle if there are matching records
+		if len(matchingRecords) > 0 {
+			if err := l.projection.Handle(ctx, tx, matchingRecords); err != nil {
+				return version.Zero, nil, fmt.Errorf("projection handle records: %w", err)
+			}
+		}
+	}
+
+	return newVersion, records, nil
 }
 
 func (l *TransactableLog[TX]) AppendEvents(
@@ -80,31 +105,13 @@ func (l *TransactableLog[TX]) AppendEvents(
 ) (version.Version, error) {
 	var newVersion version.Version
 
-	err := l.transactor.WithinTx(ctx, func(ctx context.Context, tx TX) error {
+	err := l.WithinTx(ctx, func(ctx context.Context, tx TX) error {
 		// Write the events to the main event store log.
-		v, records, err := l.txLog.AppendInTx(ctx, tx, id, expected, events)
+		v, _, err := l.AppendInTx(ctx, tx, id, expected, events)
 		if err != nil {
 			return fmt.Errorf("transactable log: %w", err)
 		}
 		newVersion = v
-
-		// If a projection is configured, call it with the same transaction.
-		if l.projection != nil {
-			// Filter records that match the projection's event criteria
-			var matchingRecords []*Record
-			for _, record := range records {
-				if l.projection.MatchesEvent(record.EventName()) {
-					matchingRecords = append(matchingRecords, record)
-				}
-			}
-
-			// Only call Handle if there are matching records
-			if len(matchingRecords) > 0 {
-				if err := l.projection.Handle(ctx, tx, matchingRecords); err != nil {
-					return fmt.Errorf("transactable log: projection handle records: %w", err)
-				}
-			}
-		}
 
 		// If we get here with no error, the transactor will commit.
 		return nil

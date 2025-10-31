@@ -40,6 +40,8 @@ type AccountEvent interface {
 	isAccountEvent()
 }
 
+const EventNameAccountOpened = "account/opened"
+
 // We say an account is "opened", not "created"
 type accountOpened struct {
 	shared.EventMetadata
@@ -48,7 +50,7 @@ type accountOpened struct {
 	HolderName string    `json:"holderName"`
 }
 
-func (*accountOpened) EventName() string { return "account/opened" }
+func (*accountOpened) EventName() string { return EventNameAccountOpened }
 func (*accountOpened) isAccountEvent()   {}
 
 type moneyDeposited struct {
