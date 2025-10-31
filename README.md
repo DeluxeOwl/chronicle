@@ -3008,10 +3008,7 @@ I found that none of them were as flexible as I'd like - a lot of them were only
 - jobs? that might be out of scope but could work as a separate project
 - event versioning + upcasting events ✅
 	- MultiTransformer that extends Transformer -> upcast to multiple events ✅
-- a projection package: subscribe to GLobalLog and manage state, checkpointing, replay, idempotency & retry
-  - lifecycle management
-  - parallel replay
-  - idempotency helpers, dlq
+- a projection package: subscribe to GlobalLog and manage state, checkpointing ✅
 - ci/cd & more tests
 - observability
 - add another selector which allows me to get a specific version ✅
