@@ -23,7 +23,11 @@ type HolderNameData struct {
 	HolderName string `json:"holderName"`
 }
 
-func (u *uniqueUsernameProjection) Handle(ctx context.Context, tx *sql.Tx, records []*event.Record) error {
+func (u *uniqueUsernameProjection) Handle(
+	ctx context.Context,
+	tx *sql.Tx,
+	records []*event.Record,
+) error {
 	stmt, err := tx.PrepareContext(ctx, "INSERT INTO unique_usernames (username) VALUES (?)")
 	if err != nil {
 		return fmt.Errorf("failed to prepare statement for unique username projection: %w", err)
@@ -31,6 +35,7 @@ func (u *uniqueUsernameProjection) Handle(ctx context.Context, tx *sql.Tx, recor
 	defer stmt.Close()
 
 	for _, record := range records {
+		//nolint:exhaustruct // not needed.
 		holderName := HolderNameData{}
 
 		if err := json.Unmarshal(record.Data(), &holderName); err != nil {

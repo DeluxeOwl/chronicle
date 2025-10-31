@@ -58,7 +58,10 @@ func NewTransactableLogWithProjection[TX any](
 	}
 }
 
-func (l *TransactableLog[TX]) WithinTx(ctx context.Context, fn func(ctx context.Context, tx TX) error) error {
+func (l *TransactableLog[TX]) WithinTx(
+	ctx context.Context,
+	fn func(ctx context.Context, tx TX) error,
+) error {
 	return l.transactor.WithinTx(ctx, fn)
 }
 

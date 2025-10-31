@@ -386,7 +386,7 @@ func TestProjectionRunner_CheckpointPolicies(t *testing.T) {
 }
 
 func TestAsyncProjectionRunner_WithTailing(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
 	// Use an in-memory event log configured for tailing.
@@ -440,7 +440,12 @@ func TestAsyncProjectionRunner_WithTailing(t *testing.T) {
 		runErr := runner.Run(ctx)
 
 		// We expect a context.Canceled error on shutdown
-		require.ErrorIs(t, runErr, context.Canceled, "runner.Run() should exit with context.Canceled")
+		assert.ErrorIs(
+			t,
+			runErr,
+			context.Canceled,
+			"runner.Run() should exit with context.Canceled",
+		)
 		t.Log("runner.Run() finished.")
 	}()
 
@@ -466,7 +471,12 @@ func TestAsyncProjectionRunner_WithTailing(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Timeout: Runner did not process the tailed event")
 	}
-	require.Equal(t, int64(2), finalVersion.Load(), "Checkpoint should be updated after second event")
+	require.Equal(
+		t,
+		int64(2),
+		finalVersion.Load(),
+		"Checkpoint should be updated after second event",
+	)
 
 	t.Log("Appending third event...")
 	_, err = log.AppendEvents(ctx, "stream-1", version.CheckExact(2), event.RawEvents{
@@ -483,7 +493,12 @@ func TestAsyncProjectionRunner_WithTailing(t *testing.T) {
 
 	// Note: With EveryNEvents(1), the checkpoint is saved inside the processing loop.
 	// handleShutdown will save it again, which is fine.
-	require.Equal(t, int64(3), finalVersion.Load(), "Checkpoint should be updated after third event")
+	require.Equal(
+		t,
+		int64(3),
+		finalVersion.Load(),
+		"Checkpoint should be updated after third event",
+	)
 
 	t.Log("All events processed, sending shutdown signal...")
 	cancel()
@@ -493,5 +508,10 @@ func TestAsyncProjectionRunner_WithTailing(t *testing.T) {
 
 	require.Len(t, proj.HandleCalls(), 3, "event.Handle should be called 3 times")
 
-	require.Equal(t, int64(3), finalVersion.Load(), "Final checkpoint on shutdown must be for the last processed event")
+	require.Equal(
+		t,
+		int64(3),
+		finalVersion.Load(),
+		"Final checkpoint on shutdown must be for the last processed event",
+	)
 }
