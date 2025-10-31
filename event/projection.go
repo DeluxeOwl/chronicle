@@ -13,8 +13,19 @@ import (
 //go:generate go run github.com/matryer/moq@latest -pkg event_test -skip-ensure -rm -out projection_mock_test.go . Checkpointer AsyncProjection
 //go:generate go run github.com/matryer/moq@latest -pkg eventlog_test -skip-ensure -rm -out ../eventlog/projection_mock_test.go . SyncProjection
 
+// AsyncProjection processes events asynchronously from the global event stream.
+// It processes one event at a time with explicit checkpoint management for
+// resumability and fault tolerance.
+//
+// Use cases:
+//   - Eventually consistent projections
+//   - Cross-service integration
+//   - Analytics and reporting
+//   - Email notifications, etc.
 type AsyncProjection interface {
 	MatchesEvent(eventName string) bool
+	// Handle processes a single event from the global stream.
+	// Checkpoint is saved based on the configured CheckpointPolicy.
 	Handle(ctx context.Context, rec *GlobalRecord) error
 }
 

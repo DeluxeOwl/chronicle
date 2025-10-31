@@ -2,14 +2,17 @@ package event
 
 import "context"
 
-// SyncProjection defines the contract for processing messages within a transaction.
-// The user implements this interface for their specific database and schema.
-// T is the transaction handle type, e.g., *sql.Tx.
-// It can be used as an outbox, or to create projections.
+// SyncProjection processes events synchronously within the same transaction
+// that appends them. It receives ALL events from a single append operation
+// as a batch, ensuring atomic updates to both the event log and projection.
+//
+// Use cases:
+//   - Transactional outbox pattern
+//   - Denormalized read models requiring strong consistency
+//   - Cross-aggregate invariant enforcement
 type SyncProjection[TX any] interface {
 	MatchesEvent(eventName string) bool
-	// Handle is called by the framework *inside* an active transaction,
-	// just after events have been successfully written to the event log.
-	// It receives the transaction handle and the newly created event records.
+	// Handle processes a batch of events within a transaction.
+	// All events are from the same AppendEvents call.
 	Handle(ctx context.Context, tx TX, records []*Record) error
 }
