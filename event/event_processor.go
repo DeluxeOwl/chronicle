@@ -58,6 +58,20 @@ func NewTransactableLogWithProjection[TX any](
 	}
 }
 
+func (l *TransactableLog[TX]) WithinTx(ctx context.Context, fn func(ctx context.Context, tx TX) error) error {
+	return l.WithinTx(ctx, fn)
+}
+
+func (l *TransactableLog[TX]) AppendInTx(
+	ctx context.Context,
+	tx TX,
+	id LogID,
+	expected version.Check,
+	events RawEvents,
+) (version.Version, []*Record, error) {
+	return l.AppendInTx(ctx, tx, id, expected, events)
+}
+
 func (l *TransactableLog[TX]) AppendEvents(
 	ctx context.Context,
 	id LogID,
