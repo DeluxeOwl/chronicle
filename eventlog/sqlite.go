@@ -52,7 +52,7 @@ var sqliteMigrations embed.FS
 // performed within a transaction, making it safe to call on application startup.
 //
 // IMPORTANT: By default, this log uses a BLOB column and expects a binary-based
-// encoder (e.g., codec.NewGOB() or codec.NewJSONB()) to be configured in the repository.
+// encoder (e.g., codec.NewProtobuf() or codec.NewJSONB()) to be configured in the repository.
 // Modify the migrations or create your own implementation of a store if you want a different format.
 //
 // Usage:
