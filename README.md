@@ -551,7 +551,6 @@ Reasons **NOT** to use event sourcing:
 - **You don't want to deal with eventual consistency.** If your application requires immediate, strong consistency between writes and reads, event sourcing adds complexity.
 - **Some constraints are harder to enforce.**
     - e.g. requiring unique usernames, see TODO
-- Optional filters for ReadEvents - the implementation can decide to use native filters (e.g. sql filters) or normal filters
 - **Data deletion and privacy require complex workarounds.**
     - e.g. the event log being immutable makes it hard to implement GDPR compliance, requiring things like [crypto shedding (see below)](https://github.com/DeluxeOwl/chronicle?tab=readme-ov-file#example-crypto-shedding-for-gdpr).
 - **It has a high learning curve.** Most developers are not familiar with this pattern.
@@ -3073,3 +3072,4 @@ I found that none of them were as flexible as I'd like - a lot of them were only
 - CI/CD
 - Observability: especially logs and otel.
 - An interesting thing would be to implement differential dataflow or CRDTs. Would help with joins.
+- Optional filters for ReadEvents - the implementation can decide to use native filters (e.g. sql filters) or normal filters
