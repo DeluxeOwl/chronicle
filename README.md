@@ -3063,6 +3063,9 @@ I found that none of them were as flexible as I'd like - a lot of them were only
 
 ## TODO
 
+- Note that index creating is up to the user
+  - e.g. on event name `CREATE INDEX IF NOT EXISTS idx_chronicle_events_event_name ON chronicle_events (event_name);`
+  - e.g. on jsonb data
 - Namespaces in tables like https://github.com/earendil-works/absurd/blob/main/sql/absurd.sql (schemas?)
 - Add an example e2e with CQRS, postgres and NATS. Something users can consider "prod ready". 
 - How would you provide this to Go (and not only Go) developers "as a service"? Maybe by having a nice UI interface.
