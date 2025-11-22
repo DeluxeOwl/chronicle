@@ -3058,6 +3058,7 @@ Other resources for my event sourcing journey in no particular order:
 - https://github.com/eugene-khyst/postgresql-event-sourcing
 - https://zitadel.com/docs/concepts/architecture/software
 	- https://zitadel.com/docs/concepts/eventstore/implementation
+- https://skoredin.pro/blog/golang/event-sourcing-go
 
 I found that none of them were as flexible as I'd like - a lot of them were only tied to specific storage (like postgres) or were **very** cumbersome to read (talking mostly about the java/dotnet ones here).
 
