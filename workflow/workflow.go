@@ -206,7 +206,7 @@ type Context struct {
 }
 
 // Value implements context.Context Value method.
-func (c *Context) Value(key interface{}) interface{} {
+func (c *Context) Value(key any) any {
 	return c.ctx.Value(key)
 }
 
