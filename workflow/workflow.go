@@ -28,17 +28,14 @@ type WorkflowInstance struct {
 	currentStep  int
 }
 
-// InstanceID is the unique identifier for a workflow instance.
 type InstanceID string
 
 func (i InstanceID) String() string { return string(i) }
 
-// ID returns the workflow instance ID.
 func (w *WorkflowInstance) ID() InstanceID {
 	return w.id
 }
 
-// Status represents the current state of a workflow instance.
 type Status string
 
 const (
@@ -47,8 +44,6 @@ const (
 	StatusCompleted Status = "completed"
 	StatusFailed    Status = "failed"
 )
-
-// Event type declarations
 
 //sumtype:decl
 type WorkflowEvent interface {
@@ -96,7 +91,6 @@ type workflowFailed struct {
 func (*workflowFailed) EventName() string { return "workflow/failed" }
 func (*workflowFailed) isWorkflowEvent()  {}
 
-// EventFuncs returns the constructor functions for all workflow events.
 func (w *WorkflowInstance) EventFuncs() event.FuncsFor[WorkflowEvent] {
 	return event.FuncsFor[WorkflowEvent]{
 		func() WorkflowEvent { return new(workflowStarted) },
@@ -107,7 +101,6 @@ func (w *WorkflowInstance) EventFuncs() event.FuncsFor[WorkflowEvent] {
 	}
 }
 
-// Apply implements the aggregate event application logic.
 func (w *WorkflowInstance) Apply(evt WorkflowEvent) error {
 	switch e := evt.(type) {
 	case *workflowStarted:
@@ -134,12 +127,10 @@ func (w *WorkflowInstance) Apply(evt WorkflowEvent) error {
 	return nil
 }
 
-// recordThat records a workflow event.
 func (w *WorkflowInstance) recordThat(event WorkflowEvent) error {
 	return aggregate.RecordEvent(w, event)
 }
 
-// NewEmpty creates a new empty workflow instance.
 func NewEmpty() *WorkflowInstance {
 	//nolint:exhaustruct // not needed.
 	return &WorkflowInstance{
@@ -147,7 +138,7 @@ func NewEmpty() *WorkflowInstance {
 	}
 }
 
-// Runner manages workflow execution using the chronicle event sourcing infrastructure.
+// Runner manages workflow execution, it requires an event log.
 type Runner struct {
 	repo     aggregate.Repository[InstanceID, WorkflowEvent, *WorkflowInstance]
 	logger   *slog.Logger
@@ -199,28 +190,25 @@ func NewSqliteRunner(db *sql.DB) (*Runner, error) {
 }
 
 // Context is the workflow execution context passed to workflow functions.
+// It implements the context.Context interface.
 type Context struct {
 	ctx        context.Context
 	instanceID InstanceID
 	runner     *Runner
 }
 
-// Value implements context.Context Value method.
 func (c *Context) Value(key any) any {
 	return c.ctx.Value(key)
 }
 
-// Done implements context.Context Done method.
 func (c *Context) Done() <-chan struct{} {
 	return c.ctx.Done()
 }
 
-// Err implements context.Context Err method.
 func (c *Context) Err() error {
 	return c.ctx.Err()
 }
 
-// Deadline implements context.Context Deadline method.
 func (c *Context) Deadline() (time.Time, bool) {
 	return c.ctx.Deadline()
 }
