@@ -3079,3 +3079,4 @@ I found that none of them were as flexible as I'd like - a lot of them were only
 - Optional filters for ReadEvents - the implementation can decide to use native filters (e.g. sql filters) or normal filters
 - refactor to allow injecting functions instead, e.g. in workflow pass as params the Save(...) functions for the repo, registry etc
   - Maybe even for the rest
+- fumapress docs and https://github.com/alialaee/logfile backend
