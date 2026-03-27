@@ -39,7 +39,7 @@ func TestBasicWorkflow(t *testing.T) {
 	sendReports := workflow.New(
 		wfr,
 		"send-reports",
-		func(wctx workflow.Context, params *SendReportParams) (*SendReportOutput, error) {
+		func(wctx *workflow.Context, params *SendReportParams) (*SendReportOutput, error) {
 			// Step 1: Generate files
 			sentFiles, err := workflow.Step(wctx, func(_ context.Context) ([]string, error) {
 				return []string{
@@ -93,7 +93,7 @@ func TestWorkflowReplay(t *testing.T) {
 	sendReports := workflow.New(
 		wfr,
 		"replay-test",
-		func(wctx workflow.Context, params *SendReportParams) (*SendReportOutput, error) {
+		func(wctx *workflow.Context, params *SendReportParams) (*SendReportOutput, error) {
 			// Step 1: Generate files (should only execute once)
 			sentFiles, err := workflow.Step(wctx, func(_ context.Context) ([]string, error) {
 				step1Count++
@@ -137,7 +137,7 @@ func TestWorkflowReplay(t *testing.T) {
 	sendReports2 := workflow.New(
 		wfr2,
 		"replay-test",
-		func(wctx workflow.Context, params *SendReportParams) (*SendReportOutput, error) {
+		func(wctx *workflow.Context, params *SendReportParams) (*SendReportOutput, error) {
 			sentFiles, err := workflow.Step(wctx, func(_ context.Context) ([]string, error) {
 				step1Count++
 				return []string{"file1.pdf", "file2.pdf"}, nil
@@ -177,7 +177,7 @@ func TestWorkflowStepFailure(t *testing.T) {
 	sendReports := workflow.New(
 		wfr,
 		"failure-test",
-		func(wctx workflow.Context, params *SendReportParams) (*SendReportOutput, error) {
+		func(wctx *workflow.Context, params *SendReportParams) (*SendReportOutput, error) {
 			// Step 1: This will fail on first attempt
 			sentFiles, err := workflow.Step(wctx, func(_ context.Context) ([]string, error) {
 				failCount++
@@ -217,7 +217,7 @@ func TestWorkflowMultipleInstances(t *testing.T) {
 	sendReports := workflow.New(
 		wfr,
 		"multi-instance",
-		func(wctx workflow.Context, params *SendReportParams) (*SendReportOutput, error) {
+		func(wctx *workflow.Context, params *SendReportParams) (*SendReportOutput, error) {
 			sentFiles, err := workflow.Step(wctx, func(_ context.Context) ([]string, error) {
 				return []string{"file.pdf"}, nil
 			})
@@ -263,7 +263,7 @@ func TestStepFunctionVariations(t *testing.T) {
 	wf := workflow.New(
 		wfr,
 		"step-variations",
-		func(wctx workflow.Context, params *struct{}) (*TestOutput, error) {
+		func(wctx *workflow.Context, params *struct{}) (*TestOutput, error) {
 			// Step returning string
 			strResult, err := workflow.Step(wctx, func(_ context.Context) (string, error) {
 				executed["string"] = true
@@ -333,7 +333,7 @@ func TestWorkflowMidExecutionFailureAndResume(t *testing.T) {
 	sendReports := workflow.New(
 		wfr,
 		"mid-exec-failure",
-		func(wctx workflow.Context, params *SendReportParams) (*SendReportOutput, error) {
+		func(wctx *workflow.Context, params *SendReportParams) (*SendReportOutput, error) {
 			// Step 1: Always succeeds
 			sentFiles, err := workflow.Step(wctx, func(_ context.Context) ([]string, error) {
 				step1Executed++
@@ -386,7 +386,7 @@ func TestWorkflowParallelInstances(t *testing.T) {
 	sendReports := workflow.New(
 		wfr,
 		"parallel",
-		func(wctx workflow.Context, params *SendReportParams) (*SendReportOutput, error) {
+		func(wctx *workflow.Context, params *SendReportParams) (*SendReportOutput, error) {
 			sentFiles, err := workflow.Step(wctx, func(_ context.Context) ([]string, error) {
 				return []string{params.Email + ".pdf"}, nil
 			})
@@ -427,7 +427,7 @@ func TestEmptyStepResult(t *testing.T) {
 	wf := workflow.New(
 		wfr,
 		"empty-result",
-		func(wctx workflow.Context, params *struct{}) (*struct{}, error) {
+		func(wctx *workflow.Context, params *struct{}) (*struct{}, error) {
 			// Step returning empty slice
 			result, err := workflow.Step(wctx, func(_ context.Context) ([]string, error) {
 				return []string{}, nil
@@ -474,7 +474,7 @@ func TestComplexReturnTypes(t *testing.T) {
 	wf := workflow.New(
 		wfr,
 		"complex-types",
-		func(wctx workflow.Context, params *struct{}) (*ComplexType, error) {
+		func(wctx *workflow.Context, params *struct{}) (*ComplexType, error) {
 			result, err := workflow.Step(wctx, func(_ context.Context) (*ComplexType, error) {
 				return &ComplexType{
 					Map:   map[string]int{"key": 123},
@@ -512,7 +512,7 @@ func TestWorkflowAPIExactlyAsSpecified(t *testing.T) {
 	sendReports := workflow.New(
 		wfr,
 		"send-reports",
-		func(wctx workflow.Context, params *SendReportParams) (*SendReportOutput, error) {
+		func(wctx *workflow.Context, params *SendReportParams) (*SendReportOutput, error) {
 			sentFiles, err := workflow.Step(wctx, func(_ context.Context) ([]string, error) {
 				return []string{
 					"doc_7392_rev3.pdf",
@@ -558,7 +558,7 @@ func TestWorkflowEventsAreStored(t *testing.T) {
 	wf := workflow.New(
 		wfr,
 		"event-storage-test",
-		func(wctx workflow.Context, params *struct{ Value int }) (*struct{ Result int }, error) {
+		func(wctx *workflow.Context, params *struct{ Value int }) (*struct{ Result int }, error) {
 			result, err := workflow.Step(wctx, func(_ context.Context) (int, error) {
 				return params.Value * 2, nil
 			})

@@ -144,10 +144,13 @@ type Runner struct {
 	repo     aggregate.Repository[InstanceID, WorkflowEvent, *WorkflowInstance]
 	logger   *slog.Logger
 	registry event.Registry[event.Any]
+
+	// Sleep support (defined in workflow_sleep.go)
+	runnerFields
 }
 
 // NewRunner creates a new workflow runner with the given event log.
-func NewRunner(eventLog event.Log, logger *slog.Logger) (*Runner, error) {
+func NewRunner(eventLog event.Log, logger *slog.Logger, opts ...RunnerOption) (*Runner, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -173,21 +176,37 @@ func NewRunner(eventLog event.Log, logger *slog.Logger) (*Runner, error) {
 		return nil, fmt.Errorf("create workflow repository: %w", err)
 	}
 
-	return &Runner{
+	baseCtx, cancelBase := context.WithCancel(context.Background())
+
+	r := &Runner{
 		repo:     repo,
 		logger:   logger,
 		registry: registry,
-	}, nil
+		runnerFields: runnerFields{
+			nowFunc:    time.Now,
+			scheduler:  timerScheduler{},
+			baseCtx:    baseCtx,
+			cancelBase: cancelBase,
+			sleepWakes: make(map[InstanceID]sleepWakeEntry),
+			wakeChs:    make(map[InstanceID]chan struct{}),
+		},
+	}
+
+	for _, opt := range opts {
+		opt(r)
+	}
+
+	return r, nil
 }
 
 // NewSqliteRunner creates a new workflow runner backed by SQLite.
-func NewSqliteRunner(db *sql.DB) (*Runner, error) {
+func NewSqliteRunner(db *sql.DB, opts ...RunnerOption) (*Runner, error) {
 	eventLog, err := eventlog.NewSqlite(db)
 	if err != nil {
 		return nil, fmt.Errorf("create sqlite event log: %w", err)
 	}
 
-	return NewRunner(eventLog, slog.Default())
+	return NewRunner(eventLog, slog.Default(), opts...)
 }
 
 // Context is the workflow execution context passed to workflow functions.
@@ -196,6 +215,7 @@ type Context struct {
 	ctx        context.Context
 	instanceID InstanceID
 	runner     *Runner
+	stepCount  int // local counter, incremented by each Step/Step2/Sleep call within a Run
 }
 
 func (c *Context) Value(key any) any {
@@ -218,7 +238,7 @@ func (c *Context) Deadline() (time.Time, bool) {
 type Workflow[Params any, Output any] struct {
 	runner *Runner
 	name   string
-	fn     func(Context, *Params) (*Output, error)
+	fn     func(*Context, *Params) (*Output, error)
 	logger *slog.Logger
 }
 
@@ -226,7 +246,7 @@ type Workflow[Params any, Output any] struct {
 func New[Params any, Output any](
 	runner *Runner,
 	name string,
-	fn func(Context, *Params) (*Output, error),
+	fn func(*Context, *Params) (*Output, error),
 ) *Workflow[Params, Output] {
 	return &Workflow[Params, Output]{
 		runner: runner,
@@ -312,16 +332,23 @@ func (w *Workflow[Params, Output]) Run(
 		return nil, fmt.Errorf("unmarshal params: %w", err)
 	}
 
-	// Create workflow context
-	wctx := Context{
+	// Create workflow context with step counter starting at 0
+	wctx := &Context{
 		ctx:        ctx,
 		instanceID: instanceID,
 		runner:     w.runner,
+		stepCount:  0,
 	}
 
 	// Execute workflow function
 	output, err := w.fn(wctx, &params)
 	if err != nil {
+		// If the workflow is sleeping, don't record it as a failure.
+		// The scheduler will re-trigger Run when the sleep elapses.
+		if isSleepError(err) {
+			return nil, ErrWorkflowSleeping
+		}
+
 		// Reload instance to get latest state
 		instance, loadErr := w.runner.repo.Get(ctx, instanceID)
 		if loadErr != nil {
@@ -401,17 +428,18 @@ func (w *Workflow[Params, Output]) GetResult(
 // Step executes a workflow step function and caches its result.
 // If the step has already been executed for this workflow instance,
 // the cached result is returned instead of re-executing the function.
-func Step[Result any](wctx Context, fn func(context.Context) (Result, error)) (Result, error) {
+func Step[Result any](wctx *Context, fn func(context.Context) (Result, error)) (Result, error) {
 	var zero Result
+
+	// Claim the step index from the local counter
+	stepIndex := wctx.stepCount
+	wctx.stepCount++
 
 	// Always reload the instance to get the latest state
 	instance, err := wctx.runner.repo.Get(wctx.ctx, wctx.instanceID)
 	if err != nil {
 		return zero, fmt.Errorf("reload instance for step: %w", err)
 	}
-
-	// Determine the step index based on how many steps have been completed
-	stepIndex := instance.currentStep
 
 	// Check if step already completed (replay mode)
 	if cachedResult, ok := instance.stepResults[stepIndex]; ok {
@@ -467,15 +495,16 @@ func Step[Result any](wctx Context, fn func(context.Context) (Result, error)) (R
 
 // Step2 executes a workflow step function that returns only an error.
 // Like Step, it caches the result to allow replay without re-execution.
-func Step2(wctx Context, fn func(context.Context) error) error {
+func Step2(wctx *Context, fn func(context.Context) error) error {
+	// Claim the step index from the local counter
+	stepIndex := wctx.stepCount
+	wctx.stepCount++
+
 	// Always reload the instance to get the latest state
 	instance, err := wctx.runner.repo.Get(wctx.ctx, wctx.instanceID)
 	if err != nil {
 		return fmt.Errorf("reload instance for step2: %w", err)
 	}
-
-	// Determine the step index based on how many steps have been completed
-	stepIndex := instance.currentStep
 
 	// Check if step already completed (replay mode)
 	if _, ok := instance.stepResults[stepIndex]; ok {
@@ -564,6 +593,6 @@ var (
 	_ aggregate.Root[InstanceID, WorkflowEvent]      = (*WorkflowInstance)(nil)
 	_ aggregate.IDer[InstanceID]                     = (*WorkflowInstance)(nil)
 
-	// Context interface checks
+	// Context interface checks (Context implements context.Context via pointer)
 	_ context.Context = (*Context)(nil)
 )
