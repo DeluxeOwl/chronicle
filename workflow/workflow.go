@@ -246,6 +246,77 @@ func NewSqliteRunner(db *sql.DB, opts ...RunnerOption) (*Runner, error) {
 	return NewRunner(eventLog, slog.Default(), opts...)
 }
 
+// NewSqliteRunnerWithSyncQueue creates a workflow runner backed by SQLite with
+// a transactional SyncQueue. This is the production-grade setup: task creation
+// is atomic with event writes, so tasks survive process crashes.
+//
+// The SyncQueue is wired as a TransactionalAggregateProcessor, meaning the
+// ready_tasks table is populated in the same SQL transaction as the event log
+// append. Workers can pick up tasks from the persistent queue across restarts.
+func NewSqliteRunnerWithSyncQueue(db *sql.DB, opts ...RunnerOption) (*Runner, error) {
+	logger := slog.Default()
+
+	// Pre-apply options to extract configuration (nowFunc, logger, etc.)
+	tmpRunner := &Runner{
+		nowFunc:   time.Now,
+		workflows: make(map[string]executableWorkflow),
+		waitStore: newWaitStore(),
+		logger:    logger,
+	}
+	for _, opt := range opts {
+		opt(tmpRunner)
+	}
+
+	// Build SyncQueue options from the runner's config.
+	syncOpts := []SyncQueueOption{
+		WithSyncQueueNowFunc(tmpRunner.nowFunc),
+	}
+
+	syncQueue, err := NewSyncQueue(db, syncOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("create sync queue: %w", err)
+	}
+
+	eventLog, err := eventlog.NewSqlite(db)
+	if err != nil {
+		return nil, fmt.Errorf("create sqlite event log: %w", err)
+	}
+
+	// Register workflow events in a fresh registry.
+	registry := event.NewRegistry[event.Any]()
+	emptyInstance := NewEmpty()
+	wrapper := &eventFuncWrapper{funcs: emptyInstance.EventFuncs()}
+	if err := registry.RegisterEvents(wrapper); err != nil {
+		return nil, fmt.Errorf("register workflow events: %w", err)
+	}
+
+	// Create a TransactionalRepository with the SyncQueue as processor.
+	// This ensures task creation is atomic with event writes.
+	repo, err := chronicle.NewTransactionalRepository(
+		eventLog,
+		NewEmpty,
+		nil, // no transformers
+		syncQueue,
+		aggregate.DontRegisterRoot(),
+		aggregate.AnyEventRegistry(registry),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create transactional repository: %w", err)
+	}
+
+	r := &Runner{
+		repo:          repo,
+		logger:        tmpRunner.logger,
+		eventRegistry: registry,
+		nowFunc:       tmpRunner.nowFunc,
+		queue:         syncQueue,
+		workflows:     tmpRunner.workflows,
+		waitStore:     tmpRunner.waitStore,
+	}
+
+	return r, nil
+}
+
 // Context is the workflow execution context passed to workflow functions.
 // It implements the context.Context interface.
 type Context struct {

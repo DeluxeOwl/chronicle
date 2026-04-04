@@ -20,7 +20,7 @@ Workflow author code (Step, Sleep, etc.)
          ▼
     TaskQueue (pluggable interface)
     ├── MemoryQueue        ← single-process / testing (done)
-    ├── SyncProjectionQueue ← transactional event logs (TODO)
+    ├── SyncQueue          ← transactional event logs (done)
     └── AsyncProjectionQueue ← any event log (TODO)
          │
          ▼
@@ -54,6 +54,7 @@ runner.RunWorker(ctx, workflow.WorkerOptions{})   // worker loop (new)
 | [`workflow/workflow_heartbeat.go`](workflow_heartbeat.go) | Heartbeat (ExtendLease wrapper) |
 | [`workflow/queue.go`](queue.go) | `TaskQueue` interface (incl. `ExtendLease`) and `QueuedTask` type |
 | [`workflow/queue_memory.go`](queue_memory.go) | In-memory TaskQueue implementation |
+| [`workflow/queue_sync.go`](queue_sync.go) | SQL-backed TaskQueue + TransactionalAggregateProcessor (atomic with event writes) |
 | [`workflow/worker.go`](worker.go) | `RunWorker()` — polling loop that drives workflows from the queue |
 
 ### Key design decisions
@@ -147,20 +148,27 @@ err := workflow.EmitEvent(ctx, runner, "order.shipped:order-42",
 
 ## Remaining steps
 
-### 1. `queue_sync.go` — SyncProjection-backed queue (transactional event logs)
+### ✅ 1. `queue_sync.go` — TransactionalAggregateProcessor-backed queue (transactional event logs)
 
-**Why:** The `MemoryQueue` is lost on process crash. For transactional event logs (SQLite, Postgres), we can atomically populate a `ready_tasks` table in the same transaction as event writes. This gives us Absurd-level guarantees.
+Implemented in [`queue_sync.go`](queue_sync.go). The `SyncQueue` implements both `TaskQueue` and `TransactionalAggregateProcessor[*sql.Tx]`, so task creation is atomic with event writes.
 
-**How:** Implement `TaskQueue` backed by a SQL table. Use Chronicle's [`SyncProjection`](../event/projection_sync.go) or [`TransactionalAggregateProcessor`](../aggregate/repository_transactional.go) to atomically insert rows when workflow events are written.
-
+**Architecture:**
 ```
-Event append (same tx) → SyncProjection → INSERT INTO ready_tasks
-Worker → SELECT ... WHERE run_after <= NOW() AND claimed_by IS NULL (with row locking)
+repo.Save() (same tx) → SyncQueue.Process() → INSERT/DELETE workflow_ready_tasks
+Worker → Poll() → SELECT ... WHERE run_after_ns <= NOW() AND claimed_by IS NULL
 ```
 
-**Key concern:** Claiming. Use `UPDATE ... SET claimed_by = ?, claimed_until = ? WHERE id = ? AND claimed_by IS NULL` — one worker wins, others get 0 rows affected. Lease expiry (`claimed_until`) handles crashed workers. The `ExtendLease` method is already in the `TaskQueue` interface.
+**Key design decisions:**
+- Uses `TransactionalAggregateProcessor` (not `SyncProjection`) for type-safe event handling.
+- `instance_id` is the PRIMARY KEY — only one task per workflow instance at a time.
+- `INSERT OR REPLACE` is used for upserts: when a workflow sleeps/retries, the old claimed task is replaced with a new unclaimed delayed task.
+- `Complete()`/`Fail()` delete by `instance_id AND claimed_by = workerID`, so processor-created delayed tasks survive.
+- Sleep detection from `stepCompleted`: the processor parses the result JSON as `sleepResult` and checks `WakeAt`.
+- Lease-based claiming: `Poll()` claims with `claimed_by`/`claimed_until_ns`. Expired leases are reclaimable.
+- `Enqueue()` does a standalone `INSERT OR REPLACE` for use by `EmitEvent` (outside event-save transactions).
+- `NewSqliteRunnerWithSyncQueue(db, opts...)` wires everything: creates the `SyncQueue`, the SQLite event log, and a `TransactionalRepository` with the `SyncQueue` as processor.
 
-**Reference:** The [outbox pattern example](../docs/projections/example-with-outbox.md) already demonstrates atomic writes to a side table via `TransactionalAggregateProcessor` — the queue is the same pattern.
+**Tests:** 14 tests covering completion, sleep, retry, crash recovery, sleep-survives-restart, await/emit events, heartbeat, lease expiry, task cleanup, and replay.
 
 ### 2. Persistent event waiting (`waiting_events` table)
 
