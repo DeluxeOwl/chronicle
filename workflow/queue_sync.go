@@ -95,6 +95,37 @@ func NewSyncQueue(db *sql.DB, opts ...SyncQueueOption) (*SyncQueue, error) {
 		return nil, fmt.Errorf("create poll index: %w", err)
 	}
 
+	// Tables for persistent event waiting (used by persistentWaitStore +
+	// transactional inserts in Process).
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS workflow_waiting_events (
+			instance_id TEXT NOT NULL,
+			event_name TEXT NOT NULL,
+			workflow_name TEXT NOT NULL,
+			step_index INTEGER NOT NULL DEFAULT 0,
+			deadline_ns INTEGER,
+			PRIMARY KEY (instance_id, event_name)
+		)
+	`); err != nil {
+		return nil, fmt.Errorf("create waiting_events table: %w", err)
+	}
+
+	if _, err := db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_workflow_waiting_events_name
+		ON workflow_waiting_events (event_name)
+	`); err != nil {
+		return nil, fmt.Errorf("create waiting_events index: %w", err)
+	}
+
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS workflow_emitted_events (
+			event_name TEXT PRIMARY KEY,
+			payload TEXT NOT NULL
+		)
+	`); err != nil {
+		return nil, fmt.Errorf("create emitted_events table: %w", err)
+	}
+
 	return q, nil
 }
 
@@ -103,8 +134,13 @@ func NewSyncQueue(db *sql.DB, opts ...SyncQueueOption) (*SyncQueue, error) {
 // Enqueue inserts a task into the ready_tasks table. This is used by EmitEvent
 // (which operates outside the event-save transaction) and as a fallback for
 // backward compatibility. When used with a TransactionalRepository, the
-// Process method handles atomic task creation, so this is often a harmless
-// duplicate (INSERT OR REPLACE).
+// Process method handles atomic task creation, so this is often a redundant
+// write for the same task.
+//
+// Uses MIN(run_after_ns) on conflict to avoid overwriting a better (earlier)
+// run_after created atomically by Process. For example, when Process detects
+// a pre-emitted event and creates an immediate task, a subsequent Enqueue
+// from AwaitEvent with a deadline must not overwrite it.
 func (q *SyncQueue) Enqueue(_ context.Context, task QueuedTask) error {
 	runAfterNs := int64(0)
 	if !task.RunAfter.IsZero() {
@@ -112,8 +148,13 @@ func (q *SyncQueue) Enqueue(_ context.Context, task QueuedTask) error {
 	}
 
 	_, err := q.db.Exec(`
-		INSERT OR REPLACE INTO workflow_ready_tasks (instance_id, workflow_name, run_after_ns, claimed_by, claimed_until_ns)
+		INSERT INTO workflow_ready_tasks (instance_id, workflow_name, run_after_ns, claimed_by, claimed_until_ns)
 		VALUES (?, ?, ?, NULL, NULL)
+		ON CONFLICT(instance_id) DO UPDATE SET
+			workflow_name = excluded.workflow_name,
+			run_after_ns = MIN(workflow_ready_tasks.run_after_ns, excluded.run_after_ns),
+			claimed_by = NULL,
+			claimed_until_ns = NULL
 	`, string(task.InstanceID), task.WorkflowName, runAfterNs)
 	if err != nil {
 		return fmt.Errorf("sync queue enqueue: %w", err)
@@ -290,21 +331,37 @@ func (q *SyncQueue) processEvent(
 		return q.upsertTaskTx(ctx, tx, root.id, root.workflowName, e.NextRunAfter)
 
 	case *workflowWaiting:
+		// Record the waiter in the persistent waiting_events table.
+		if err := q.insertWaitingEventTx(ctx, tx, root.id, root.workflowName, e.AwaitingEvent, e.StepIndex, e.Deadline); err != nil {
+			return err
+		}
+		// Check if the event was already emitted (pre-emit case).
+		// If so, create an immediate task so the worker picks it up.
+		if q.isEventEmittedTx(tx, e.AwaitingEvent) {
+			return q.upsertTaskTx(ctx, tx, root.id, root.workflowName, q.nowFunc())
+		}
 		if !e.Deadline.IsZero() {
 			// Timeout configured — schedule a wake-up at the deadline.
 			return q.upsertTaskTx(ctx, tx, root.id, root.workflowName, e.Deadline)
 		}
-		// No deadline — the workflow is parked until EmitEvent creates a task.
+		// No deadline and no pre-emitted event — the workflow is parked
+		// until EmitEvent creates a task.
 		return nil
 
 	case *workflowEventReceived:
+		// Clean up the waiter from the persistent table.
+		_ = q.deleteWaitingEventTx(ctx, tx, root.id, e.ReceivedEvent)
 		// Event arrived — schedule immediate re-execution.
 		return q.upsertTaskTx(ctx, tx, root.id, root.workflowName, q.nowFunc())
 
 	case *workflowCompleted:
+		// Clean up any remaining waiters for this instance.
+		_ = q.deleteAllWaitingEventsTx(ctx, tx, root.id)
 		return q.deleteTaskTx(ctx, tx, root.id)
 
 	case *workflowFailed:
+		// Clean up any remaining waiters for this instance.
+		_ = q.deleteAllWaitingEventsTx(ctx, tx, root.id)
 		return q.deleteTaskTx(ctx, tx, root.id)
 
 	case *stepFailed:
@@ -354,6 +411,79 @@ func (q *SyncQueue) deleteTaskTx(
 	`, string(instanceID))
 	if err != nil {
 		return fmt.Errorf("sync queue delete task: %w", err)
+	}
+	return nil
+}
+
+// --- Waiting events table helpers (transactional) ---
+
+// insertWaitingEventTx records a workflow waiting for an event within the
+// event-save transaction.
+func (q *SyncQueue) insertWaitingEventTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	instanceID InstanceID,
+	workflowName string,
+	eventName string,
+	stepIndex int,
+	deadline time.Time,
+) error {
+	var deadlineNs *int64
+	if !deadline.IsZero() {
+		v := deadline.UnixNano()
+		deadlineNs = &v
+	}
+
+	_, err := tx.ExecContext(ctx, `
+		INSERT OR REPLACE INTO workflow_waiting_events
+			(instance_id, event_name, workflow_name, step_index, deadline_ns)
+		VALUES (?, ?, ?, ?, ?)
+	`, string(instanceID), eventName, workflowName, stepIndex, deadlineNs)
+	if err != nil {
+		return fmt.Errorf("sync queue insert waiting event: %w", err)
+	}
+	return nil
+}
+
+// isEventEmittedTx checks if an event has already been emitted by querying
+// the workflow_emitted_events table within the current transaction.
+func (q *SyncQueue) isEventEmittedTx(tx *sql.Tx, eventName string) bool {
+	var count int
+	err := tx.QueryRow(`
+		SELECT COUNT(*) FROM workflow_emitted_events WHERE event_name = ?
+	`, eventName).Scan(&count)
+	return err == nil && count > 0
+}
+
+// deleteWaitingEventTx removes a specific waiter within the event-save transaction.
+func (q *SyncQueue) deleteWaitingEventTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	instanceID InstanceID,
+	eventName string,
+) error {
+	_, err := tx.ExecContext(ctx, `
+		DELETE FROM workflow_waiting_events
+		WHERE instance_id = ? AND event_name = ?
+	`, string(instanceID), eventName)
+	if err != nil {
+		return fmt.Errorf("sync queue delete waiting event: %w", err)
+	}
+	return nil
+}
+
+// deleteAllWaitingEventsTx removes all waiters for an instance within
+// the event-save transaction (used on workflow completion/failure).
+func (q *SyncQueue) deleteAllWaitingEventsTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	instanceID InstanceID,
+) error {
+	_, err := tx.ExecContext(ctx, `
+		DELETE FROM workflow_waiting_events WHERE instance_id = ?
+	`, string(instanceID))
+	if err != nil {
+		return fmt.Errorf("sync queue delete all waiting events: %w", err)
 	}
 	return nil
 }

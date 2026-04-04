@@ -54,7 +54,8 @@ runner.RunWorker(ctx, workflow.WorkerOptions{})   // worker loop (new)
 | [`workflow/workflow_heartbeat.go`](workflow_heartbeat.go) | Heartbeat (ExtendLease wrapper) |
 | [`workflow/queue.go`](queue.go) | `TaskQueue` interface (incl. `ExtendLease`) and `QueuedTask` type |
 | [`workflow/queue_memory.go`](queue_memory.go) | In-memory TaskQueue implementation |
-| [`workflow/queue_sync.go`](queue_sync.go) | SQL-backed TaskQueue + TransactionalAggregateProcessor (atomic with event writes) |
+| [`workflow/queue_sync.go`](queue_sync.go) | SQL-backed TaskQueue + TransactionalAggregateProcessor (atomic with event writes, incl. persistent event waiting) |
+| [`workflow/wait_store_persistent.go`](wait_store_persistent.go) | SQL-backed eventWaitStore for durable AwaitEvent/EmitEvent across process restarts |
 | [`workflow/worker.go`](worker.go) | `RunWorker()` — polling loop that drives workflows from the queue |
 
 ### Key design decisions
@@ -170,11 +171,39 @@ Worker → Poll() → SELECT ... WHERE run_after_ns <= NOW() AND claimed_by IS N
 
 **Tests:** 14 tests covering completion, sleep, retry, crash recovery, sleep-survives-restart, await/emit events, heartbeat, lease expiry, task cleanup, and replay.
 
-### 2. Persistent event waiting (`waiting_events` table)
+### ✅ 2. Persistent event waiting (`waiting_events` table)
 
-**Why:** The current `waitStore` is in-memory. For distributed systems, we need a persistent store so that `EmitEvent` from one process can wake workflows running on another.
+**Why:** The current in-memory `waitStore` loses state on process restart. For distributed systems, we need a persistent store so that `EmitEvent` from one process can wake workflows running on another.
 
-**How:** A `waiting_events` SQL table populated via SyncProjection when `workflowWaiting` events are written. `EmitEvent` queries this table instead of the in-memory store.
+**How:** Two SQL tables (`workflow_waiting_events`, `workflow_emitted_events`) populated atomically by `SyncQueue.Process()` within the event-save transaction. `EmitEvent` queries these tables instead of the in-memory store.
+
+**Architecture:**
+```
+AwaitEvent → repo.Save() → SyncQueue.Process():
+  workflowWaiting → INSERT workflow_waiting_events
+                    + check workflow_emitted_events (pre-emit → immediate task)
+  workflowEventReceived → DELETE workflow_waiting_events
+  workflowCompleted/Failed → DELETE workflow_waiting_events
+
+EmitEvent → persistentWaitStore.Emit():
+  INSERT OR IGNORE workflow_emitted_events (first-write-wins)
+  SELECT waiters FROM workflow_waiting_events
+  DELETE matched waiters
+  → return waiters for task enqueue
+
+AwaitEvent replay → persistentWaitStore.GetEvent():
+  SELECT FROM workflow_emitted_events
+```
+
+**Key design decisions:**
+- `eventWaitStore` interface with two implementations: in-memory (`waitStore`) and persistent (`persistentWaitStore`).
+- `persistentWaitStore.Register()` is a no-op — the `SyncQueue.Process()` handles transactional inserts atomically with event writes.
+- `SyncQueue.Process()` detects pre-emitted events during `workflowWaiting` and creates immediate wake-up tasks (the event log already has the data, so the workflow just needs to be re-run).
+- `SyncQueue.Enqueue()` uses `MIN(run_after_ns)` on conflict to prevent a post-transaction Enqueue from overwriting a better (earlier) run_after created by Process (e.g., pre-emit + timeout case).
+- `persistentWaitStore.Emit()` runs in a single transaction to prevent missed wake-ups between INSERT and SELECT.
+- `NewSqliteRunnerWithSyncQueue()` automatically wires the persistent wait store.
+
+**Tests:** 7 tests covering crash recovery, pre-emit, pre-emit with timeout, multiple waiters, idempotent emit, waiter cleanup on failure, and timeout crash recovery.
 
 ### 3. `queue_async.go` — AsyncProjection-backed queue (any event log)
 
@@ -198,7 +227,7 @@ Worker → Poll() → SELECT ... WHERE run_after_ns <= NOW() AND claimed_by IS N
 
 ## Priority order
 
-1. **`queue_sync.go`** — this is the path to production-grade distributed workers
-2. **Persistent event waiting** — needed for distributed AwaitEvent/EmitEvent
+1. ~~**`queue_sync.go`** — this is the path to production-grade distributed workers~~ ✅
+2. ~~**Persistent event waiting** — needed for distributed AwaitEvent/EmitEvent~~ ✅
 3. **`queue_async.go`** — only needed for non-transactional backends, lower priority
 4. **Cancellation policies** — nice-to-have for production robustness

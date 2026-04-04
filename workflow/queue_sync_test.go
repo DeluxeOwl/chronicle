@@ -787,6 +787,484 @@ func TestSyncQueue_ReplayAfterCrash(t *testing.T) {
 	require.Equal(t, 1, step2Exec, "step2 should NOT re-execute on replay")
 }
 
+// --- Persistent event waiting tests ---
+
+func TestSyncQueue_PersistentAwaitEvent_CrashRecovery(t *testing.T) {
+	// Key test for persistent event waiting: a workflow parks on AwaitEvent,
+	// the process crashes, a new runner starts, EmitEvent from the new runner
+	// wakes the workflow via the persistent waiting_events table.
+	db := setupSyncDB(t)
+	ctx := t.Context()
+
+	type EventPayload struct {
+		Data string `json:"data"`
+	}
+
+	// Phase 1: Start a workflow, let it park on AwaitEvent, then "crash".
+	runner1, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	require.NoError(t, err)
+
+	wf1 := workflow.New(runner1, "persist-await", func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
+		payload, err := workflow.AwaitEvent[EventPayload](wctx, "crash-event:"+params.Value)
+		if err != nil {
+			return nil, err
+		}
+		return &WorkerTestOutput{Result: payload.Data}, nil
+	})
+
+	instanceID, err := wf1.Start(ctx, &WorkerTestParams{Value: "test"})
+	require.NoError(t, err)
+
+	// Run worker until the workflow parks on AwaitEvent.
+	worker1Ctx, cancel1 := context.WithCancel(ctx)
+	done1 := make(chan struct{})
+	go func() {
+		defer close(done1)
+		_ = runner1.RunWorker(worker1Ctx, workflow.WorkerOptions{
+			PollInterval: 10 * time.Millisecond,
+		})
+	}()
+
+	// Wait for AwaitEvent to be recorded.
+	require.Eventually(t, func() bool {
+		info, err := wf1.GetStatus(ctx, instanceID)
+		return err == nil && info.Status == workflow.StatusWaiting
+	}, 2*time.Second, 10*time.Millisecond)
+
+	// Verify the waiter is in the persistent table.
+	var waiterCount int
+	err = db.QueryRow(`SELECT COUNT(*) FROM workflow_waiting_events WHERE instance_id = ?`, string(instanceID)).Scan(&waiterCount)
+	require.NoError(t, err)
+	require.Equal(t, 1, waiterCount, "waiter should be in persistent table")
+
+	cancel1()
+	<-done1
+
+	// "Crash" — discard runner1. In-memory state is lost.
+
+	// Phase 2: New runner, same DB. EmitEvent should find the waiter.
+	runner2, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	require.NoError(t, err)
+
+	wf2 := workflow.New(runner2, "persist-await", func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
+		payload, err := workflow.AwaitEvent[EventPayload](wctx, "crash-event:"+params.Value)
+		if err != nil {
+			return nil, err
+		}
+		return &WorkerTestOutput{Result: payload.Data}, nil
+	})
+
+	// Emit the event from the NEW runner — the in-memory waitStore is empty,
+	// but the persistent store has the waiter.
+	err = workflow.EmitEvent(ctx, runner2, "crash-event:test", EventPayload{Data: "recovered"})
+	require.NoError(t, err)
+
+	// Verify the emitted event is persisted.
+	var emittedCount int
+	err = db.QueryRow(`SELECT COUNT(*) FROM workflow_emitted_events WHERE event_name = ?`, "crash-event:test").Scan(&emittedCount)
+	require.NoError(t, err)
+	require.Equal(t, 1, emittedCount, "emitted event should be persisted")
+
+	// Start worker on the new runner — it should pick up the wake-up task.
+	worker2Ctx, cancel2 := context.WithCancel(ctx)
+	defer cancel2()
+
+	done2 := make(chan struct{})
+	go func() {
+		defer close(done2)
+		_ = runner2.RunWorker(worker2Ctx, workflow.WorkerOptions{
+			PollInterval: 10 * time.Millisecond,
+		})
+	}()
+
+	require.Eventually(t, func() bool {
+		result, err := wf2.GetResult(ctx, instanceID)
+		return err == nil && result.Result == "recovered"
+	}, 2*time.Second, 20*time.Millisecond)
+
+	cancel2()
+	<-done2
+}
+
+func TestSyncQueue_PersistentAwaitEvent_PreEmit(t *testing.T) {
+	// Event emitted before workflow starts. With persistent store,
+	// SyncQueue.Process detects the pre-emitted event and creates
+	// an immediate task so the worker picks it up.
+	db := setupSyncDB(t)
+	ctx := t.Context()
+
+	type EventPayload struct {
+		Data string `json:"data"`
+	}
+
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	require.NoError(t, err)
+
+	wf := workflow.New(runner, "pre-emit-persist", func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
+		payload, err := workflow.AwaitEvent[EventPayload](wctx, "pre-event")
+		if err != nil {
+			return nil, err
+		}
+		return &WorkerTestOutput{Result: payload.Data}, nil
+	})
+
+	// Emit BEFORE the workflow starts.
+	err = workflow.EmitEvent(ctx, runner, "pre-event", EventPayload{Data: "early"})
+	require.NoError(t, err)
+
+	// Start the workflow.
+	instanceID, err := wf.Start(ctx, &WorkerTestParams{Value: "test"})
+	require.NoError(t, err)
+
+	// Worker should complete the workflow automatically — Process detects
+	// the pre-emitted event and creates an immediate re-run task.
+	workerCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
+			PollInterval: 10 * time.Millisecond,
+		})
+	}()
+
+	require.Eventually(t, func() bool {
+		result, err := wf.GetResult(ctx, instanceID)
+		return err == nil && result.Result == "early"
+	}, 2*time.Second, 20*time.Millisecond)
+
+	cancel()
+	<-done
+}
+
+func TestSyncQueue_PersistentAwaitEvent_PreEmitWithTimeout(t *testing.T) {
+	// Pre-emitted event + timeout: Process creates an immediate task,
+	// Enqueue's MIN logic preserves it (doesn't overwrite with deadline).
+	db := setupSyncDB(t)
+	clock := newClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	ctx := t.Context()
+
+	type EventPayload struct {
+		Data string `json:"data"`
+	}
+
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db, workflow.WithNowFunc(clock.Now))
+	require.NoError(t, err)
+
+	wf := workflow.New(runner, "pre-emit-timeout", func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
+		payload, err := workflow.AwaitEvent[EventPayload](wctx, "pre-timeout-event", workflow.AwaitEventOptions{
+			Timeout: 24 * time.Hour, // long timeout
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &WorkerTestOutput{Result: payload.Data}, nil
+	})
+
+	// Emit BEFORE the workflow starts.
+	err = workflow.EmitEvent(ctx, runner, "pre-timeout-event", EventPayload{Data: "early-timeout"})
+	require.NoError(t, err)
+
+	// Start the workflow.
+	instanceID, err := wf.Start(ctx, &WorkerTestParams{Value: "test"})
+	require.NoError(t, err)
+
+	// Worker should complete the workflow WITHOUT waiting for the timeout.
+	workerCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
+			PollInterval: 10 * time.Millisecond,
+		})
+	}()
+
+	require.Eventually(t, func() bool {
+		result, err := wf.GetResult(ctx, instanceID)
+		return err == nil && result.Result == "early-timeout"
+	}, 2*time.Second, 20*time.Millisecond)
+
+	cancel()
+	<-done
+}
+
+func TestSyncQueue_PersistentAwaitEvent_MultipleWaiters(t *testing.T) {
+	// Multiple workflows waiting for the same event. EmitEvent from a
+	// new runner (simulating a different process) wakes all of them.
+	db := setupSyncDB(t)
+	ctx := t.Context()
+
+	type EventPayload struct {
+		Data string `json:"data"`
+	}
+
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	require.NoError(t, err)
+
+	wf := workflow.New(runner, "multi-wait", func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
+		payload, err := workflow.AwaitEvent[EventPayload](wctx, "broadcast")
+		if err != nil {
+			return nil, err
+		}
+		return &WorkerTestOutput{Result: params.Value + ":" + payload.Data}, nil
+	})
+
+	// Start multiple workflows.
+	id1, err := wf.Start(ctx, &WorkerTestParams{Value: "wf1"})
+	require.NoError(t, err)
+	id2, err := wf.Start(ctx, &WorkerTestParams{Value: "wf2"})
+	require.NoError(t, err)
+	id3, err := wf.Start(ctx, &WorkerTestParams{Value: "wf3"})
+	require.NoError(t, err)
+
+	// Run worker to park all workflows.
+	workerCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
+			PollInterval: 10 * time.Millisecond,
+		})
+	}()
+
+	// Wait for all workflows to park.
+	require.Eventually(t, func() bool {
+		var count int
+		err := db.QueryRow(`SELECT COUNT(*) FROM workflow_waiting_events WHERE event_name = 'broadcast'`).Scan(&count)
+		return err == nil && count == 3
+	}, 2*time.Second, 10*time.Millisecond)
+
+	// Emit event — should wake all three.
+	err = workflow.EmitEvent(ctx, runner, "broadcast", EventPayload{Data: "all"})
+	require.NoError(t, err)
+
+	// All three should complete.
+	require.Eventually(t, func() bool {
+		r1, e1 := wf.GetResult(ctx, id1)
+		r2, e2 := wf.GetResult(ctx, id2)
+		r3, e3 := wf.GetResult(ctx, id3)
+		return e1 == nil && e2 == nil && e3 == nil &&
+			r1.Result == "wf1:all" &&
+			r2.Result == "wf2:all" &&
+			r3.Result == "wf3:all"
+	}, 2*time.Second, 20*time.Millisecond)
+
+	// Verify waiters are cleaned up.
+	var waiterCount int
+	err = db.QueryRow(`SELECT COUNT(*) FROM workflow_waiting_events WHERE event_name = 'broadcast'`).Scan(&waiterCount)
+	require.NoError(t, err)
+	require.Equal(t, 0, waiterCount, "waiters should be cleaned up")
+
+	cancel()
+	<-done
+}
+
+func TestSyncQueue_PersistentAwaitEvent_EmitIdempotent(t *testing.T) {
+	// First-write-wins: second emit for same event name is ignored.
+	db := setupSyncDB(t)
+	ctx := t.Context()
+
+	type EventPayload struct {
+		Data string `json:"data"`
+	}
+
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	require.NoError(t, err)
+
+	wf := workflow.New(runner, "idempotent-persist", func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
+		payload, err := workflow.AwaitEvent[EventPayload](wctx, "idem-event")
+		if err != nil {
+			return nil, err
+		}
+		return &WorkerTestOutput{Result: payload.Data}, nil
+	})
+
+	instanceID, err := wf.Start(ctx, &WorkerTestParams{Value: "test"})
+	require.NoError(t, err)
+
+	workerCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
+			PollInterval: 10 * time.Millisecond,
+		})
+	}()
+
+	// Wait for AwaitEvent.
+	require.Eventually(t, func() bool {
+		info, err := wf.GetStatus(ctx, instanceID)
+		return err == nil && info.Status == workflow.StatusWaiting
+	}, 2*time.Second, 10*time.Millisecond)
+
+	// Emit first time.
+	err = workflow.EmitEvent(ctx, runner, "idem-event", EventPayload{Data: "FIRST"})
+	require.NoError(t, err)
+
+	// Emit second time — should be ignored.
+	err = workflow.EmitEvent(ctx, runner, "idem-event", EventPayload{Data: "SECOND"})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		result, err := wf.GetResult(ctx, instanceID)
+		return err == nil && result.Result == "FIRST"
+	}, 2*time.Second, 20*time.Millisecond)
+
+	cancel()
+	<-done
+}
+
+func TestSyncQueue_PersistentAwaitEvent_WaiterCleanedUpOnCompletion(t *testing.T) {
+	// If a workflow completes/fails without the event arriving,
+	// the waiter should be cleaned up from the persistent table.
+	db := setupSyncDB(t)
+	ctx := t.Context()
+
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	require.NoError(t, err)
+
+	wf := workflow.New(runner, "cleanup-waiter", func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
+		// This workflow always fails, even while waiting for an event.
+		_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+			return "", errors.New("boom")
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &WorkerTestOutput{Result: "unreachable"}, nil
+	})
+
+	instanceID, err := wf.Start(ctx, &WorkerTestParams{Value: "test"})
+	require.NoError(t, err)
+
+	// Insert a fake waiter for this instance (simulating AwaitEvent was recorded
+	// before the workflow is re-run and fails).
+	_, err = db.Exec(`
+		INSERT INTO workflow_waiting_events (instance_id, event_name, workflow_name, step_index)
+		VALUES (?, 'some-event', 'cleanup-waiter', 0)
+	`, string(instanceID))
+	require.NoError(t, err)
+
+	workerCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
+			PollInterval: 10 * time.Millisecond,
+		})
+	}()
+
+	// Wait for the workflow to fail.
+	require.Eventually(t, func() bool {
+		info, err := wf.GetStatus(ctx, instanceID)
+		return err == nil && info.Status == workflow.StatusFailed
+	}, 2*time.Second, 10*time.Millisecond)
+
+	// Verify the waiter is cleaned up.
+	var waiterCount int
+	err = db.QueryRow(`SELECT COUNT(*) FROM workflow_waiting_events WHERE instance_id = ?`, string(instanceID)).Scan(&waiterCount)
+	require.NoError(t, err)
+	require.Equal(t, 0, waiterCount, "waiter should be cleaned up after failure")
+
+	cancel()
+	<-done
+}
+
+func TestSyncQueue_PersistentAwaitEvent_WithTimeout_CrashRecovery(t *testing.T) {
+	// Workflow waits with a timeout, process crashes, new runner picks up
+	// the timeout task and detects the timeout has expired.
+	db := setupSyncDB(t)
+	clock := newClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	ctx := t.Context()
+
+	type EventPayload struct {
+		Data string `json:"data"`
+	}
+
+	// Phase 1: Start workflow, let it park with a timeout.
+	runner1, err := workflow.NewSqliteRunnerWithSyncQueue(db, workflow.WithNowFunc(clock.Now))
+	require.NoError(t, err)
+
+	wf1 := workflow.New(runner1, "timeout-crash", func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
+		_, err := workflow.AwaitEvent[EventPayload](wctx, "timeout-event", workflow.AwaitEventOptions{
+			Timeout: 1 * time.Hour,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &WorkerTestOutput{Result: "got-it"}, nil
+	})
+
+	instanceID, err := wf1.Start(ctx, &WorkerTestParams{Value: "test"})
+	require.NoError(t, err)
+
+	// Worker parks on AwaitEvent.
+	worker1Ctx, cancel1 := context.WithCancel(ctx)
+	done1 := make(chan struct{})
+	go func() {
+		defer close(done1)
+		_ = runner1.RunWorker(worker1Ctx, workflow.WorkerOptions{
+			PollInterval: 10 * time.Millisecond,
+		})
+	}()
+
+	require.Eventually(t, func() bool {
+		info, err := wf1.GetStatus(ctx, instanceID)
+		return err == nil && info.Status == workflow.StatusWaiting
+	}, 2*time.Second, 10*time.Millisecond)
+
+	cancel1()
+	<-done1
+
+	// "Crash" — discard runner1.
+
+	// Phase 2: Advance clock past timeout, new runner.
+	clock.Advance(2 * time.Hour)
+
+	runner2, err := workflow.NewSqliteRunnerWithSyncQueue(db, workflow.WithNowFunc(clock.Now))
+	require.NoError(t, err)
+
+	_ = workflow.New(runner2, "timeout-crash", func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
+		_, err := workflow.AwaitEvent[EventPayload](wctx, "timeout-event", workflow.AwaitEventOptions{
+			Timeout: 1 * time.Hour,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &WorkerTestOutput{Result: "got-it"}, nil
+	})
+
+	// Worker should pick up the delayed timeout task and fail the workflow.
+	worker2Ctx, cancel2 := context.WithCancel(ctx)
+	defer cancel2()
+
+	done2 := make(chan struct{})
+	go func() {
+		defer close(done2)
+		_ = runner2.RunWorker(worker2Ctx, workflow.WorkerOptions{
+			PollInterval: 10 * time.Millisecond,
+		})
+	}()
+
+	// The timeout should cause the workflow to fail with ErrEventTimeout.
+	require.Eventually(t, func() bool {
+		info, err := wf1.GetStatus(ctx, instanceID)
+		return err == nil && info.Status == workflow.StatusFailed
+	}, 2*time.Second, 20*time.Millisecond)
+
+	cancel2()
+	<-done2
+}
+
 func TestSyncQueue_ExpiredLeaseReclaimable(t *testing.T) {
 	// Verify that if a worker claims a task but its lease expires,
 	// another worker can reclaim it.

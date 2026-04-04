@@ -185,7 +185,7 @@ type Runner struct {
 	nowFunc       func() time.Time
 	queue         TaskQueue
 	workflows     map[string]executableWorkflow
-	waitStore     *waitStore
+	waitStore     eventWaitStore
 }
 
 // NewRunner creates a new workflow runner with the given event log.
@@ -277,6 +277,15 @@ func NewSqliteRunnerWithSyncQueue(db *sql.DB, opts ...RunnerOption) (*Runner, er
 		return nil, fmt.Errorf("create sync queue: %w", err)
 	}
 
+	// Create persistent wait store for durable event waiting.
+	// Tables are created by NewSyncQueue; this store handles non-transactional
+	// reads/writes (Emit, GetEvent). Transactional writes are handled by
+	// SyncQueue.Process().
+	persistentWS, err := newPersistentWaitStore(db)
+	if err != nil {
+		return nil, fmt.Errorf("create persistent wait store: %w", err)
+	}
+
 	eventLog, err := eventlog.NewSqlite(db)
 	if err != nil {
 		return nil, fmt.Errorf("create sqlite event log: %w", err)
@@ -311,7 +320,7 @@ func NewSqliteRunnerWithSyncQueue(db *sql.DB, opts ...RunnerOption) (*Runner, er
 		nowFunc:       tmpRunner.nowFunc,
 		queue:         syncQueue,
 		workflows:     tmpRunner.workflows,
-		waitStore:     tmpRunner.waitStore,
+		waitStore:     persistentWS,
 	}
 
 	return r, nil

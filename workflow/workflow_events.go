@@ -315,9 +315,27 @@ type waitingWorkflow struct {
 	WorkflowName string
 }
 
-// waitStore manages event waiting registrations and emitted events.
-// It is an in-memory structure — for distributed systems, this would
-// need to be backed by a persistent store (SQL table, projection, etc.)
+// eventWaitStore is the abstraction for managing event waiting state.
+// The in-memory implementation (waitStore) is used for single-process mode;
+// the persistent implementation (persistentWaitStore) is used with SyncQueue
+// for distributed systems where EmitEvent from one process must be able to
+// wake workflows running on another.
+type eventWaitStore interface {
+	// Register records that a workflow is waiting for an event.
+	// For the in-memory store, this also checks for pre-emitted events.
+	// For the persistent store, this is a no-op (handled by SyncQueue.Process).
+	Register(instanceID InstanceID, eventName string, workflowName string)
+
+	// Emit stores an event payload and returns the list of workflows that were waiting.
+	// First-write-wins: if the event has already been emitted, returns nil.
+	Emit(eventName string, payload json.RawMessage) []waitingWorkflow
+
+	// GetEvent checks if an event has been received for a specific workflow instance.
+	GetEvent(instanceID InstanceID, eventName string) (json.RawMessage, bool)
+}
+
+// waitStore is the in-memory implementation of eventWaitStore.
+// For distributed systems, use persistentWaitStore instead.
 type waitStore struct {
 	mu sync.Mutex
 
@@ -393,3 +411,6 @@ func (ws *waitStore) GetEvent(instanceID InstanceID, eventName string) (json.Raw
 	payload, ok := ws.received[key]
 	return payload, ok
 }
+
+// Compile-time interface check.
+var _ eventWaitStore = (*waitStore)(nil)
