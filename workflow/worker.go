@@ -89,6 +89,11 @@ func (r *Runner) RunWorker(ctx context.Context, opts WorkerOptions) error {
 				_ = r.queue.Complete(ctx, task.InstanceID)
 				continue
 			}
+			if isCancelledError(err) {
+				// Workflow was cancelled — clean up the task.
+				_ = r.queue.Complete(ctx, task.InstanceID)
+				continue
+			}
 			r.logger.Error(
 				"workflow execution failed",
 				"instanceID", task.InstanceID,

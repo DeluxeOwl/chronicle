@@ -21,7 +21,7 @@ Workflow author code (Step, Sleep, etc.)
     TaskQueue (pluggable interface)
     ├── MemoryQueue        ← single-process / testing (done)
     ├── SyncQueue          ← transactional event logs (done)
-    └── AsyncProjectionQueue ← any event log (TODO)
+    └── AsyncQueue         ← any event log (done)
          │
          ▼
     RunWorker() polls queue → looks up registry → calls Run() → replay from event log
@@ -55,8 +55,10 @@ runner.RunWorker(ctx, workflow.WorkerOptions{})   // worker loop (new)
 | [`workflow/queue.go`](queue.go) | `TaskQueue` interface (incl. `ExtendLease`) and `QueuedTask` type |
 | [`workflow/queue_memory.go`](queue_memory.go) | In-memory TaskQueue implementation |
 | [`workflow/queue_sync.go`](queue_sync.go) | SQL-backed TaskQueue + TransactionalAggregateProcessor (atomic with event writes, incl. persistent event waiting) |
+| [`workflow/queue_async.go`](queue_async.go) | AsyncProjection-backed TaskQueue for non-transactional event logs |
 | [`workflow/wait_store_persistent.go`](wait_store_persistent.go) | SQL-backed eventWaitStore for durable AwaitEvent/EmitEvent across process restarts |
 | [`workflow/worker.go`](worker.go) | `RunWorker()` — polling loop that drives workflows from the queue |
+| [`workflow/workflow_cancel.go`](workflow_cancel.go) | CancelWorkflow, CancellationPolicy, ErrWorkflowCancelled, workflowCancelled event |
 
 ### Key design decisions
 
@@ -205,23 +207,58 @@ AwaitEvent replay → persistentWaitStore.GetEvent():
 
 **Tests:** 7 tests covering crash recovery, pre-emit, pre-emit with timeout, multiple waiters, idempotent emit, waiter cleanup on failure, and timeout crash recovery.
 
-### 3. `queue_async.go` — AsyncProjection-backed queue (any event log)
+### ✅ 3. `queue_async.go` — AsyncProjection-backed queue (any event log)
 
-**Why:** For non-transactional event logs (memory, or future backends like NATS/DynamoDB), we can't atomically write events + enqueue. Instead, use Chronicle's [`AsyncProjectionRunner`](../event/projection.go) to build the queue view from the global event log.
+Implemented in [`queue_async.go`](queue_async.go). The `AsyncQueue` implements both `TaskQueue` and `event.AsyncProjection`, so it can be driven by Chronicle's `AsyncProjectionRunner` to build the ready_tasks table from the global event stream.
 
-**How:** An `AsyncProjection` that watches for `workflow/started`, `workflow/step_completed` (with sleep data), `workflow/completed`, `workflow/failed`, `workflow/retried` events and populates a `ready_tasks` table accordingly.
+**Architecture:**
+```
+Global Event Log → AsyncProjectionRunner → AsyncQueue.Handle() → INSERT/DELETE workflow_ready_tasks
+Worker → Poll() → SELECT ... WHERE run_after_ns <= NOW() AND claimed_by IS NULL
+```
 
-**Trade-off:** Task discovery is eventually consistent (delayed by `pollInterval`, default 200ms). Execution is still correct — the event log's optimistic concurrency prevents duplicate step execution.
+**Key design decisions:**
+- Implements `event.AsyncProjection` interface (`MatchesEvent` + `Handle`) for use with `AsyncProjectionRunner`.
+- Same SQL schema as `SyncQueue` (workflow_ready_tasks, workflow_waiting_events, workflow_emitted_events).
+- Task discovery is eventually consistent (delayed by projection `pollInterval`). Execution is still correct — the event log's optimistic concurrency prevents duplicate step execution.
+- `Handle` processes individual `GlobalRecord` events and extracts workflow metadata (instance ID, workflow name) from the event data.
+- Lease-based claiming with the same Poll/Complete/Fail/ExtendLease semantics as `SyncQueue`.
+- Supports all workflow event types: started, step_completed (with sleep detection), retried, waiting, event_received, completed, failed, cancelled.
 
-### 4. Cancellation policies
+**Tests:** 5 tests covering simple completion, sleep/wake-up, retry, multiple workflows, and event name filtering.
 
-**Why:** Long-running workflows need to be cancellable — either programmatically or via time-based policies.
+### ✅ 4. Cancellation policies
 
-**How:** Like Absurd's `CancellationPolicy`:
-- `MaxDuration` — cancel the task if it has been alive longer than N seconds
-- `MaxDelay` — cancel the task if no checkpoint has been written for N seconds
-- New event: `workflowCancelled`
-- `CancelWorkflow(ctx, runner, instanceID)` API
+Implemented in [`workflow_cancel.go`](workflow_cancel.go). Workflows can now be cancelled programmatically or via time-based policies.
+
+**API:**
+```go
+// Programmatic cancellation
+err := workflow.CancelWorkflow(ctx, runner, instanceID, "user requested")
+
+// Automatic cancellation via policy
+instanceID, err := wf.Start(ctx, params,
+    workflow.WithCancellationPolicy(workflow.CancellationPolicy{
+        MaxDuration: 1 * time.Hour,    // cancel if alive longer than 1h
+        MaxDelay:    30 * time.Minute,  // cancel if no checkpoint for 30min
+    }),
+)
+```
+
+**Key design decisions:**
+- `CancellationPolicy` is persisted in the `workflowStarted` event, so it survives process crashes.
+- `workflowCancelled` event records the reason and timestamp.
+- `CancelWorkflow()` is idempotent: cancelling an already-cancelled, completed, or failed workflow is a no-op.
+- New status: `StatusCancelled` — a terminal state like `StatusCompleted` and `StatusFailed`.
+- `MaxDuration` checks time since `startedAt` (from the `workflowStarted` event).
+- `MaxDelay` checks time since the last `stepCompleted` event's `CompletedAt` timestamp.
+- `stepCompleted` events now carry a `CompletedAt` timestamp for accurate MaxDelay checks during replay.
+- Cancellation policy is checked at the start of `Run()` — before any step execution.
+- Worker handles `ErrWorkflowCancelled` gracefully (marks task as complete).
+- `SyncQueue.Process()` handles `workflowCancelled` by deleting the task and cleaning up waiters.
+- `AsyncQueue.Handle()` handles `workflow/cancelled` by deleting the task and cleaning up waiters.
+
+**Tests:** 8 tests covering manual cancel, idempotency, completed-is-noop, worker handling, MaxDuration, MaxDelay, within-limits completion, worker auto-cancel, and SyncQueue task cleanup.
 
 ---
 
@@ -229,5 +266,5 @@ AwaitEvent replay → persistentWaitStore.GetEvent():
 
 1. ~~**`queue_sync.go`** — this is the path to production-grade distributed workers~~ ✅
 2. ~~**Persistent event waiting** — needed for distributed AwaitEvent/EmitEvent~~ ✅
-3. **`queue_async.go`** — only needed for non-transactional backends, lower priority
-4. **Cancellation policies** — nice-to-have for production robustness
+3. ~~**`queue_async.go`** — only needed for non-transactional backends~~ ✅
+4. ~~**Cancellation policies** — nice-to-have for production robustness~~ ✅

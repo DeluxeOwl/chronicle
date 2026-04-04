@@ -93,8 +93,9 @@ func Sleep(wctx *Context, d time.Duration) error {
 	}
 
 	if err := instance.recordThat(&stepCompleted{
-		StepIndex: stepIndex,
-		Result:    resultJSON,
+		StepIndex:   stepIndex,
+		Result:      resultJSON,
+		CompletedAt: now,
 	}); err != nil {
 		return fmt.Errorf("record sleep step: %w", err)
 	}

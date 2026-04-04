@@ -364,6 +364,11 @@ func (q *SyncQueue) processEvent(
 		_ = q.deleteAllWaitingEventsTx(ctx, tx, root.id)
 		return q.deleteTaskTx(ctx, tx, root.id)
 
+	case *workflowCancelled:
+		// Clean up any remaining waiters for this instance.
+		_ = q.deleteAllWaitingEventsTx(ctx, tx, root.id)
+		return q.deleteTaskTx(ctx, tx, root.id)
+
 	case *stepFailed:
 		// Step failure is handled by the workflow function (retry or fail).
 		return nil

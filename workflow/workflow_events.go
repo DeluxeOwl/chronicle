@@ -139,8 +139,9 @@ func AwaitEvent[T any](wctx *Context, eventName string, opts ...AwaitEventOption
 				return zero, fmt.Errorf("reload for timeout: %w", err)
 			}
 			if err := instance.recordThat(&stepCompleted{
-				StepIndex: stepIndex,
-				Result:    resultJSON,
+				StepIndex:   stepIndex,
+				Result:      resultJSON,
+				CompletedAt: now,
 			}); err != nil {
 				return zero, fmt.Errorf("record event timeout: %w", err)
 			}
@@ -178,8 +179,9 @@ func AwaitEvent[T any](wctx *Context, eventName string, opts ...AwaitEventOption
 			}
 			// Overwrite step result with resolved version
 			if err := instance.recordThat(&stepCompleted{
-				StepIndex: stepIndex,
-				Result:    resultJSON,
+				StepIndex:   stepIndex,
+				Result:      resultJSON,
+				CompletedAt: runner.now(),
 			}); err != nil {
 				return zero, fmt.Errorf("record resolved step: %w", err)
 			}
@@ -231,8 +233,9 @@ func AwaitEvent[T any](wctx *Context, eventName string, opts ...AwaitEventOption
 	}
 
 	if err := instance.recordThat(&stepCompleted{
-		StepIndex: stepIndex,
-		Result:    resultJSON,
+		StepIndex:   stepIndex,
+		Result:      resultJSON,
+		CompletedAt: now,
 	}); err != nil {
 		return zero, fmt.Errorf("record await event step: %w", err)
 	}

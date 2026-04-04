@@ -19,16 +19,19 @@ import (
 type WorkflowInstance struct {
 	aggregate.Base
 
-	id            InstanceID
-	workflowName  string
-	status        Status
-	params        []byte
-	output        []byte
-	stepResults   map[int][]byte // step_index -> serialized result
-	currentStep   int
-	attempt       int            // 1-indexed attempt number
-	retryStrategy *RetryStrategy // nil = no retry
-	failureError  string         // error message from the last failure
+	id                 InstanceID
+	workflowName       string
+	status             Status
+	params             []byte
+	output             []byte
+	stepResults        map[int][]byte // step_index -> serialized result
+	currentStep        int
+	attempt            int                 // 1-indexed attempt number
+	retryStrategy      *RetryStrategy      // nil = no retry
+	cancellationPolicy *CancellationPolicy // nil = no auto-cancel
+	failureError       string              // error message from the last failure
+	startedAt          time.Time           // when the workflow was started
+	lastCheckpointAt   time.Time           // when the last step was completed
 }
 
 type InstanceID string
@@ -49,6 +52,7 @@ const (
 	StatusCompleted Status = "completed"
 	StatusFailed    Status = "failed"
 	StatusRetrying  Status = "retrying"
+	StatusCancelled Status = "cancelled"
 )
 
 //sumtype:decl
@@ -58,19 +62,21 @@ type WorkflowEvent interface {
 }
 
 type workflowStarted struct {
-	InstanceID    string          `json:"instanceID"`
-	WorkflowName  string          `json:"workflowName"`
-	Params        json.RawMessage `json:"params"`
-	StartedAt     time.Time       `json:"startedAt"`
-	RetryStrategy json.RawMessage `json:"retryStrategy,omitempty"`
+	InstanceID         string          `json:"instanceID"`
+	WorkflowName       string          `json:"workflowName"`
+	Params             json.RawMessage `json:"params"`
+	StartedAt          time.Time       `json:"startedAt"`
+	RetryStrategy      json.RawMessage `json:"retryStrategy,omitempty"`
+	CancellationPolicy json.RawMessage `json:"cancellationPolicy,omitempty"`
 }
 
 func (*workflowStarted) EventName() string { return "workflow/started" }
 func (*workflowStarted) isWorkflowEvent()  {}
 
 type stepCompleted struct {
-	StepIndex int             `json:"stepIndex"`
-	Result    json.RawMessage `json:"result"`
+	StepIndex   int             `json:"stepIndex"`
+	Result      json.RawMessage `json:"result"`
+	CompletedAt time.Time       `json:"completedAt,omitempty"`
 }
 
 func (*stepCompleted) EventName() string { return "workflow/step_completed" }
@@ -108,6 +114,7 @@ func (w *WorkflowInstance) EventFuncs() event.FuncsFor[WorkflowEvent] {
 		func() WorkflowEvent { return new(workflowRetried) },
 		func() WorkflowEvent { return new(workflowWaiting) },
 		func() WorkflowEvent { return new(workflowEventReceived) },
+		func() WorkflowEvent { return new(workflowCancelled) },
 	}
 }
 
@@ -119,6 +126,8 @@ func (w *WorkflowInstance) Apply(evt WorkflowEvent) error {
 		w.params = e.Params
 		w.status = StatusRunning
 		w.attempt = 1
+		w.startedAt = e.StartedAt
+		w.lastCheckpointAt = e.StartedAt
 		if w.stepResults == nil {
 			w.stepResults = make(map[int][]byte)
 		}
@@ -128,9 +137,18 @@ func (w *WorkflowInstance) Apply(evt WorkflowEvent) error {
 				w.retryStrategy = &rs
 			}
 		}
+		if e.CancellationPolicy != nil {
+			var cp CancellationPolicy
+			if err := json.Unmarshal(e.CancellationPolicy, &cp); err == nil {
+				w.cancellationPolicy = &cp
+			}
+		}
 	case *stepCompleted:
 		w.stepResults[e.StepIndex] = e.Result
 		w.currentStep = e.StepIndex + 1
+		if !e.CompletedAt.IsZero() {
+			w.lastCheckpointAt = e.CompletedAt
+		}
 	case *stepFailed:
 		w.status = StatusFailed
 	case *workflowCompleted:
@@ -142,6 +160,9 @@ func (w *WorkflowInstance) Apply(evt WorkflowEvent) error {
 	case *workflowRetried:
 		w.attempt = e.Attempt
 		w.status = StatusRunning
+		if !e.NextRunAfter.IsZero() {
+			w.lastCheckpointAt = e.NextRunAfter
+		}
 		// Restore the retry strategy from the event so it survives replays
 		if e.RetryStrategy != nil {
 			var rs RetryStrategy
@@ -153,6 +174,8 @@ func (w *WorkflowInstance) Apply(evt WorkflowEvent) error {
 		w.status = StatusWaiting
 	case *workflowEventReceived:
 		w.status = StatusRunning
+	case *workflowCancelled:
+		w.status = StatusCancelled
 	default:
 		return fmt.Errorf("unexpected event kind: %T", evt)
 	}
@@ -355,7 +378,8 @@ func (c *Context) Deadline() (time.Time, bool) {
 type StartOption func(*startConfig)
 
 type startConfig struct {
-	retryStrategy *RetryStrategy
+	retryStrategy       *RetryStrategy
+	cancellationPolicy *CancellationPolicy
 }
 
 // WithRetryStrategy configures a retry strategy for the workflow instance.
@@ -416,7 +440,7 @@ func (w *Workflow[Params, Output]) Start(ctx context.Context, params *Params, op
 		InstanceID:   string(instanceID),
 		WorkflowName: w.name,
 		Params:       paramsJSON,
-		StartedAt:    time.Now(),
+		StartedAt:    w.runner.now(),
 	}
 	if cfg.retryStrategy != nil {
 		rsJSON, err := json.Marshal(cfg.retryStrategy)
@@ -424,6 +448,13 @@ func (w *Workflow[Params, Output]) Start(ctx context.Context, params *Params, op
 			return "", fmt.Errorf("marshal retry strategy: %w", err)
 		}
 		startedEvent.RetryStrategy = rsJSON
+	}
+	if cfg.cancellationPolicy != nil {
+		cpJSON, err := json.Marshal(cfg.cancellationPolicy)
+		if err != nil {
+			return "", fmt.Errorf("marshal cancellation policy: %w", err)
+		}
+		startedEvent.CancellationPolicy = cpJSON
 	}
 
 	// Record the started event
@@ -474,6 +505,19 @@ func (w *Workflow[Params, Output]) Run(
 	// Check if failed
 	if instance.status == StatusFailed {
 		return nil, fmt.Errorf("workflow instance %s has failed", instanceID)
+	}
+
+	// Check if cancelled
+	if instance.status == StatusCancelled {
+		return nil, ErrWorkflowCancelled
+	}
+
+	// Check automatic cancellation policy
+	if reason := w.runner.checkCancellationPolicy(instance); reason != "" {
+		if err := CancelWorkflow(ctx, w.runner, instanceID, reason); err != nil {
+			return nil, fmt.Errorf("auto-cancel workflow: %w", err)
+		}
+		return nil, ErrWorkflowCancelled
 	}
 
 	w.logger.DebugContext(
@@ -689,8 +733,9 @@ func Step[Result any](wctx *Context, fn func(context.Context) (Result, error)) (
 
 	// Record step completion
 	if err := instance.recordThat(&stepCompleted{
-		StepIndex: stepIndex,
-		Result:    resultJSON,
+		StepIndex:   stepIndex,
+		Result:      resultJSON,
+		CompletedAt: wctx.runner.now(),
 	}); err != nil {
 		return zero, fmt.Errorf("record step completion: %w", err)
 	}
@@ -765,8 +810,9 @@ func Step2(wctx *Context, fn func(context.Context) error) error {
 
 	// Record step completion with empty result
 	if err := instance.recordThat(&stepCompleted{
-		StepIndex: stepIndex,
-		Result:    []byte("null"),
+		StepIndex:   stepIndex,
+		Result:      []byte("null"),
+		CompletedAt: wctx.runner.now(),
 	}); err != nil {
 		return fmt.Errorf("record step completion: %w", err)
 	}
