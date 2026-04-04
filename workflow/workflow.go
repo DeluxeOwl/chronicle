@@ -12,6 +12,7 @@ import (
 	"github.com/DeluxeOwl/chronicle/aggregate"
 	"github.com/DeluxeOwl/chronicle/event"
 	"github.com/DeluxeOwl/chronicle/eventlog"
+	"github.com/gofrs/uuid/v5"
 )
 
 // WorkflowInstance represents a running workflow as an aggregate.
@@ -45,13 +46,10 @@ func (w *WorkflowInstance) ID() InstanceID {
 type Status string
 
 const (
-	StatusPending   Status = "pending"
 	StatusRunning   Status = "running"
-	StatusSleeping  Status = "sleeping"
 	StatusWaiting   Status = "waiting"
 	StatusCompleted Status = "completed"
 	StatusFailed    Status = "failed"
-	StatusRetrying  Status = "retrying"
 	StatusCancelled Status = "cancelled"
 )
 
@@ -304,10 +302,7 @@ func NewSqliteRunnerWithSyncQueue(db *sql.DB, opts ...RunnerOption) (*Runner, er
 	// Tables are created by NewSyncQueue; this store handles non-transactional
 	// reads/writes (Emit, GetEvent). Transactional writes are handled by
 	// SyncQueue.Process().
-	persistentWS, err := newPersistentWaitStore(db)
-	if err != nil {
-		return nil, fmt.Errorf("create persistent wait store: %w", err)
-	}
+	persistentWS := newPersistentWaitStore(db)
 
 	eventLog, err := eventlog.NewSqlite(db)
 	if err != nil {
@@ -378,7 +373,7 @@ func (c *Context) Deadline() (time.Time, bool) {
 type StartOption func(*startConfig)
 
 type startConfig struct {
-	retryStrategy       *RetryStrategy
+	retryStrategy      *RetryStrategy
 	cancellationPolicy *CancellationPolicy
 }
 
@@ -827,7 +822,7 @@ func Step2(wctx *Context, fn func(context.Context) error) error {
 }
 
 func generateInstanceID() string {
-	return fmt.Sprintf("wf_%d", time.Now().UnixNano())
+	return fmt.Sprintf("wf-%d", uuid.Must(uuid.NewV7()))
 }
 
 // eventFuncWrapper wraps WorkflowEvent funcs to work with event.Any

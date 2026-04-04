@@ -3,7 +3,6 @@ package workflow
 import (
 	"database/sql"
 	"encoding/json"
-	"fmt"
 )
 
 // persistentWaitStore is a SQL-backed implementation of eventWaitStore.
@@ -23,38 +22,11 @@ type persistentWaitStore struct {
 	db *sql.DB
 }
 
-func newPersistentWaitStore(db *sql.DB) (*persistentWaitStore, error) {
-	if _, err := db.Exec(`
-		CREATE TABLE IF NOT EXISTS workflow_waiting_events (
-			instance_id TEXT NOT NULL,
-			event_name TEXT NOT NULL,
-			workflow_name TEXT NOT NULL,
-			step_index INTEGER NOT NULL DEFAULT 0,
-			deadline_ns INTEGER,
-			PRIMARY KEY (instance_id, event_name)
-		)
-	`); err != nil {
-		return nil, fmt.Errorf("create waiting_events table: %w", err)
-	}
-
-	// Index for efficient lookup by event name (used by Emit).
-	if _, err := db.Exec(`
-		CREATE INDEX IF NOT EXISTS idx_workflow_waiting_events_name
-		ON workflow_waiting_events (event_name)
-	`); err != nil {
-		return nil, fmt.Errorf("create waiting_events index: %w", err)
-	}
-
-	if _, err := db.Exec(`
-		CREATE TABLE IF NOT EXISTS workflow_emitted_events (
-			event_name TEXT PRIMARY KEY,
-			payload TEXT NOT NULL
-		)
-	`); err != nil {
-		return nil, fmt.Errorf("create emitted_events table: %w", err)
-	}
-
-	return &persistentWaitStore{db: db}, nil
+// newPersistentWaitStore creates a persistent wait store.
+// The required tables (workflow_waiting_events, workflow_emitted_events) must
+// already exist — they are created by NewSyncQueue / NewAsyncQueue.
+func newPersistentWaitStore(db *sql.DB) *persistentWaitStore {
+	return &persistentWaitStore{db: db}
 }
 
 // Register is a no-op for the persistent store.

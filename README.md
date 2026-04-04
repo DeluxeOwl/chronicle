@@ -236,7 +236,7 @@ func NewEmpty() *Account {
 
 And now, opening an account, and let's say **you can't open an account on a Sunday** (as an example of a business rule):
 ```go
-func Open(id AccountID, currentTime time.Time) (*Account, error) {
+func Open(id AccountID, currentTime time.Time, holderName string) (*Account, error) {
 	if currentTime.Weekday() == time.Sunday {
 		return nil, errors.New("sorry, you can't open an account on Sunday ¯\\_(ツ)_/¯")
 	}
@@ -253,7 +253,7 @@ func (a *Account) recordThat(event AccountEvent) error {
 
 Getting back to `Open`, recording an event is now straightforward:
 ```go
-func Open(id AccountID, currentTime time.Time) (*Account, error) {
+func Open(id AccountID, currentTime time.Time, holderName string) (*Account, error) {
 	if currentTime.Weekday() == time.Sunday {
 		return nil, errors.New("sorry, you can't open an account on Sunday ¯\\_(ツ)_/¯")
 	}

@@ -76,22 +76,22 @@ func (r *Runner) RunWorker(ctx context.Context, opts WorkerOptions) error {
 		if err != nil {
 			if isSleepError(err) {
 				// Sleep already enqueued a delayed task — this execution is done.
-				_ = r.queue.Complete(ctx, task.InstanceID)
+				r.completeTask(ctx, task.InstanceID)
 				continue
 			}
 			if isRetryError(err) {
 				// Retry already enqueued a delayed task — this execution is done.
-				_ = r.queue.Complete(ctx, task.InstanceID)
+				r.completeTask(ctx, task.InstanceID)
 				continue
 			}
 			if isWaitingError(err) {
 				// AwaitEvent parked the workflow — it will be woken by EmitEvent.
-				_ = r.queue.Complete(ctx, task.InstanceID)
+				r.completeTask(ctx, task.InstanceID)
 				continue
 			}
 			if isCancelledError(err) {
 				// Workflow was cancelled — clean up the task.
-				_ = r.queue.Complete(ctx, task.InstanceID)
+				r.completeTask(ctx, task.InstanceID)
 				continue
 			}
 			r.logger.Error(
@@ -99,10 +99,19 @@ func (r *Runner) RunWorker(ctx context.Context, opts WorkerOptions) error {
 				"instanceID", task.InstanceID,
 				"error", err,
 			)
-			_ = r.queue.Fail(ctx, task.InstanceID)
+			if qErr := r.queue.Fail(ctx, task.InstanceID); qErr != nil {
+				r.logger.Error("failed to mark task as failed", "instanceID", task.InstanceID, "error", qErr)
+			}
 			continue
 		}
 
-		_ = r.queue.Complete(ctx, task.InstanceID)
+		r.completeTask(ctx, task.InstanceID)
+	}
+}
+
+// completeTask marks a task as done, logging on failure.
+func (r *Runner) completeTask(ctx context.Context, instanceID InstanceID) {
+	if err := r.queue.Complete(ctx, instanceID); err != nil {
+		r.logger.Error("failed to complete task", "instanceID", instanceID, "error", err)
 	}
 }
