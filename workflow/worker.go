@@ -79,6 +79,16 @@ func (r *Runner) RunWorker(ctx context.Context, opts WorkerOptions) error {
 				_ = r.queue.Complete(ctx, task.InstanceID)
 				continue
 			}
+			if isRetryError(err) {
+				// Retry already enqueued a delayed task — this execution is done.
+				_ = r.queue.Complete(ctx, task.InstanceID)
+				continue
+			}
+			if isWaitingError(err) {
+				// AwaitEvent parked the workflow — it will be woken by EmitEvent.
+				_ = r.queue.Complete(ctx, task.InstanceID)
+				continue
+			}
 			r.logger.Error(
 				"workflow execution failed",
 				"instanceID", task.InstanceID,

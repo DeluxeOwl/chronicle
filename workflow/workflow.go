@@ -19,13 +19,16 @@ import (
 type WorkflowInstance struct {
 	aggregate.Base
 
-	id           InstanceID
-	workflowName string
-	status       Status
-	params       []byte
-	output       []byte
-	stepResults  map[int][]byte // step_index -> serialized result
-	currentStep  int
+	id            InstanceID
+	workflowName  string
+	status        Status
+	params        []byte
+	output        []byte
+	stepResults   map[int][]byte // step_index -> serialized result
+	currentStep   int
+	attempt       int            // 1-indexed attempt number
+	retryStrategy *RetryStrategy // nil = no retry
+	failureError  string         // error message from the last failure
 }
 
 type InstanceID string
@@ -42,8 +45,10 @@ const (
 	StatusPending   Status = "pending"
 	StatusRunning   Status = "running"
 	StatusSleeping  Status = "sleeping"
+	StatusWaiting   Status = "waiting"
 	StatusCompleted Status = "completed"
 	StatusFailed    Status = "failed"
+	StatusRetrying  Status = "retrying"
 )
 
 //sumtype:decl
@@ -53,10 +58,11 @@ type WorkflowEvent interface {
 }
 
 type workflowStarted struct {
-	InstanceID   string          `json:"instanceID"`
-	WorkflowName string          `json:"workflowName"`
-	Params       json.RawMessage `json:"params"`
-	StartedAt    time.Time       `json:"startedAt"`
+	InstanceID    string          `json:"instanceID"`
+	WorkflowName  string          `json:"workflowName"`
+	Params        json.RawMessage `json:"params"`
+	StartedAt     time.Time       `json:"startedAt"`
+	RetryStrategy json.RawMessage `json:"retryStrategy,omitempty"`
 }
 
 func (*workflowStarted) EventName() string { return "workflow/started" }
@@ -99,6 +105,9 @@ func (w *WorkflowInstance) EventFuncs() event.FuncsFor[WorkflowEvent] {
 		func() WorkflowEvent { return new(stepFailed) },
 		func() WorkflowEvent { return new(workflowCompleted) },
 		func() WorkflowEvent { return new(workflowFailed) },
+		func() WorkflowEvent { return new(workflowRetried) },
+		func() WorkflowEvent { return new(workflowWaiting) },
+		func() WorkflowEvent { return new(workflowEventReceived) },
 	}
 }
 
@@ -109,8 +118,15 @@ func (w *WorkflowInstance) Apply(evt WorkflowEvent) error {
 		w.workflowName = e.WorkflowName
 		w.params = e.Params
 		w.status = StatusRunning
+		w.attempt = 1
 		if w.stepResults == nil {
 			w.stepResults = make(map[int][]byte)
+		}
+		if e.RetryStrategy != nil {
+			var rs RetryStrategy
+			if err := json.Unmarshal(e.RetryStrategy, &rs); err == nil {
+				w.retryStrategy = &rs
+			}
 		}
 	case *stepCompleted:
 		w.stepResults[e.StepIndex] = e.Result
@@ -122,6 +138,21 @@ func (w *WorkflowInstance) Apply(evt WorkflowEvent) error {
 		w.status = StatusCompleted
 	case *workflowFailed:
 		w.status = StatusFailed
+		w.failureError = e.Error
+	case *workflowRetried:
+		w.attempt = e.Attempt
+		w.status = StatusRunning
+		// Restore the retry strategy from the event so it survives replays
+		if e.RetryStrategy != nil {
+			var rs RetryStrategy
+			if err := json.Unmarshal(e.RetryStrategy, &rs); err == nil {
+				w.retryStrategy = &rs
+			}
+		}
+	case *workflowWaiting:
+		w.status = StatusWaiting
+	case *workflowEventReceived:
+		w.status = StatusRunning
 	default:
 		return fmt.Errorf("unexpected event kind: %T", evt)
 	}
@@ -136,6 +167,7 @@ func NewEmpty() *WorkflowInstance {
 	//nolint:exhaustruct // not needed.
 	return &WorkflowInstance{
 		stepResults: make(map[int][]byte),
+		attempt:     0, // set to 1 by workflowStarted
 	}
 }
 
@@ -153,6 +185,7 @@ type Runner struct {
 	nowFunc       func() time.Time
 	queue         TaskQueue
 	workflows     map[string]executableWorkflow
+	waitStore     *waitStore
 }
 
 // NewRunner creates a new workflow runner with the given event log.
@@ -188,6 +221,7 @@ func NewRunner(eventLog event.Log, logger *slog.Logger, opts ...RunnerOption) (*
 		eventRegistry: registry,
 		nowFunc:       time.Now,
 		workflows:     make(map[string]executableWorkflow),
+		waitStore:     newWaitStore(),
 	}
 
 	for _, opt := range opts {
@@ -237,6 +271,22 @@ func (c *Context) Deadline() (time.Time, bool) {
 	return c.ctx.Deadline()
 }
 
+// StartOption configures a workflow Start call.
+type StartOption func(*startConfig)
+
+type startConfig struct {
+	retryStrategy *RetryStrategy
+}
+
+// WithRetryStrategy configures a retry strategy for the workflow instance.
+// When the workflow fails, it will be automatically retried with the given
+// backoff configuration instead of permanently failing.
+func WithRetryStrategy(rs RetryStrategy) StartOption {
+	return func(c *startConfig) {
+		c.retryStrategy = &rs
+	}
+}
+
 // Workflow represents a registered workflow that can be executed.
 type Workflow[Params any, Output any] struct {
 	runner *Runner
@@ -265,7 +315,12 @@ func New[Params any, Output any](
 
 // Start begins a new workflow instance with the given parameters.
 // Returns the instance ID that can be used to track the workflow.
-func (w *Workflow[Params, Output]) Start(ctx context.Context, params *Params) (InstanceID, error) {
+func (w *Workflow[Params, Output]) Start(ctx context.Context, params *Params, opts ...StartOption) (InstanceID, error) {
+	var cfg startConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
 	instanceID := InstanceID(generateInstanceID())
 	w.logger.InfoContext(ctx, "starting workflow", "instanceID", instanceID)
 
@@ -277,13 +332,22 @@ func (w *Workflow[Params, Output]) Start(ctx context.Context, params *Params) (I
 	instance := NewEmpty()
 	instance.id = instanceID
 
-	// Record the started event
-	if err := instance.recordThat(&workflowStarted{
+	startedEvent := &workflowStarted{
 		InstanceID:   string(instanceID),
 		WorkflowName: w.name,
 		Params:       paramsJSON,
 		StartedAt:    time.Now(),
-	}); err != nil {
+	}
+	if cfg.retryStrategy != nil {
+		rsJSON, err := json.Marshal(cfg.retryStrategy)
+		if err != nil {
+			return "", fmt.Errorf("marshal retry strategy: %w", err)
+		}
+		startedEvent.RetryStrategy = rsJSON
+	}
+
+	// Record the started event
+	if err := instance.recordThat(startedEvent); err != nil {
 		return "", fmt.Errorf("record workflow started: %w", err)
 	}
 
@@ -364,6 +428,14 @@ func (w *Workflow[Params, Output]) Run(
 			return nil, ErrWorkflowSleeping
 		}
 
+		// If the workflow is waiting for an event, don't record it as a failure.
+		if isWaitingError(err) {
+			return nil, ErrWorkflowWaiting
+		}
+
+		// If the event timed out, it's a real workflow error — let it flow to retry/fail.
+		// ErrEventTimeout is not special-cased here; it's treated like any other step error.
+
 		// Reload instance to get latest state
 		instance, loadErr := w.runner.repo.Get(ctx, instanceID)
 		if loadErr != nil {
@@ -373,7 +445,21 @@ func (w *Workflow[Params, Output]) Run(
 				err,
 			)
 		}
-		// Record failure
+
+		// Attempt to schedule a retry if a strategy is configured
+		retried, retryErr := w.runner.scheduleRetry(wctx, instance, err)
+		if retryErr != nil {
+			return nil, fmt.Errorf(
+				"workflow failed and failed to schedule retry: %w (original error: %w)",
+				retryErr,
+				err,
+			)
+		}
+		if retried {
+			return nil, ErrWorkflowRetrying
+		}
+
+		// No retry — record permanent failure
 		if err := instance.recordThat(&workflowFailed{
 			Error: err.Error(),
 		}); err != nil {
@@ -445,6 +531,28 @@ func (w *Workflow[Params, Output]) GetResult(
 	}
 
 	return &output, nil
+}
+
+// InstanceInfo contains metadata about a workflow instance.
+type InstanceInfo struct {
+	Status  Status
+	Attempt int
+}
+
+// GetStatus returns the current status and attempt number of a workflow instance.
+func (w *Workflow[Params, Output]) GetStatus(
+	ctx context.Context,
+	instanceID InstanceID,
+) (InstanceInfo, error) {
+	instance, err := w.runner.repo.Get(ctx, instanceID)
+	if err != nil {
+		return InstanceInfo{}, fmt.Errorf("load workflow instance: %w", err)
+	}
+
+	return InstanceInfo{
+		Status:  instance.status,
+		Attempt: instance.attempt,
+	}, nil
 }
 
 // Step executes a workflow step function and caches its result.

@@ -73,6 +73,12 @@ func (q *MemoryQueue) Fail(_ context.Context, _ InstanceID) error {
 	return nil
 }
 
+func (q *MemoryQueue) ExtendLease(_ context.Context, _ InstanceID, _ time.Duration) error {
+	// In the memory queue, there are no leases to extend.
+	// A real implementation would update the claimed_until timestamp.
+	return nil
+}
+
 // Len returns the number of tasks in the queue (useful for testing).
 func (q *MemoryQueue) Len() int {
 	q.mu.Lock()

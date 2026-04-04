@@ -26,6 +26,11 @@ type TaskQueue interface {
 
 	// Fail marks a task as failed.
 	Fail(ctx context.Context, instanceID InstanceID) error
+
+	// ExtendLease extends the claim timeout for a running task.
+	// This signals that the worker is still making progress on a long-running step.
+	// Implementations that don't support leases may no-op.
+	ExtendLease(ctx context.Context, instanceID InstanceID, lease time.Duration) error
 }
 
 // QueuedTask represents a unit of work on the queue.
