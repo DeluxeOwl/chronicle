@@ -1,17 +1,15 @@
 package workflow
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 )
 
 // ErrWorkflowSleeping is returned by Run when the workflow is currently sleeping.
 // The caller should not treat this as a failure — the workflow will be automatically
-// re-triggered by the scheduler when the sleep duration elapses.
+// re-triggered by the task queue when the sleep duration elapses.
 var ErrWorkflowSleeping = errors.New("workflow is sleeping")
 
 // sleepResult is the data stored in the step result for a sleep step.
@@ -22,29 +20,6 @@ type sleepResult struct {
 	Duration time.Duration `json:"duration"`
 }
 
-// Scheduler controls how sleeping workflows get re-triggered after their
-// duration elapses. The default implementation uses time.AfterFunc.
-// Users can implement this interface to use persistent job queues,
-// distributed schedulers, cron systems, etc.
-type Scheduler interface {
-	// Schedule arranges for fn to be called after duration d elapses.
-	// The returned func cancels the scheduled call if it hasn't fired yet.
-	Schedule(d time.Duration, fn func()) func()
-}
-
-// timerScheduler is the default Scheduler backed by time.AfterFunc.
-type timerScheduler struct{}
-
-func (timerScheduler) Schedule(d time.Duration, fn func()) func() {
-	t := time.AfterFunc(d, fn)
-	return func() { t.Stop() }
-}
-
-// sleepWakeEntry tracks a pending sleep wake-up so it can be cancelled on Close.
-type sleepWakeEntry struct {
-	cancel func()
-}
-
 // Sleep pauses the workflow for the given duration.
 //
 // The sleep is durable: the wake-up time is recorded as an event in the event log.
@@ -53,8 +28,9 @@ type sleepWakeEntry struct {
 // or resume execution.
 //
 // When a workflow hits a sleep that hasn't elapsed yet, Run returns
-// ErrWorkflowSleeping. The Runner's scheduler automatically re-triggers
-// Run when the duration elapses.
+// ErrWorkflowSleeping. A delayed task is enqueued on the Runner's TaskQueue
+// so that a worker will automatically re-run the workflow once the sleep
+// duration has passed.
 func Sleep(wctx *Context, d time.Duration) error {
 	runner := wctx.runner
 
@@ -78,15 +54,20 @@ func Sleep(wctx *Context, d time.Duration) error {
 		}
 
 		if now.Before(sr.WakeAt) {
-			// Still sleeping — schedule a wake-up for the remaining time
-			remaining := sr.WakeAt.Sub(now)
-			runner.scheduleSleepWake(wctx.instanceID, remaining)
+			// Still sleeping — enqueue a delayed wake-up task
+			if err := runner.queue.Enqueue(wctx.ctx, QueuedTask{
+				InstanceID:   wctx.instanceID,
+				WorkflowName: instance.workflowName,
+				RunAfter:     sr.WakeAt,
+			}); err != nil {
+				return fmt.Errorf("enqueue sleep wake task: %w", err)
+			}
 
 			runner.logger.Debug(
 				"sleep replay, still sleeping",
 				"instanceID", wctx.instanceID,
 				"stepIndex", stepIndex,
-				"remaining", remaining,
+				"remaining", sr.WakeAt.Sub(now),
 			)
 			return ErrWorkflowSleeping
 		}
@@ -122,8 +103,14 @@ func Sleep(wctx *Context, d time.Duration) error {
 		return fmt.Errorf("save sleep step: %w", err)
 	}
 
-	// Schedule the wake-up
-	runner.scheduleSleepWake(wctx.instanceID, d)
+	// Enqueue a delayed task for the wake-up
+	if err := runner.queue.Enqueue(wctx.ctx, QueuedTask{
+		InstanceID:   wctx.instanceID,
+		WorkflowName: instance.workflowName,
+		RunAfter:     wakeAt,
+	}); err != nil {
+		return fmt.Errorf("enqueue sleep wake task: %w", err)
+	}
 
 	runner.logger.Info(
 		"workflow sleeping",
@@ -134,95 +121,6 @@ func Sleep(wctx *Context, d time.Duration) error {
 	)
 
 	return ErrWorkflowSleeping
-}
-
-// scheduleSleepWake schedules a re-run of the workflow after the given duration.
-// It uses the Runner's base context (not the caller's context) since the
-// original request context may be long gone by the time the sleep elapses.
-func (r *Runner) scheduleSleepWake(instanceID InstanceID, d time.Duration) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	// Cancel any existing wake for this instance
-	if entry, ok := r.sleepWakes[instanceID]; ok {
-		entry.cancel()
-		delete(r.sleepWakes, instanceID)
-	}
-
-	cancel := r.scheduler.Schedule(d, func() {
-		r.wg.Add(1)
-		defer r.wg.Done()
-
-		r.mu.Lock()
-		delete(r.sleepWakes, instanceID)
-		r.mu.Unlock()
-
-		// Use the runner's base context
-		ctx := r.baseCtx
-		if ctx.Err() != nil {
-			return // Runner has been closed
-		}
-
-		r.logger.Debug("sleep wake triggered", "instanceID", instanceID)
-
-		// Notify via the wake channel if anyone is listening
-		r.mu.Lock()
-		ch, ok := r.wakeChs[instanceID]
-		r.mu.Unlock()
-		if ok {
-			select {
-			case ch <- struct{}{}:
-			default:
-			}
-		}
-	})
-
-	r.sleepWakes[instanceID] = sleepWakeEntry{cancel: cancel}
-}
-
-// WaitForWake blocks until the given workflow instance is woken from sleep,
-// or the context is cancelled. This is primarily useful for testing.
-func (r *Runner) WaitForWake(ctx context.Context, instanceID InstanceID) error {
-	r.mu.Lock()
-	ch, ok := r.wakeChs[instanceID]
-	if !ok {
-		ch = make(chan struct{}, 1)
-		r.wakeChs[instanceID] = ch
-	}
-	r.mu.Unlock()
-
-	select {
-	case <-ch:
-		r.mu.Lock()
-		delete(r.wakeChs, instanceID)
-		r.mu.Unlock()
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-// Close cancels all pending sleep wake-ups and waits for in-flight
-// callbacks to finish. After Close returns, no more scheduled wake-ups
-// will fire.
-func (r *Runner) Close() {
-	r.closeOnce.Do(func() {
-		r.cancelBase()
-
-		r.mu.Lock()
-		for id, entry := range r.sleepWakes {
-			entry.cancel()
-			delete(r.sleepWakes, id)
-		}
-		// Close all wake channels
-		for id, ch := range r.wakeChs {
-			close(ch)
-			delete(r.wakeChs, id)
-		}
-		r.mu.Unlock()
-
-		r.wg.Wait()
-	})
 }
 
 // isSleepError checks if an error is ErrWorkflowSleeping.
@@ -242,29 +140,15 @@ func WithNowFunc(fn func() time.Time) RunnerOption {
 	}
 }
 
-// WithScheduler sets a custom scheduler for the runner.
-// Defaults to a time.AfterFunc-based scheduler.
-func WithScheduler(s Scheduler) RunnerOption {
+// WithTaskQueue sets a custom task queue for the runner.
+// Defaults to an in-memory queue.
+func WithTaskQueue(q TaskQueue) RunnerOption {
 	return func(r *Runner) {
-		r.scheduler = s
+		r.queue = q
 	}
 }
 
 // now returns the current time using the configured clock.
 func (r *Runner) now() time.Time {
 	return r.nowFunc()
-}
-
-// runnerFields holds the additional fields needed for sleep support.
-// These are embedded into the Runner struct via the modifications below.
-type runnerFields struct {
-	nowFunc    func() time.Time
-	scheduler  Scheduler
-	baseCtx    context.Context
-	cancelBase context.CancelFunc
-	mu         sync.Mutex
-	sleepWakes map[InstanceID]sleepWakeEntry
-	wakeChs    map[InstanceID]chan struct{}
-	wg         sync.WaitGroup
-	closeOnce  sync.Once
 }

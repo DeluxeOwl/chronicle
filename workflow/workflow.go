@@ -139,14 +139,20 @@ func NewEmpty() *WorkflowInstance {
 	}
 }
 
+// executableWorkflow is the non-generic interface that the worker loop
+// uses to drive workflows it discovers via the registry.
+type executableWorkflow interface {
+	execute(ctx context.Context, instanceID InstanceID) error
+}
+
 // Runner manages workflow execution, it requires an event log.
 type Runner struct {
-	repo     aggregate.Repository[InstanceID, WorkflowEvent, *WorkflowInstance]
-	logger   *slog.Logger
-	registry event.Registry[event.Any]
-
-	// Sleep support (defined in workflow_sleep.go)
-	runnerFields
+	repo          aggregate.Repository[InstanceID, WorkflowEvent, *WorkflowInstance]
+	logger        *slog.Logger
+	eventRegistry event.Registry[event.Any]
+	nowFunc       func() time.Time
+	queue         TaskQueue
+	workflows     map[string]executableWorkflow
 }
 
 // NewRunner creates a new workflow runner with the given event log.
@@ -176,24 +182,21 @@ func NewRunner(eventLog event.Log, logger *slog.Logger, opts ...RunnerOption) (*
 		return nil, fmt.Errorf("create workflow repository: %w", err)
 	}
 
-	baseCtx, cancelBase := context.WithCancel(context.Background())
-
 	r := &Runner{
-		repo:     repo,
-		logger:   logger,
-		registry: registry,
-		runnerFields: runnerFields{
-			nowFunc:    time.Now,
-			scheduler:  timerScheduler{},
-			baseCtx:    baseCtx,
-			cancelBase: cancelBase,
-			sleepWakes: make(map[InstanceID]sleepWakeEntry),
-			wakeChs:    make(map[InstanceID]chan struct{}),
-		},
+		repo:          repo,
+		logger:        logger,
+		eventRegistry: registry,
+		nowFunc:       time.Now,
+		workflows:     make(map[string]executableWorkflow),
 	}
 
 	for _, opt := range opts {
 		opt(r)
+	}
+
+	// Default to an in-memory queue if none was provided via options.
+	if r.queue == nil {
+		r.queue = NewMemoryQueue(WithMemoryQueueNowFunc(r.nowFunc))
 	}
 
 	return r, nil
@@ -243,17 +246,21 @@ type Workflow[Params any, Output any] struct {
 }
 
 // New registers a new workflow with the given name and function.
+// The workflow is added to the runner's internal registry so that
+// RunWorker can look it up by name when polling the task queue.
 func New[Params any, Output any](
 	runner *Runner,
 	name string,
 	fn func(*Context, *Params) (*Output, error),
 ) *Workflow[Params, Output] {
-	return &Workflow[Params, Output]{
+	wf := &Workflow[Params, Output]{
 		runner: runner,
 		name:   name,
 		fn:     fn,
 		logger: runner.logger.With("workflow", name),
 	}
+	runner.workflows[name] = wf
+	return wf
 }
 
 // Start begins a new workflow instance with the given parameters.
@@ -283,6 +290,14 @@ func (w *Workflow[Params, Output]) Start(ctx context.Context, params *Params) (I
 	// Save to repository
 	if _, _, err := w.runner.repo.Save(ctx, instance); err != nil {
 		return "", fmt.Errorf("save workflow instance: %w", err)
+	}
+
+	// Enqueue for worker processing
+	if err := w.runner.queue.Enqueue(ctx, QueuedTask{
+		InstanceID:   instanceID,
+		WorkflowName: w.name,
+	}); err != nil {
+		return "", fmt.Errorf("enqueue workflow task: %w", err)
 	}
 
 	w.logger.InfoContext(ctx, "workflow started", "instanceID", instanceID)
@@ -401,6 +416,13 @@ func (w *Workflow[Params, Output]) Run(
 	w.logger.InfoContext(ctx, "workflow completed", "instanceID", instanceID)
 
 	return output, nil
+}
+
+// execute implements executableWorkflow so the worker loop can drive
+// any workflow without knowing its concrete type parameters.
+func (w *Workflow[Params, Output]) execute(ctx context.Context, instanceID InstanceID) error {
+	_, err := w.Run(ctx, instanceID)
+	return err
 }
 
 // GetResult retrieves the result of a completed workflow instance.

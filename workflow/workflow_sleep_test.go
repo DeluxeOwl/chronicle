@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"sync"
 	"testing"
 	"time"
 
@@ -13,99 +12,6 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/require"
 )
-
-// controllableClock provides a clock that can be advanced manually.
-// All reads and writes are synchronized.
-type controllableClock struct {
-	mu  sync.Mutex
-	now time.Time
-}
-
-func newClock(t time.Time) *controllableClock {
-	return &controllableClock{now: t}
-}
-
-func (c *controllableClock) Now() time.Time {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.now
-}
-
-func (c *controllableClock) Advance(d time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.now = c.now.Add(d)
-}
-
-func (c *controllableClock) Set(t time.Time) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.now = t
-}
-
-// controllableScheduler is a Scheduler where scheduled callbacks can be
-// fired manually from tests. This allows testing long-duration sleeps
-// (hours, days) without waiting.
-type controllableScheduler struct {
-	mu      sync.Mutex
-	pending map[int]scheduledEntry
-	nextID  int
-}
-
-type scheduledEntry struct {
-	fn     func()
-	cancel func()
-}
-
-func newScheduler() *controllableScheduler {
-	return &controllableScheduler{
-		pending: make(map[int]scheduledEntry),
-	}
-}
-
-func (s *controllableScheduler) Schedule(d time.Duration, fn func()) func() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	id := s.nextID
-	s.nextID++
-	cancelled := false
-	s.pending[id] = scheduledEntry{
-		fn: fn,
-		cancel: func() {
-			cancelled = true
-		},
-	}
-	return func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		cancelled = true
-		delete(s.pending, id)
-		_ = cancelled
-	}
-}
-
-// FireAll fires all pending scheduled callbacks.
-func (s *controllableScheduler) FireAll() {
-	s.mu.Lock()
-	entries := make([]func(), 0, len(s.pending))
-	for id, entry := range s.pending {
-		entries = append(entries, entry.fn)
-		delete(s.pending, id)
-	}
-	s.mu.Unlock()
-
-	for _, fn := range entries {
-		fn()
-	}
-}
-
-// PendingCount returns the number of pending scheduled callbacks.
-func (s *controllableScheduler) PendingCount() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.pending)
-}
 
 func setupSleepTestDB(t *testing.T) *sql.DB {
 	t.Helper()
@@ -116,15 +22,13 @@ func setupSleepTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
-func setupSleepRunner(t *testing.T, clock *controllableClock, sched *controllableScheduler) *workflow.Runner {
+func setupSleepRunner(t *testing.T, clock *controllableClock) *workflow.Runner {
 	t.Helper()
 	db := setupSleepTestDB(t)
 	runner, err := workflow.NewSqliteRunner(db,
 		workflow.WithNowFunc(clock.Now),
-		workflow.WithScheduler(sched),
 	)
 	require.NoError(t, err)
-	t.Cleanup(func() { runner.Close() })
 	return runner
 }
 
@@ -138,8 +42,7 @@ type SleepTestOutput struct {
 
 func TestSleep_BasicFlow(t *testing.T) {
 	clock := newClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
-	sched := newScheduler()
-	runner := setupSleepRunner(t, clock, sched)
+	runner := setupSleepRunner(t, clock)
 
 	wf := workflow.New(runner, "sleep-basic", func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
 		// Step 1: do some work
@@ -174,13 +77,10 @@ func TestSleep_BasicFlow(t *testing.T) {
 	_, err = wf.Run(ctx, instanceID)
 	require.ErrorIs(t, err, workflow.ErrWorkflowSleeping)
 
-	// Scheduler should have one pending wake
-	require.Equal(t, 1, sched.PendingCount())
-
 	// Advance clock past the sleep
 	clock.Advance(25 * time.Hour)
 
-	// Manually re-run (simulating what the scheduler callback would trigger)
+	// Re-run — sleep has elapsed, workflow completes
 	output, err := wf.Run(ctx, instanceID)
 	require.NoError(t, err)
 	require.Equal(t, "before-sleep-after-sleep", output.Result)
@@ -188,8 +88,7 @@ func TestSleep_BasicFlow(t *testing.T) {
 
 func TestSleep_StillSleepingOnReplay(t *testing.T) {
 	clock := newClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
-	sched := newScheduler()
-	runner := setupSleepRunner(t, clock, sched)
+	runner := setupSleepRunner(t, clock)
 
 	wf := workflow.New(runner, "sleep-still", func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
 		if err := workflow.Sleep(wctx, 72*time.Hour); err != nil {
@@ -225,8 +124,7 @@ func TestSleep_StillSleepingOnReplay(t *testing.T) {
 
 func TestSleep_MultipleSleepsInSequence(t *testing.T) {
 	clock := newClock(time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC))
-	sched := newScheduler()
-	runner := setupSleepRunner(t, clock, sched)
+	runner := setupSleepRunner(t, clock)
 
 	stepLog := []string{}
 
@@ -297,8 +195,7 @@ func TestSleep_MultipleSleepsInSequence(t *testing.T) {
 
 func TestSleep_LongDuration_Days(t *testing.T) {
 	clock := newClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
-	sched := newScheduler()
-	runner := setupSleepRunner(t, clock, sched)
+	runner := setupSleepRunner(t, clock)
 
 	wf := workflow.New(runner, "sleep-days", func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
 		// Sleep for 30 days
@@ -325,8 +222,7 @@ func TestSleep_LongDuration_Days(t *testing.T) {
 
 func TestSleep_LongDuration_Weeks(t *testing.T) {
 	clock := newClock(time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC))
-	sched := newScheduler()
-	runner := setupSleepRunner(t, clock, sched)
+	runner := setupSleepRunner(t, clock)
 
 	wf := workflow.New(runner, "sleep-weeks", func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
 		// Sleep for 2 weeks
@@ -357,11 +253,9 @@ func TestSleep_SurvivesCrash(t *testing.T) {
 	// from the event log.
 	db := setupSleepTestDB(t)
 	clock := newClock(time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC))
-	sched := newScheduler()
 
 	runner1, err := workflow.NewSqliteRunner(db,
 		workflow.WithNowFunc(clock.Now),
-		workflow.WithScheduler(sched),
 	)
 	require.NoError(t, err)
 
@@ -379,20 +273,14 @@ func TestSleep_SurvivesCrash(t *testing.T) {
 	_, err = wf1.Run(ctx, instanceID)
 	require.ErrorIs(t, err, workflow.ErrWorkflowSleeping)
 
-	// "Crash" — close the first runner
-	runner1.Close()
-
 	// Advance time past the sleep
 	clock.Advance(49 * time.Hour)
 
 	// "Restart" — create a new runner with the same DB
-	sched2 := newScheduler()
 	runner2, err := workflow.NewSqliteRunner(db,
 		workflow.WithNowFunc(clock.Now),
-		workflow.WithScheduler(sched2),
 	)
 	require.NoError(t, err)
-	defer runner2.Close()
 
 	wf2 := workflow.New(runner2, "crash-test", func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
 		if err := workflow.Sleep(wctx, 48*time.Hour); err != nil {
@@ -409,8 +297,7 @@ func TestSleep_SurvivesCrash(t *testing.T) {
 
 func TestSleep_AlreadyCompletedWorkflow(t *testing.T) {
 	clock := newClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
-	sched := newScheduler()
-	runner := setupSleepRunner(t, clock, sched)
+	runner := setupSleepRunner(t, clock)
 
 	wf := workflow.New(runner, "already-done", func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
 		if err := workflow.Sleep(wctx, 1*time.Hour); err != nil {
@@ -440,8 +327,7 @@ func TestSleep_AlreadyCompletedWorkflow(t *testing.T) {
 
 func TestSleep_WithStepsBeforeAndAfter(t *testing.T) {
 	clock := newClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
-	sched := newScheduler()
-	runner := setupSleepRunner(t, clock, sched)
+	runner := setupSleepRunner(t, clock)
 
 	step1Count := 0
 	step2Count := 0
@@ -495,8 +381,7 @@ func TestSleep_WithStepsBeforeAndAfter(t *testing.T) {
 
 func TestSleep_ZeroDuration(t *testing.T) {
 	clock := newClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
-	sched := newScheduler()
-	runner := setupSleepRunner(t, clock, sched)
+	runner := setupSleepRunner(t, clock)
 
 	wf := workflow.New(runner, "zero-sleep", func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
 		// Sleep for 0 — should effectively be a no-op on replay
@@ -510,13 +395,9 @@ func TestSleep_ZeroDuration(t *testing.T) {
 	instanceID, err := wf.Start(ctx, &SleepTestParams{})
 	require.NoError(t, err)
 
-	// Even with zero duration, the first run records the sleep step.
-	// The scheduler fires immediately (or near-immediately).
-	// On re-run, the wake time is in the past, so it continues.
+	// Even with zero duration, the first run records the sleep step
+	// and returns ErrWorkflowSleeping.
 	_, err = wf.Run(ctx, instanceID)
-	// With zero duration, wakeAt == now, and we check now.Before(wakeAt)
-	// which is false, so it should pass through immediately on replay.
-	// But the first execution always records and returns ErrWorkflowSleeping.
 	require.ErrorIs(t, err, workflow.ErrWorkflowSleeping)
 
 	// Re-run immediately — wake time is now, clock hasn't advanced but
@@ -526,77 +407,11 @@ func TestSleep_ZeroDuration(t *testing.T) {
 	require.Equal(t, "instant", output.Result)
 }
 
-func TestSleep_SchedulerIsCalled(t *testing.T) {
-	clock := newClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
-	sched := newScheduler()
-	runner := setupSleepRunner(t, clock, sched)
-
-	wf := workflow.New(runner, "sched-test", func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
-		if err := workflow.Sleep(wctx, 5*time.Hour); err != nil {
-			return nil, err
-		}
-		return &SleepTestOutput{Result: "done"}, nil
-	})
-
-	ctx := t.Context()
-	instanceID, err := wf.Start(ctx, &SleepTestParams{})
-	require.NoError(t, err)
-
-	require.Equal(t, 0, sched.PendingCount())
-
-	_, err = wf.Run(ctx, instanceID)
-	require.ErrorIs(t, err, workflow.ErrWorkflowSleeping)
-
-	// Verify the scheduler was invoked
-	require.Equal(t, 1, sched.PendingCount())
-}
-
-func TestSleep_SchedulerWakeNotifiesChannel(t *testing.T) {
-	clock := newClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
-	sched := newScheduler()
-	runner := setupSleepRunner(t, clock, sched)
-
-	wf := workflow.New(runner, "wake-notify", func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
-		if err := workflow.Sleep(wctx, 1*time.Hour); err != nil {
-			return nil, err
-		}
-		return &SleepTestOutput{Result: "notified"}, nil
-	})
-
-	ctx := t.Context()
-	instanceID, err := wf.Start(ctx, &SleepTestParams{})
-	require.NoError(t, err)
-
-	_, err = wf.Run(ctx, instanceID)
-	require.ErrorIs(t, err, workflow.ErrWorkflowSleeping)
-
-	// Set up a wait for the wake
-	done := make(chan error, 1)
-	go func() {
-		done <- runner.WaitForWake(ctx, instanceID)
-	}()
-
-	// Give the goroutine a moment to register
-	time.Sleep(10 * time.Millisecond)
-
-	// Fire the scheduler
-	sched.FireAll()
-
-	// Should be notified
-	select {
-	case err := <-done:
-		require.NoError(t, err)
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for wake notification")
-	}
-}
-
 func TestSleep_SleepErrorDoesNotMarkWorkflowFailed(t *testing.T) {
 	// Verify that a sleeping workflow is NOT marked as failed.
 	// After wake, it should complete normally.
 	clock := newClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
-	sched := newScheduler()
-	runner := setupSleepRunner(t, clock, sched)
+	runner := setupSleepRunner(t, clock)
 
 	wf := workflow.New(runner, "not-failed", func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
 		if err := workflow.Sleep(wctx, 1*time.Hour); err != nil {
@@ -633,8 +448,7 @@ func TestSleep_SleepErrorDoesNotMarkWorkflowFailed(t *testing.T) {
 
 func TestSleep_MultipleWorkflowsSleepingConcurrently(t *testing.T) {
 	clock := newClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
-	sched := newScheduler()
-	runner := setupSleepRunner(t, clock, sched)
+	runner := setupSleepRunner(t, clock)
 
 	wf := workflow.New(runner, "concurrent-sleep", func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
 		if err := workflow.Sleep(wctx, 2*time.Hour); err != nil {
@@ -659,8 +473,6 @@ func TestSleep_MultipleWorkflowsSleepingConcurrently(t *testing.T) {
 		require.ErrorIs(t, err, workflow.ErrWorkflowSleeping)
 	}
 
-	require.Equal(t, 5, sched.PendingCount())
-
 	// Advance time past sleep
 	clock.Advance(3 * time.Hour)
 
@@ -674,8 +486,7 @@ func TestSleep_MultipleWorkflowsSleepingConcurrently(t *testing.T) {
 
 func TestSleep_Step2BeforeSleep(t *testing.T) {
 	clock := newClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
-	sched := newScheduler()
-	runner := setupSleepRunner(t, clock, sched)
+	runner := setupSleepRunner(t, clock)
 
 	step2Executed := 0
 
@@ -713,8 +524,7 @@ func TestSleep_Step2BeforeSleep(t *testing.T) {
 
 func TestSleep_StepFailureBeforeSleep(t *testing.T) {
 	clock := newClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
-	sched := newScheduler()
-	runner := setupSleepRunner(t, clock, sched)
+	runner := setupSleepRunner(t, clock)
 
 	wf := workflow.New(runner, "fail-before-sleep", func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
 		_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
@@ -740,50 +550,11 @@ func TestSleep_StepFailureBeforeSleep(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "step exploded")
 	require.NotErrorIs(t, err, workflow.ErrWorkflowSleeping)
-
-	// No pending wakes since we never reached sleep
-	require.Equal(t, 0, sched.PendingCount())
-}
-
-func TestSleep_RunnerClose_CancelsPendingWakes(t *testing.T) {
-	clock := newClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
-	sched := newScheduler()
-	db := setupSleepTestDB(t)
-
-	runner, err := workflow.NewSqliteRunner(db,
-		workflow.WithNowFunc(clock.Now),
-		workflow.WithScheduler(sched),
-	)
-	require.NoError(t, err)
-
-	wf := workflow.New(runner, "close-test", func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
-		if err := workflow.Sleep(wctx, 10*time.Hour); err != nil {
-			return nil, err
-		}
-		return &SleepTestOutput{Result: "done"}, nil
-	})
-
-	ctx := t.Context()
-	instanceID, err := wf.Start(ctx, &SleepTestParams{})
-	require.NoError(t, err)
-
-	_, err = wf.Run(ctx, instanceID)
-	require.ErrorIs(t, err, workflow.ErrWorkflowSleeping)
-	require.Equal(t, 1, sched.PendingCount())
-
-	// Close the runner — should cancel pending wakes
-	runner.Close()
-
-	// The scheduler entry was removed by Close()
-	// (Our controllable scheduler tracks this via the cancel func)
-	// Calling Close() again should be safe (idempotent)
-	runner.Close()
 }
 
 func TestSleep_VeryLongDuration_90Days(t *testing.T) {
 	clock := newClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
-	sched := newScheduler()
-	runner := setupSleepRunner(t, clock, sched)
+	runner := setupSleepRunner(t, clock)
 
 	wf := workflow.New(runner, "sleep-90-days", func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
 		_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
@@ -828,37 +599,4 @@ func TestSleep_VeryLongDuration_90Days(t *testing.T) {
 	output, err := wf.Run(ctx, instanceID)
 	require.NoError(t, err)
 	require.Equal(t, "after-90-days", output.Result)
-}
-
-func TestSleep_DefaultSchedulerIntegration(t *testing.T) {
-	// Test with the REAL time.AfterFunc scheduler (short sleep).
-	// This proves the default wiring works end-to-end.
-	db := setupSleepTestDB(t)
-
-	runner, err := workflow.NewSqliteRunner(db)
-	require.NoError(t, err)
-	defer runner.Close()
-
-	wf := workflow.New(runner, "real-timer", func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
-		if err := workflow.Sleep(wctx, 50*time.Millisecond); err != nil {
-			return nil, err
-		}
-		return &SleepTestOutput{Result: "real-timer-done"}, nil
-	})
-
-	ctx := t.Context()
-	instanceID, err := wf.Start(ctx, &SleepTestParams{})
-	require.NoError(t, err)
-
-	_, err = wf.Run(ctx, instanceID)
-	require.ErrorIs(t, err, workflow.ErrWorkflowSleeping)
-
-	// Wait for the real timer to fire
-	err = runner.WaitForWake(ctx, instanceID)
-	require.NoError(t, err)
-
-	// Now re-run — sleep has elapsed
-	output, err := wf.Run(ctx, instanceID)
-	require.NoError(t, err)
-	require.Equal(t, "real-timer-done", output.Result)
 }
