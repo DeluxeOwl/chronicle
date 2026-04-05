@@ -23,10 +23,10 @@ func isWaitingError(err error) bool {
 // before the specified timeout.
 var ErrEventTimeout = errors.New("event wait timed out")
 
-// awaitEventResult is persisted as a step result for an AwaitEvent step.
+// waitForEventResult is persisted as a step result for an WaitForEvent step.
 // It stores the event name being waited for and, once the event arrives,
 // the payload.
-type awaitEventResult struct {
+type waitForEventResult struct {
 	EventName string          `json:"eventName"`
 	Payload   json.RawMessage `json:"payload,omitempty"`
 	Resolved  bool            `json:"resolved"`
@@ -56,20 +56,20 @@ type workflowEventReceived struct {
 func (*workflowEventReceived) EventName() string { return "workflow/event_received" }
 func (*workflowEventReceived) isWorkflowEvent()  {}
 
-// AwaitEventOptions configures an AwaitEvent call.
-type AwaitEventOptions struct {
+// WaitForEventOptions configures an WaitForEvent call.
+type WaitForEventOptions struct {
 	// Timeout is the maximum time to wait for the event.
 	// If zero, the workflow waits indefinitely.
 	Timeout time.Duration
 }
 
-// AwaitEvent suspends the workflow until a named event is emitted via EmitEvent.
+// WaitForEvent suspends the workflow until a named event is emitted via PublishEvent.
 //
 // Like Sleep, this is a durable checkpoint. The wait state is recorded in the event log.
 // If the process restarts, calling Run again on this instance will check whether the
 // event has been emitted and either continue waiting or resume execution.
 //
-// When a workflow hits an AwaitEvent that hasn't been resolved yet, Run returns
+// When a workflow hits an WaitForEvent that hasn't been resolved yet, Run returns
 // ErrWorkflowWaiting.
 //
 // Example:
@@ -77,8 +77,8 @@ type AwaitEventOptions struct {
 //	type ShipmentEvent struct {
 //	    TrackingNumber string `json:"tracking_number"`
 //	}
-//	shipment, err := workflow.AwaitEvent[ShipmentEvent](wctx, "order.shipped:order-42")
-func AwaitEvent[T any](wctx *Context, eventName string, opts ...AwaitEventOptions) (T, error) {
+//	shipment, err := workflow.WaitForEvent[ShipmentEvent](wctx, "order.shipped:order-42")
+func WaitForEvent[T any](wctx *Context, eventName string, opts ...WaitForEventOptions) (T, error) {
 	var zero T
 	runner := wctx.runner
 
@@ -101,7 +101,7 @@ func AwaitEvent[T any](wctx *Context, eventName string, opts ...AwaitEventOption
 
 	// Check if this step was already recorded (replay)
 	if cachedResult, ok := instance.stepResults[stepIndex]; ok {
-		var ar awaitEventResult
+		var ar waitForEventResult
 		if err := json.Unmarshal(cachedResult, &ar); err != nil {
 			return zero, fmt.Errorf("unmarshal cached await event result: %w", err)
 		}
@@ -122,7 +122,7 @@ func AwaitEvent[T any](wctx *Context, eventName string, opts ...AwaitEventOption
 		// Check timeout deadline
 		if !ar.Deadline.IsZero() && !now.Before(ar.Deadline) {
 			// Timeout has expired — record as timed out
-			timedOutResult := awaitEventResult{
+			timedOutResult := waitForEventResult{
 				EventName: ar.EventName,
 				TimedOut:  true,
 				Timeout:   ar.Timeout,
@@ -155,7 +155,7 @@ func AwaitEvent[T any](wctx *Context, eventName string, opts ...AwaitEventOption
 		payload, found := runner.waitStore.GetEvent(wctx.instanceID, eventName)
 		if found {
 			// Event has arrived! Update the step result
-			resolvedResult := awaitEventResult{
+			resolvedResult := waitForEventResult{
 				EventName: eventName,
 				Payload:   payload,
 				Resolved:  true,
@@ -212,7 +212,7 @@ func AwaitEvent[T any](wctx *Context, eventName string, opts ...AwaitEventOption
 		deadline = now.Add(timeout)
 	}
 
-	ar := awaitEventResult{
+	ar := waitForEventResult{
 		EventName: eventName,
 		Resolved:  false,
 		Timeout:   timeout,
@@ -269,16 +269,16 @@ func AwaitEvent[T any](wctx *Context, eventName string, opts ...AwaitEventOption
 	return zero, ErrWorkflowWaiting
 }
 
-// EmitEvent emits a named event that can wake up workflows waiting via AwaitEvent.
+// PublishEvent emits a named event that can wake up workflows waiting via WaitForEvent.
 // The payload is stored and delivered to any workflow waiting for this event name.
 //
 // Events are idempotent: the first emit for a given name wins, subsequent emits are ignored.
 //
 // Example:
 //
-//	err := workflow.EmitEvent(ctx, runner, "order.shipped:order-42",
+//	err := workflow.PublishEvent(ctx, runner, "order.shipped:order-42",
 //	    map[string]any{"tracking_number": "XYZ"})
-func EmitEvent(ctx context.Context, runner *Runner, eventName string, payload any) error {
+func PublishEvent(ctx context.Context, runner *Runner, eventName string, payload any) error {
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal event payload: %w", err)
@@ -321,7 +321,7 @@ type waitingWorkflow struct {
 // eventWaitStore is the abstraction for managing event waiting state.
 // The in-memory implementation (waitStore) is used for single-process mode;
 // the persistent implementation (persistentWaitStore) is used with SyncQueue
-// for distributed systems where EmitEvent from one process must be able to
+// for distributed systems where PublishEvent from one process must be able to
 // wake workflows running on another.
 type eventWaitStore interface {
 	// Register records that a workflow is waiting for an event.

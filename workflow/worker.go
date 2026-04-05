@@ -85,7 +85,7 @@ func (r *Runner) RunWorker(ctx context.Context, opts WorkerOptions) error {
 				continue
 			}
 			if isWaitingError(err) {
-				// AwaitEvent parked the workflow — it will be woken by EmitEvent.
+				// WaitForEvent parked the workflow — it will be woken by PublishEvent.
 				r.completeTask(ctx, task.InstanceID)
 				continue
 			}

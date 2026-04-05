@@ -12,10 +12,10 @@ import (
 // The transactional writes (insert/delete waiters during event processing)
 // are handled by SyncQueue.Process() within the same DB transaction as
 // event writes. This store handles the non-transactional operations:
-// emitting events (from EmitEvent) and checking for emitted events
-// (from AwaitEvent replay).
+// emitting events (from PublishEvent) and checking for emitted events
+// (from WaitForEvent replay).
 //
-// This enables distributed AwaitEvent/EmitEvent: an event emitted from
+// This enables distributed WaitForEvent/PublishEvent: an event emitted from
 // one process can wake workflows running on another, because both read
 // from the same SQL tables.
 type persistentWaitStore struct {

@@ -131,7 +131,7 @@ func NewSyncQueue(db *sql.DB, opts ...SyncQueueOption) (*SyncQueue, error) {
 
 // --- TaskQueue implementation ---
 
-// Enqueue inserts a task into the ready_tasks table. This is used by EmitEvent
+// Enqueue inserts a task into the ready_tasks table. This is used by PublishEvent
 // (which operates outside the event-save transaction) and as a fallback for
 // backward compatibility. When used with a TransactionalRepository, the
 // Process method handles atomic task creation, so this is often a redundant
@@ -140,7 +140,7 @@ func NewSyncQueue(db *sql.DB, opts ...SyncQueueOption) (*SyncQueue, error) {
 // Uses MIN(run_after_ns) on conflict to avoid overwriting a better (earlier)
 // run_after created atomically by Process. For example, when Process detects
 // a pre-emitted event and creates an immediate task, a subsequent Enqueue
-// from AwaitEvent with a deadline must not overwrite it.
+// from WaitForEvent with a deadline must not overwrite it.
 func (q *SyncQueue) Enqueue(_ context.Context, task QueuedTask) error {
 	runAfterNs := int64(0)
 	if !task.RunAfter.IsZero() {
@@ -345,7 +345,7 @@ func (q *SyncQueue) processEvent(
 			return q.upsertTaskTx(ctx, tx, root.id, root.workflowName, e.Deadline)
 		}
 		// No deadline and no pre-emitted event — the workflow is parked
-		// until EmitEvent creates a task.
+		// until PublishEvent creates a task.
 		return nil
 
 	case *workflowEventReceived:
