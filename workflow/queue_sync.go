@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -174,7 +175,7 @@ func (q *SyncQueue) Poll(ctx context.Context) (*QueuedTask, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sync queue poll begin tx: %w", err)
 	}
-	defer tx.Rollback() //nolint:errcheck
+	defer tx.Rollback() //nolint:errcheck // This is fine
 
 	// Find the next ready, unclaimed task.
 	var instanceID, workflowName string
@@ -188,7 +189,8 @@ func (q *SyncQueue) Poll(ctx context.Context) (*QueuedTask, error) {
 		ORDER BY run_after_ns
 		LIMIT 1
 	`, nowNs, nowNs).Scan(&instanceID, &workflowName, &runAfterNs)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
+		//nolint:nilnil // not needed.
 		return nil, nil
 	}
 	if err != nil {
@@ -212,6 +214,7 @@ func (q *SyncQueue) Poll(ctx context.Context) (*QueuedTask, error) {
 	}
 	if affected == 0 {
 		// Another worker claimed it between our SELECT and UPDATE — retry next poll.
+		//nolint:nilnil // not needed.
 		return nil, nil
 	}
 
@@ -259,7 +262,11 @@ func (q *SyncQueue) Fail(_ context.Context, instanceID InstanceID) error {
 
 // ExtendLease extends the claim timeout for a running task, signaling that
 // the worker is still making progress on a long-running step.
-func (q *SyncQueue) ExtendLease(_ context.Context, instanceID InstanceID, lease time.Duration) error {
+func (q *SyncQueue) ExtendLease(
+	_ context.Context,
+	instanceID InstanceID,
+	lease time.Duration,
+) error {
 	newDeadline := q.nowFunc().Add(lease).UnixNano()
 	_, err := q.db.Exec(`
 		UPDATE workflow_ready_tasks
@@ -495,6 +502,10 @@ func (q *SyncQueue) deleteAllWaitingEventsTx(
 
 // Compile-time interface checks.
 var (
-	_ TaskQueue = (*SyncQueue)(nil)
-	_ aggregate.TransactionalAggregateProcessor[*sql.Tx, InstanceID, WorkflowEvent, *WorkflowInstance] = (*SyncQueue)(nil)
+	_ TaskQueue = (*SyncQueue)(
+		nil,
+	)
+	_ aggregate.TransactionalAggregateProcessor[*sql.Tx, InstanceID, WorkflowEvent, *WorkflowInstance] = (*SyncQueue)(
+		nil,
+	)
 )

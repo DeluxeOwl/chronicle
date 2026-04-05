@@ -37,5 +37,5 @@ type TaskQueue interface {
 type QueuedTask struct {
 	InstanceID   InstanceID
 	WorkflowName string
-	RunAfter     time.Time // zero value = immediately ready
+	RunAfter     time.Time `exhaustruct:"optional"` // zero value = immediately ready
 }

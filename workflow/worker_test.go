@@ -36,15 +36,19 @@ func TestWorker_RunsSimpleWorkflowToCompletion(t *testing.T) {
 	runner, err := workflow.NewSqliteRunner(db)
 	require.NoError(t, err)
 
-	wf := workflow.New(runner, "simple-worker", func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
-		val, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			return "hello-" + params.Value, nil
-		})
-		if err != nil {
-			return nil, err
-		}
-		return &WorkerTestOutput{Result: val}, nil
-	})
+	wf := workflow.New(
+		runner,
+		"simple-worker",
+		func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
+			val, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				return "hello-" + params.Value, nil
+			})
+			if err != nil {
+				return nil, err
+			}
+			return &WorkerTestOutput{Result: val}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &WorkerTestParams{Value: "world"})
@@ -79,26 +83,30 @@ func TestWorker_HandlesSleepAndWakesUp(t *testing.T) {
 	runner, err := workflow.NewSqliteRunner(db, workflow.WithNowFunc(clock.Now))
 	require.NoError(t, err)
 
-	wf := workflow.New(runner, "sleep-worker", func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
-		_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			return "before", nil
-		})
-		if err != nil {
-			return nil, err
-		}
+	wf := workflow.New(
+		runner,
+		"sleep-worker",
+		func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
+			_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				return "before", nil
+			})
+			if err != nil {
+				return nil, err
+			}
 
-		if err := workflow.Sleep(wctx, 2*time.Hour); err != nil {
-			return nil, err
-		}
+			if err := workflow.Sleep(wctx, 2*time.Hour); err != nil {
+				return nil, err
+			}
 
-		result, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			return "after-sleep", nil
-		})
-		if err != nil {
-			return nil, err
-		}
-		return &WorkerTestOutput{Result: result}, nil
-	})
+			result, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				return "after-sleep", nil
+			})
+			if err != nil {
+				return nil, err
+			}
+			return &WorkerTestOutput{Result: result}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &WorkerTestParams{Value: "test"})
@@ -147,13 +155,21 @@ func TestWorker_MultipleWorkflowTypes(t *testing.T) {
 		Num int `json:"num"`
 	}
 
-	wfA := workflow.New(runner, "type-a", func(wctx *workflow.Context, params *WorkerTestParams) (*OutputA, error) {
-		return &OutputA{Val: "a-" + params.Value}, nil
-	})
+	wfA := workflow.New(
+		runner,
+		"type-a",
+		func(wctx *workflow.Context, params *WorkerTestParams) (*OutputA, error) {
+			return &OutputA{Val: "a-" + params.Value}, nil
+		},
+	)
 
-	wfB := workflow.New(runner, "type-b", func(wctx *workflow.Context, params *struct{ N int }) (*OutputB, error) {
-		return &OutputB{Num: params.N * 2}, nil
-	})
+	wfB := workflow.New(
+		runner,
+		"type-b",
+		func(wctx *workflow.Context, params *struct{ N int }) (*OutputB, error) {
+			return &OutputB{Num: params.N * 2}, nil
+		},
+	)
 
 	ctx := t.Context()
 	idA, err := wfA.Start(ctx, &WorkerTestParams{Value: "hello"})
@@ -192,9 +208,13 @@ func TestWorker_GracefulShutdown(t *testing.T) {
 	require.NoError(t, err)
 
 	// Register a workflow so the runner is valid, but don't start any instances.
-	_ = workflow.New(runner, "noop", func(wctx *workflow.Context, params *struct{}) (*struct{}, error) {
-		return &struct{}{}, nil
-	})
+	_ = workflow.New(
+		runner,
+		"noop",
+		func(wctx *workflow.Context, params *struct{}) (*struct{}, error) {
+			return &struct{}{}, nil
+		},
+	)
 
 	workerCtx, cancel := context.WithCancel(t.Context())
 
@@ -226,9 +246,13 @@ func TestWorker_UnknownWorkflowFails(t *testing.T) {
 
 	// Register a workflow to start it, but we'll use a different runner
 	// that does NOT have it registered to simulate unknown workflow.
-	wf := workflow.New(runner, "known-wf", func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
-		return &WorkerTestOutput{Result: "ok"}, nil
-	})
+	wf := workflow.New(
+		runner,
+		"known-wf",
+		func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
+			return &WorkerTestOutput{Result: "ok"}, nil
+		},
+	)
 
 	ctx := t.Context()
 	_, err = wf.Start(ctx, &WorkerTestParams{Value: "test"})
@@ -242,9 +266,13 @@ func TestWorker_UnknownWorkflowFails(t *testing.T) {
 	// So let's test via direct: enqueue a task with an unknown name.
 	// We'll do this by registering a dummy workflow and having it start,
 	// then verifying the worker handles it without crashing.
-	_ = workflow.New(runner2, "other-wf", func(wctx *workflow.Context, params *struct{}) (*struct{}, error) {
-		return &struct{}{}, nil
-	})
+	_ = workflow.New(
+		runner2,
+		"other-wf",
+		func(wctx *workflow.Context, params *struct{}) (*struct{}, error) {
+			return &struct{}{}, nil
+		},
+	)
 
 	workerCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
 	defer cancel()
@@ -263,16 +291,20 @@ func TestWorker_MultipleInstances(t *testing.T) {
 
 	var count atomic.Int32
 
-	wf := workflow.New(runner, "counting-wf", func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
-		_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			count.Add(1)
-			return "done", nil
-		})
-		if err != nil {
-			return nil, err
-		}
-		return &WorkerTestOutput{Result: "done"}, nil
-	})
+	wf := workflow.New(
+		runner,
+		"counting-wf",
+		func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
+			_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				count.Add(1)
+				return "done", nil
+			})
+			if err != nil {
+				return nil, err
+			}
+			return &WorkerTestOutput{Result: "done"}, nil
+		},
+	)
 
 	ctx := t.Context()
 	const n = 10
@@ -318,15 +350,23 @@ func TestWorker_WorkflowFailureDoesNotCrashWorker(t *testing.T) {
 	var callCount atomic.Int32
 
 	// First workflow always fails
-	wfFail := workflow.New(runner, "fail-wf", func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
-		return nil, errors.New("boom")
-	})
+	wfFail := workflow.New(
+		runner,
+		"fail-wf",
+		func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
+			return nil, errors.New("boom")
+		},
+	)
 
 	// Second workflow succeeds
-	wfOK := workflow.New(runner, "ok-wf", func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
-		callCount.Add(1)
-		return &WorkerTestOutput{Result: "success"}, nil
-	})
+	wfOK := workflow.New(
+		runner,
+		"ok-wf",
+		func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
+			callCount.Add(1)
+			return &WorkerTestOutput{Result: "success"}, nil
+		},
+	)
 
 	ctx := t.Context()
 

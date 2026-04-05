@@ -16,17 +16,17 @@ var ErrWorkflowRetrying = errors.New("workflow is retrying")
 type RetryStrategy struct {
 	// MaxAttempts is the maximum number of times a workflow can be executed.
 	// This includes the initial attempt. 0 means use the runner's default (5).
-	MaxAttempts int
+	MaxAttempts int `json:"maxAttempts"`
 
 	// BaseDelay is the initial backoff delay.
-	BaseDelay time.Duration
+	BaseDelay time.Duration `json:"baseDelay"`
 
 	// Factor is the multiplier applied to the delay after each failure.
 	// For exponential backoff, use 2.0.
-	Factor float64
+	Factor float64 `json:"factor"`
 
 	// MaxDelay is the maximum delay between retries.
-	MaxDelay time.Duration
+	MaxDelay time.Duration `json:"maxDelay"`
 }
 
 // DefaultRetryStrategy returns a sensible default retry strategy:
@@ -51,15 +51,6 @@ func (rs RetryStrategy) nextDelay(attempt int) time.Duration {
 		return rs.MaxDelay
 	}
 	return time.Duration(delay)
-}
-
-// retryState is persisted in the event log as a workflowRetried event's data.
-// It tracks how many attempts have been made so far.
-type retryState struct {
-	Attempt       int           `json:"attempt"`       // 1-indexed current attempt number
-	NextRunAfter  time.Time     `json:"nextRunAfter"`  // When the next retry is scheduled
-	BackoffDelay  time.Duration `json:"backoffDelay"`  // The delay used for this retry
-	PreviousError string        `json:"previousError"` // The error from the previous attempt
 }
 
 // workflowRetried records that a failed workflow has been scheduled for retry.
@@ -97,7 +88,9 @@ func (r *Runner) scheduleRetry(
 
 	now := r.now()
 	nextAttempt := instance.attempt + 1
-	delay := strategy.nextDelay(instance.attempt - 1) // attempt is 1-indexed, nextDelay wants 0-indexed failures
+	delay := strategy.nextDelay(
+		instance.attempt - 1,
+	) // attempt is 1-indexed, nextDelay wants 0-indexed failures
 	runAfter := now.Add(delay)
 
 	retryStrategyJSON, err := json.Marshal(strategy)
@@ -128,7 +121,7 @@ func (r *Runner) scheduleRetry(
 		return false, fmt.Errorf("enqueue retry task: %w", err)
 	}
 
-	r.logger.Info(
+	r.logger.InfoContext(ctx,
 		"workflow scheduled for retry",
 		"instanceID", ctx.instanceID,
 		"attempt", nextAttempt,

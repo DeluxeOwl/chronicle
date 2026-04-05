@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -141,6 +142,8 @@ func (q *AsyncQueue) MatchesEvent(eventName string) bool {
 
 // Handle processes a single global event record and updates the ready_tasks
 // table accordingly. This is called by the AsyncProjectionRunner.
+//
+//nolint:gocognit,funlen
 func (q *AsyncQueue) Handle(ctx context.Context, rec *event.GlobalRecord) error {
 	instanceID := InstanceID(rec.LogID())
 
@@ -267,7 +270,7 @@ func (q *AsyncQueue) Poll(ctx context.Context) (*QueuedTask, error) {
 	if err != nil {
 		return nil, fmt.Errorf("async queue poll begin tx: %w", err)
 	}
-	defer tx.Rollback() //nolint:errcheck
+	defer tx.Rollback() //nolint:errcheck // This is fine.
 
 	var instanceID, workflowName string
 	var runAfterNs int64
@@ -280,9 +283,12 @@ func (q *AsyncQueue) Poll(ctx context.Context) (*QueuedTask, error) {
 		ORDER BY run_after_ns
 		LIMIT 1
 	`, nowNs, nowNs).Scan(&instanceID, &workflowName, &runAfterNs)
-	if err == sql.ErrNoRows {
+
+	if errors.Is(err, sql.ErrNoRows) {
+		//nolint:nilnil // This is fine.
 		return nil, nil
 	}
+
 	if err != nil {
 		return nil, fmt.Errorf("async queue poll select: %w", err)
 	}
@@ -301,7 +307,9 @@ func (q *AsyncQueue) Poll(ctx context.Context) (*QueuedTask, error) {
 	if err != nil {
 		return nil, fmt.Errorf("async queue poll rows affected: %w", err)
 	}
+
 	if affected == 0 {
+		//nolint:nilnil // This is fine.
 		return nil, nil
 	}
 
@@ -344,7 +352,11 @@ func (q *AsyncQueue) Fail(_ context.Context, instanceID InstanceID) error {
 }
 
 // ExtendLease extends the claim timeout for a running task.
-func (q *AsyncQueue) ExtendLease(_ context.Context, instanceID InstanceID, lease time.Duration) error {
+func (q *AsyncQueue) ExtendLease(
+	_ context.Context,
+	instanceID InstanceID,
+	lease time.Duration,
+) error {
 	newDeadline := q.nowFunc().Add(lease).UnixNano()
 	_, err := q.db.Exec(`
 		UPDATE workflow_ready_tasks
@@ -367,7 +379,12 @@ func (q *AsyncQueue) Len() int {
 // --- Internal helpers ---
 
 // upsertTask inserts or replaces a task in the ready_tasks table.
-func (q *AsyncQueue) upsertTask(_ context.Context, instanceID InstanceID, workflowName string, runAfter time.Time) error {
+func (q *AsyncQueue) upsertTask(
+	_ context.Context,
+	instanceID InstanceID,
+	workflowName string,
+	runAfter time.Time,
+) error {
 	runAfterNs := int64(0)
 	if !runAfter.IsZero() {
 		runAfterNs = runAfter.UnixNano()
@@ -456,6 +473,6 @@ func (q *AsyncQueue) deleteAllWaitingEvents(instanceID InstanceID) {
 
 // Compile-time interface checks.
 var (
-	_ TaskQueue            = (*AsyncQueue)(nil)
+	_ TaskQueue             = (*AsyncQueue)(nil)
 	_ event.AsyncProjection = (*AsyncQueue)(nil)
 )

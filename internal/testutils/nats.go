@@ -1,7 +1,6 @@
 package testutils
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -13,14 +12,14 @@ import (
 func SetupNATS(t testing.TB) (*nats.Conn, error) {
 	t.Helper()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	req := testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
 			Image:        "nats:2.12",
 			ExposedPorts: []string{"4222/tcp"},
-			Entrypoint: []string{"nats-server", "-js"},
-			WaitingFor: wait.ForListeningPort("4222/tcp").WithStartupTimeout(60 * time.Second),
+			Entrypoint:   []string{"nats-server", "-js"},
+			WaitingFor:   wait.ForListeningPort("4222/tcp").WithStartupTimeout(60 * time.Second),
 		},
 		Started: true,
 	}

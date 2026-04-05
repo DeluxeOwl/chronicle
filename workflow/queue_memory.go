@@ -29,6 +29,8 @@ func WithMemoryQueueNowFunc(fn func() time.Time) MemoryQueueOption {
 func NewMemoryQueue(opts ...MemoryQueueOption) *MemoryQueue {
 	q := &MemoryQueue{
 		nowFunc: time.Now,
+		mu:      sync.Mutex{},
+		tasks:   []QueuedTask{},
 	}
 	for _, opt := range opts {
 		opt(q)
@@ -59,6 +61,7 @@ func (q *MemoryQueue) Poll(_ context.Context) (*QueuedTask, error) {
 		return &task, nil
 	}
 
+	//nolint:nilnil // not needed.
 	return nil, nil
 }
 

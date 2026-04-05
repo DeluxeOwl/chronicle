@@ -28,11 +28,11 @@ var ErrEventTimeout = errors.New("event wait timed out")
 // the payload.
 type waitForEventResult struct {
 	EventName string          `json:"eventName"`
-	Payload   json.RawMessage `json:"payload,omitempty"`
-	Resolved  bool            `json:"resolved"`
-	TimedOut  bool            `json:"timedOut,omitempty"`
-	Timeout   time.Duration   `json:"timeout,omitempty"`
-	Deadline  time.Time       `json:"deadline,omitempty"`
+	Payload   json.RawMessage `json:"payload,omitempty" exhaustruct:"optional"`
+	Resolved  bool            `json:"resolved" exhaustruct:"optional"`
+	TimedOut  bool            `json:"timedOut,omitempty" exhaustruct:"optional"`
+	Timeout   time.Duration   `json:"timeout,omitempty" exhaustruct:"optional"`
+	Deadline  time.Time       `json:"deadline,omitempty" exhaustruct:"optional"`
 }
 
 // workflowWaiting records that a workflow is waiting for an external event.
@@ -78,6 +78,8 @@ type WaitForEventOptions struct {
 //	    TrackingNumber string `json:"tracking_number"`
 //	}
 //	shipment, err := workflow.WaitForEvent[ShipmentEvent](wctx, "order.shipped:order-42")
+//
+//nolint:gocognit,funlen
 func WaitForEvent[T any](wctx *Context, eventName string, opts ...WaitForEventOptions) (T, error) {
 	var zero T
 	runner := wctx.runner
@@ -100,6 +102,7 @@ func WaitForEvent[T any](wctx *Context, eventName string, opts ...WaitForEventOp
 	}
 
 	// Check if this step was already recorded (replay)
+	//nolint:nestif // This is readable
 	if cachedResult, ok := instance.stepResults[stepIndex]; ok {
 		var ar waitForEventResult
 		if err := json.Unmarshal(cachedResult, &ar); err != nil {
@@ -197,7 +200,7 @@ func WaitForEvent[T any](wctx *Context, eventName string, opts ...WaitForEventOp
 		}
 
 		// Still waiting
-		runner.logger.Debug(
+		runner.logger.DebugContext(wctx.ctx,
 			"await event replay, still waiting",
 			"instanceID", wctx.instanceID,
 			"stepIndex", stepIndex,
@@ -258,7 +261,7 @@ func WaitForEvent[T any](wctx *Context, eventName string, opts ...WaitForEventOp
 		}
 	}
 
-	runner.logger.Info(
+	runner.logger.InfoContext(wctx.ctx,
 		"workflow waiting for event",
 		"instanceID", wctx.instanceID,
 		"stepIndex", stepIndex,
@@ -293,7 +296,7 @@ func PublishEvent(ctx context.Context, runner *Runner, eventName string, payload
 			InstanceID:   w.InstanceID,
 			WorkflowName: w.WorkflowName,
 		}); err != nil {
-			runner.logger.Error(
+			runner.logger.ErrorContext(ctx,
 				"failed to enqueue event wake task",
 				"instanceID", w.InstanceID,
 				"eventName", eventName,
@@ -303,7 +306,7 @@ func PublishEvent(ctx context.Context, runner *Runner, eventName string, payload
 		}
 	}
 
-	runner.logger.Info(
+	runner.logger.InfoContext(ctx,
 		"event emitted",
 		"eventName", eventName,
 		"waitersWoken", len(waiters),
@@ -357,6 +360,7 @@ func newWaitStore() *waitStore {
 		waiters:  make(map[string][]waitingWorkflow),
 		emitted:  make(map[string]json.RawMessage),
 		received: make(map[string]json.RawMessage),
+		mu:       sync.Mutex{},
 	}
 }
 

@@ -64,8 +64,8 @@ type workflowStarted struct {
 	WorkflowName       string          `json:"workflowName"`
 	Params             json.RawMessage `json:"params"`
 	StartedAt          time.Time       `json:"startedAt"`
-	RetryStrategy      json.RawMessage `json:"retryStrategy,omitempty"`
-	CancellationPolicy json.RawMessage `json:"cancellationPolicy,omitempty"`
+	RetryStrategy      json.RawMessage `json:"retryStrategy,omitempty" exhaustruct:"optional"`
+	CancellationPolicy json.RawMessage `json:"cancellationPolicy,omitempty" exhaustruct:"optional"`
 }
 
 func (*workflowStarted) EventName() string { return "workflow/started" }
@@ -236,6 +236,7 @@ func NewRunner(eventLog event.Log, logger *slog.Logger, opts ...RunnerOption) (*
 		return nil, fmt.Errorf("create workflow repository: %w", err)
 	}
 
+	//nolint:exhaustruct // Set below.
 	r := &Runner{
 		repo:          repo,
 		logger:        logger,
@@ -278,6 +279,7 @@ func NewSqliteRunnerWithSyncQueue(db *sql.DB, opts ...RunnerOption) (*Runner, er
 	logger := slog.Default()
 
 	// Pre-apply options to extract configuration (nowFunc, logger, etc.)
+	//nolint:exhaustruct // Set below.
 	tmpRunner := &Runner{
 		nowFunc:   time.Now,
 		workflows: make(map[string]executableWorkflow),
@@ -414,7 +416,11 @@ func New[Params any, Output any](
 
 // Start begins a new workflow instance with the given parameters.
 // Returns the instance ID that can be used to track the workflow.
-func (w *Workflow[Params, Output]) Start(ctx context.Context, params *Params, opts ...StartOption) (InstanceID, error) {
+func (w *Workflow[Params, Output]) Start(
+	ctx context.Context,
+	params *Params,
+	opts ...StartOption,
+) (InstanceID, error) {
 	var cfg startConfig
 	for _, opt := range opts {
 		opt(&cfg)
@@ -478,6 +484,8 @@ func (w *Workflow[Params, Output]) Start(ctx context.Context, params *Params, op
 // Run executes a workflow instance to completion.
 // If the instance is new, it runs from the beginning.
 // If the instance has already partially executed, it resumes from the last completed step.
+//
+//nolint:gocognit,funlen
 func (w *Workflow[Params, Output]) Run(
 	ctx context.Context,
 	instanceID InstanceID,
@@ -540,6 +548,7 @@ func (w *Workflow[Params, Output]) Run(
 
 	// Execute workflow function
 	output, err := w.fn(wctx, &params)
+	//nolint:nestif // This is readable.
 	if err != nil {
 		// If the workflow is sleeping, don't record it as a failure.
 		// The scheduler will re-trigger Run when the sleep elapses.
@@ -692,7 +701,14 @@ func Step[Result any](wctx *Context, fn func(context.Context) (Result, error)) (
 
 	// Check if step already completed (replay mode)
 	if cachedResult, ok := instance.stepResults[stepIndex]; ok {
-		wctx.runner.logger.Debug("step replay", "instanceID", wctx.instanceID, "step", stepIndex)
+		wctx.runner.logger.DebugContext(
+			wctx.ctx,
+			"step replay",
+			"instanceID",
+			wctx.instanceID,
+			"step",
+			stepIndex,
+		)
 		var result Result
 		if err := json.Unmarshal(cachedResult, &result); err != nil {
 			return zero, fmt.Errorf("unmarshal cached step result: %w", err)
@@ -758,7 +774,7 @@ func Step2(wctx *Context, fn func(context.Context) error) error {
 
 	// Check if step already completed (replay mode)
 	if _, ok := instance.stepResults[stepIndex]; ok {
-		wctx.runner.logger.Debug(
+		wctx.runner.logger.DebugContext(wctx.ctx,
 			"step2 already completed, skipping",
 			"instanceID",
 			wctx.instanceID,
@@ -769,7 +785,7 @@ func Step2(wctx *Context, fn func(context.Context) error) error {
 	}
 
 	// Execute the step function
-	wctx.runner.logger.Debug(
+	wctx.runner.logger.DebugContext(wctx.ctx,
 		"executing step2 function",
 		"instanceID",
 		wctx.instanceID,
@@ -777,7 +793,7 @@ func Step2(wctx *Context, fn func(context.Context) error) error {
 		stepIndex,
 	)
 	if err := fn(wctx.ctx); err != nil {
-		wctx.runner.logger.Error(
+		wctx.runner.logger.ErrorContext(wctx.ctx,
 			"step2 function failed",
 			"instanceID",
 			wctx.instanceID,

@@ -13,15 +13,15 @@ import (
 )
 
 type EventTestParams struct {
-	OrderID string `json:"orderID"`
+	OrderID string `json:"orderID" exhaustruct:"optional"`
 }
 
 type EventTestOutput struct {
-	Result string `json:"result"`
+	Result string `json:"result" exhaustruct:"optional"`
 }
 
 type ShipmentPayload struct {
-	TrackingNumber string `json:"tracking_number"`
+	TrackingNumber string `json:"trackingNumber" exhaustruct:"optional"`
 }
 
 func TestWaitForEvent_BasicFlow(t *testing.T) {
@@ -29,23 +29,30 @@ func TestWaitForEvent_BasicFlow(t *testing.T) {
 	runner, err := workflow.NewSqliteRunner(db)
 	require.NoError(t, err)
 
-	wf := workflow.New(runner, "await-basic", func(wctx *workflow.Context, params *EventTestParams) (*EventTestOutput, error) {
-		// Step 1: do some work
-		_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			return "prepared", nil
-		})
-		if err != nil {
-			return nil, err
-		}
+	wf := workflow.New(
+		runner,
+		"await-basic",
+		func(wctx *workflow.Context, params *EventTestParams) (*EventTestOutput, error) {
+			// Step 1: do some work
+			_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				return "prepared", nil
+			})
+			if err != nil {
+				return nil, err
+			}
 
-		// Wait for shipment event
-		shipment, err := workflow.WaitForEvent[ShipmentPayload](wctx, "order.shipped:"+params.OrderID)
-		if err != nil {
-			return nil, err
-		}
+			// Wait for shipment event
+			shipment, err := workflow.WaitForEvent[ShipmentPayload](
+				wctx,
+				"order.shipped:"+params.OrderID,
+			)
+			if err != nil {
+				return nil, err
+			}
 
-		return &EventTestOutput{Result: "shipped-" + shipment.TrackingNumber}, nil
-	})
+			return &EventTestOutput{Result: "shipped-" + shipment.TrackingNumber}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &EventTestParams{OrderID: "order-42"})
@@ -79,13 +86,17 @@ func TestWaitForEvent_EventEmittedBeforeAwait(t *testing.T) {
 	runner, err := workflow.NewSqliteRunner(db)
 	require.NoError(t, err)
 
-	wf := workflow.New(runner, "await-pre-emit", func(wctx *workflow.Context, params *EventTestParams) (*EventTestOutput, error) {
-		shipment, err := workflow.WaitForEvent[ShipmentPayload](wctx, "pre-emit-event")
-		if err != nil {
-			return nil, err
-		}
-		return &EventTestOutput{Result: shipment.TrackingNumber}, nil
-	})
+	wf := workflow.New(
+		runner,
+		"await-pre-emit",
+		func(wctx *workflow.Context, params *EventTestParams) (*EventTestOutput, error) {
+			shipment, err := workflow.WaitForEvent[ShipmentPayload](wctx, "pre-emit-event")
+			if err != nil {
+				return nil, err
+			}
+			return &EventTestOutput{Result: shipment.TrackingNumber}, nil
+		},
+	)
 
 	ctx := t.Context()
 
@@ -115,15 +126,23 @@ func TestWaitForEvent_WithTimeout_TimesOut(t *testing.T) {
 	runner, err := workflow.NewSqliteRunner(db, workflow.WithNowFunc(clock.Now))
 	require.NoError(t, err)
 
-	wf := workflow.New(runner, "await-timeout", func(wctx *workflow.Context, params *EventTestParams) (*EventTestOutput, error) {
-		_, err := workflow.WaitForEvent[ShipmentPayload](wctx, "never-arrives", workflow.WaitForEventOptions{
-			Timeout: 1 * time.Hour,
-		})
-		if err != nil {
-			return nil, err
-		}
-		return &EventTestOutput{Result: "unreachable"}, nil
-	})
+	wf := workflow.New(
+		runner,
+		"await-timeout",
+		func(wctx *workflow.Context, params *EventTestParams) (*EventTestOutput, error) {
+			_, err := workflow.WaitForEvent[ShipmentPayload](
+				wctx,
+				"never-arrives",
+				workflow.WaitForEventOptions{
+					Timeout: 1 * time.Hour,
+				},
+			)
+			if err != nil {
+				return nil, err
+			}
+			return &EventTestOutput{Result: "unreachable"}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &EventTestParams{})
@@ -147,15 +166,23 @@ func TestWaitForEvent_WithTimeout_EventArrivesBeforeTimeout(t *testing.T) {
 	runner, err := workflow.NewSqliteRunner(db, workflow.WithNowFunc(clock.Now))
 	require.NoError(t, err)
 
-	wf := workflow.New(runner, "await-timeout-ok", func(wctx *workflow.Context, params *EventTestParams) (*EventTestOutput, error) {
-		shipment, err := workflow.WaitForEvent[ShipmentPayload](wctx, "arrives-in-time", workflow.WaitForEventOptions{
-			Timeout: 24 * time.Hour,
-		})
-		if err != nil {
-			return nil, err
-		}
-		return &EventTestOutput{Result: shipment.TrackingNumber}, nil
-	})
+	wf := workflow.New(
+		runner,
+		"await-timeout-ok",
+		func(wctx *workflow.Context, params *EventTestParams) (*EventTestOutput, error) {
+			shipment, err := workflow.WaitForEvent[ShipmentPayload](
+				wctx,
+				"arrives-in-time",
+				workflow.WaitForEventOptions{
+					Timeout: 24 * time.Hour,
+				},
+			)
+			if err != nil {
+				return nil, err
+			}
+			return &EventTestOutput{Result: shipment.TrackingNumber}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &EventTestParams{})
@@ -166,7 +193,12 @@ func TestWaitForEvent_WithTimeout_EventArrivesBeforeTimeout(t *testing.T) {
 
 	// Emit before timeout
 	clock.Advance(12 * time.Hour)
-	err = workflow.PublishEvent(ctx, runner, "arrives-in-time", ShipmentPayload{TrackingNumber: "ON-TIME"})
+	err = workflow.PublishEvent(
+		ctx,
+		runner,
+		"arrives-in-time",
+		ShipmentPayload{TrackingNumber: "ON-TIME"},
+	)
 	require.NoError(t, err)
 
 	output, err := wf.Run(ctx, instanceID)
@@ -179,13 +211,17 @@ func TestWaitForEvent_MultipleWorkflowsWaitSameEvent(t *testing.T) {
 	runner, err := workflow.NewSqliteRunner(db)
 	require.NoError(t, err)
 
-	wf := workflow.New(runner, "await-multi", func(wctx *workflow.Context, params *EventTestParams) (*EventTestOutput, error) {
-		shipment, err := workflow.WaitForEvent[ShipmentPayload](wctx, "broadcast-event")
-		if err != nil {
-			return nil, err
-		}
-		return &EventTestOutput{Result: params.OrderID + ":" + shipment.TrackingNumber}, nil
-	})
+	wf := workflow.New(
+		runner,
+		"await-multi",
+		func(wctx *workflow.Context, params *EventTestParams) (*EventTestOutput, error) {
+			shipment, err := workflow.WaitForEvent[ShipmentPayload](wctx, "broadcast-event")
+			if err != nil {
+				return nil, err
+			}
+			return &EventTestOutput{Result: params.OrderID + ":" + shipment.TrackingNumber}, nil
+		},
+	)
 
 	ctx := t.Context()
 
@@ -201,7 +237,12 @@ func TestWaitForEvent_MultipleWorkflowsWaitSameEvent(t *testing.T) {
 	require.ErrorIs(t, err, workflow.ErrWorkflowWaiting)
 
 	// Emit once
-	err = workflow.PublishEvent(ctx, runner, "broadcast-event", ShipmentPayload{TrackingNumber: "SHARED"})
+	err = workflow.PublishEvent(
+		ctx,
+		runner,
+		"broadcast-event",
+		ShipmentPayload{TrackingNumber: "SHARED"},
+	)
 	require.NoError(t, err)
 
 	// Both complete
@@ -219,13 +260,17 @@ func TestWaitForEvent_FirstEmitWins(t *testing.T) {
 	runner, err := workflow.NewSqliteRunner(db)
 	require.NoError(t, err)
 
-	wf := workflow.New(runner, "await-idempotent", func(wctx *workflow.Context, params *EventTestParams) (*EventTestOutput, error) {
-		shipment, err := workflow.WaitForEvent[ShipmentPayload](wctx, "idempotent-event")
-		if err != nil {
-			return nil, err
-		}
-		return &EventTestOutput{Result: shipment.TrackingNumber}, nil
-	})
+	wf := workflow.New(
+		runner,
+		"await-idempotent",
+		func(wctx *workflow.Context, params *EventTestParams) (*EventTestOutput, error) {
+			shipment, err := workflow.WaitForEvent[ShipmentPayload](wctx, "idempotent-event")
+			if err != nil {
+				return nil, err
+			}
+			return &EventTestOutput{Result: shipment.TrackingNumber}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &EventTestParams{})
@@ -235,11 +280,21 @@ func TestWaitForEvent_FirstEmitWins(t *testing.T) {
 	require.ErrorIs(t, err, workflow.ErrWorkflowWaiting)
 
 	// Emit first time
-	err = workflow.PublishEvent(ctx, runner, "idempotent-event", ShipmentPayload{TrackingNumber: "FIRST"})
+	err = workflow.PublishEvent(
+		ctx,
+		runner,
+		"idempotent-event",
+		ShipmentPayload{TrackingNumber: "FIRST"},
+	)
 	require.NoError(t, err)
 
 	// Emit second time — should be ignored
-	err = workflow.PublishEvent(ctx, runner, "idempotent-event", ShipmentPayload{TrackingNumber: "SECOND"})
+	err = workflow.PublishEvent(
+		ctx,
+		runner,
+		"idempotent-event",
+		ShipmentPayload{TrackingNumber: "SECOND"},
+	)
 	require.NoError(t, err)
 
 	output, err := wf.Run(ctx, instanceID)
@@ -254,30 +309,34 @@ func TestWaitForEvent_WithStepsAroundIt(t *testing.T) {
 
 	var step1Count, step2Count atomic.Int32
 
-	wf := workflow.New(runner, "await-steps-around", func(wctx *workflow.Context, params *EventTestParams) (*EventTestOutput, error) {
-		val, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			step1Count.Add(1)
-			return "before", nil
-		})
-		if err != nil {
-			return nil, err
-		}
+	wf := workflow.New(
+		runner,
+		"await-steps-around",
+		func(wctx *workflow.Context, params *EventTestParams) (*EventTestOutput, error) {
+			val, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				step1Count.Add(1)
+				return "before", nil
+			})
+			if err != nil {
+				return nil, err
+			}
 
-		shipment, err := workflow.WaitForEvent[ShipmentPayload](wctx, "middle-event")
-		if err != nil {
-			return nil, err
-		}
+			shipment, err := workflow.WaitForEvent[ShipmentPayload](wctx, "middle-event")
+			if err != nil {
+				return nil, err
+			}
 
-		result, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			step2Count.Add(1)
-			return val + "-" + shipment.TrackingNumber + "-after", nil
-		})
-		if err != nil {
-			return nil, err
-		}
+			result, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				step2Count.Add(1)
+				return val + "-" + shipment.TrackingNumber + "-after", nil
+			})
+			if err != nil {
+				return nil, err
+			}
 
-		return &EventTestOutput{Result: result}, nil
-	})
+			return &EventTestOutput{Result: result}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &EventTestParams{})
@@ -307,20 +366,24 @@ func TestWaitForEvent_WithSleep(t *testing.T) {
 	runner, err := workflow.NewSqliteRunner(db, workflow.WithNowFunc(clock.Now))
 	require.NoError(t, err)
 
-	wf := workflow.New(runner, "await-with-sleep", func(wctx *workflow.Context, params *EventTestParams) (*EventTestOutput, error) {
-		// Sleep first
-		if err := workflow.Sleep(wctx, 1*time.Hour); err != nil {
-			return nil, err
-		}
+	wf := workflow.New(
+		runner,
+		"await-with-sleep",
+		func(wctx *workflow.Context, params *EventTestParams) (*EventTestOutput, error) {
+			// Sleep first
+			if err := workflow.Sleep(wctx, 1*time.Hour); err != nil {
+				return nil, err
+			}
 
-		// Then await event
-		shipment, err := workflow.WaitForEvent[ShipmentPayload](wctx, "post-sleep-event")
-		if err != nil {
-			return nil, err
-		}
+			// Then await event
+			shipment, err := workflow.WaitForEvent[ShipmentPayload](wctx, "post-sleep-event")
+			if err != nil {
+				return nil, err
+			}
 
-		return &EventTestOutput{Result: "slept-then-" + shipment.TrackingNumber}, nil
-	})
+			return &EventTestOutput{Result: "slept-then-" + shipment.TrackingNumber}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &EventTestParams{})
@@ -338,7 +401,12 @@ func TestWaitForEvent_WithSleep(t *testing.T) {
 	require.ErrorIs(t, err, workflow.ErrWorkflowWaiting)
 
 	// Emit
-	err = workflow.PublishEvent(ctx, runner, "post-sleep-event", ShipmentPayload{TrackingNumber: "AFTER"})
+	err = workflow.PublishEvent(
+		ctx,
+		runner,
+		"post-sleep-event",
+		ShipmentPayload{TrackingNumber: "AFTER"},
+	)
 	require.NoError(t, err)
 
 	// Run 3: everything replays, completes
@@ -352,13 +420,17 @@ func TestWaitForEvent_WorkerDriven(t *testing.T) {
 	runner, err := workflow.NewSqliteRunner(db)
 	require.NoError(t, err)
 
-	wf := workflow.New(runner, "await-worker", func(wctx *workflow.Context, params *EventTestParams) (*EventTestOutput, error) {
-		shipment, err := workflow.WaitForEvent[ShipmentPayload](wctx, "worker-event")
-		if err != nil {
-			return nil, err
-		}
-		return &EventTestOutput{Result: shipment.TrackingNumber}, nil
-	})
+	wf := workflow.New(
+		runner,
+		"await-worker",
+		func(wctx *workflow.Context, params *EventTestParams) (*EventTestOutput, error) {
+			shipment, err := workflow.WaitForEvent[ShipmentPayload](wctx, "worker-event")
+			if err != nil {
+				return nil, err
+			}
+			return &EventTestOutput{Result: shipment.TrackingNumber}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &EventTestParams{})
@@ -382,7 +454,12 @@ func TestWaitForEvent_WorkerDriven(t *testing.T) {
 	}, 2*time.Second, 20*time.Millisecond)
 
 	// Emit the event — this enqueues a wake-up task
-	err = workflow.PublishEvent(ctx, runner, "worker-event", ShipmentPayload{TrackingNumber: "WORKER-OK"})
+	err = workflow.PublishEvent(
+		ctx,
+		runner,
+		"worker-event",
+		ShipmentPayload{TrackingNumber: "WORKER-OK"},
+	)
 	require.NoError(t, err)
 
 	// Worker picks up the wake-up task and completes the workflow
@@ -404,33 +481,41 @@ func TestWaitForEvent_WithRetry(t *testing.T) {
 
 	var stepCount atomic.Int32
 
-	wf := workflow.New(runner, "await-retry", func(wctx *workflow.Context, params *EventTestParams) (*EventTestOutput, error) {
-		shipment, err := workflow.WaitForEvent[ShipmentPayload](wctx, "retry-event")
-		if err != nil {
-			return nil, err
-		}
-
-		result, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			n := stepCount.Add(1)
-			if n == 1 {
-				return "", errors.New("transient step failure")
+	wf := workflow.New(
+		runner,
+		"await-retry",
+		func(wctx *workflow.Context, params *EventTestParams) (*EventTestOutput, error) {
+			shipment, err := workflow.WaitForEvent[ShipmentPayload](wctx, "retry-event")
+			if err != nil {
+				return nil, err
 			}
-			return shipment.TrackingNumber + "-processed", nil
-		})
-		if err != nil {
-			return nil, err
-		}
 
-		return &EventTestOutput{Result: result}, nil
-	})
+			result, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				n := stepCount.Add(1)
+				if n == 1 {
+					return "", errors.New("transient step failure")
+				}
+				return shipment.TrackingNumber + "-processed", nil
+			})
+			if err != nil {
+				return nil, err
+			}
+
+			return &EventTestOutput{Result: result}, nil
+		},
+	)
 
 	ctx := t.Context()
-	instanceID, err := wf.Start(ctx, &EventTestParams{}, workflow.WithRetryStrategy(workflow.RetryStrategy{
-		MaxAttempts: 3,
-		BaseDelay:   1 * time.Second,
-		Factor:      1.0,
-		MaxDelay:    1 * time.Minute,
-	}))
+	instanceID, err := wf.Start(
+		ctx,
+		&EventTestParams{},
+		workflow.WithRetryStrategy(workflow.RetryStrategy{
+			MaxAttempts: 3,
+			BaseDelay:   1 * time.Second,
+			Factor:      1.0,
+			MaxDelay:    1 * time.Minute,
+		}),
+	)
 	require.NoError(t, err)
 
 	// Run 1: parks on WaitForEvent
@@ -438,7 +523,12 @@ func TestWaitForEvent_WithRetry(t *testing.T) {
 	require.ErrorIs(t, err, workflow.ErrWorkflowWaiting)
 
 	// Emit event
-	err = workflow.PublishEvent(ctx, runner, "retry-event", ShipmentPayload{TrackingNumber: "RETRY"})
+	err = workflow.PublishEvent(
+		ctx,
+		runner,
+		"retry-event",
+		ShipmentPayload{TrackingNumber: "RETRY"},
+	)
 	require.NoError(t, err)
 
 	// Run 2: WaitForEvent resolves, step fails → retry
@@ -464,13 +554,17 @@ func TestWaitForEvent_ComplexPayload(t *testing.T) {
 		Meta  map[string]int `json:"meta"`
 	}
 
-	wf := workflow.New(runner, "await-complex", func(wctx *workflow.Context, params *EventTestParams) (*EventTestOutput, error) {
-		payload, err := workflow.WaitForEvent[ComplexPayload](wctx, "complex-event")
-		if err != nil {
-			return nil, err
-		}
-		return &EventTestOutput{Result: payload.Items[0]}, nil
-	})
+	wf := workflow.New(
+		runner,
+		"await-complex",
+		func(wctx *workflow.Context, params *EventTestParams) (*EventTestOutput, error) {
+			payload, err := workflow.WaitForEvent[ComplexPayload](wctx, "complex-event")
+			if err != nil {
+				return nil, err
+			}
+			return &EventTestOutput{Result: payload.Items[0]}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &EventTestParams{})
@@ -495,13 +589,17 @@ func TestWaitForEvent_CompletedWorkflowDoesNotReAwait(t *testing.T) {
 	runner, err := workflow.NewSqliteRunner(db)
 	require.NoError(t, err)
 
-	wf := workflow.New(runner, "await-completed", func(wctx *workflow.Context, params *EventTestParams) (*EventTestOutput, error) {
-		shipment, err := workflow.WaitForEvent[ShipmentPayload](wctx, "once-event")
-		if err != nil {
-			return nil, err
-		}
-		return &EventTestOutput{Result: shipment.TrackingNumber}, nil
-	})
+	wf := workflow.New(
+		runner,
+		"await-completed",
+		func(wctx *workflow.Context, params *EventTestParams) (*EventTestOutput, error) {
+			shipment, err := workflow.WaitForEvent[ShipmentPayload](wctx, "once-event")
+			if err != nil {
+				return nil, err
+			}
+			return &EventTestOutput{Result: shipment.TrackingNumber}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &EventTestParams{})
@@ -530,23 +628,35 @@ func TestWaitForEvent_TimeoutWithRetry(t *testing.T) {
 	runner, err := workflow.NewSqliteRunner(db, workflow.WithNowFunc(clock.Now))
 	require.NoError(t, err)
 
-	wf := workflow.New(runner, "timeout-retry", func(wctx *workflow.Context, params *EventTestParams) (*EventTestOutput, error) {
-		_, err := workflow.WaitForEvent[ShipmentPayload](wctx, "timeout-event", workflow.WaitForEventOptions{
-			Timeout: 1 * time.Hour,
-		})
-		if err != nil {
-			return nil, err
-		}
-		return &EventTestOutput{Result: "should-not-reach"}, nil
-	})
+	wf := workflow.New(
+		runner,
+		"timeout-retry",
+		func(wctx *workflow.Context, params *EventTestParams) (*EventTestOutput, error) {
+			_, err := workflow.WaitForEvent[ShipmentPayload](
+				wctx,
+				"timeout-event",
+				workflow.WaitForEventOptions{
+					Timeout: 1 * time.Hour,
+				},
+			)
+			if err != nil {
+				return nil, err
+			}
+			return &EventTestOutput{Result: "should-not-reach"}, nil
+		},
+	)
 
 	ctx := t.Context()
-	instanceID, err := wf.Start(ctx, &EventTestParams{}, workflow.WithRetryStrategy(workflow.RetryStrategy{
-		MaxAttempts: 2,
-		BaseDelay:   1 * time.Second,
-		Factor:      1.0,
-		MaxDelay:    1 * time.Minute,
-	}))
+	instanceID, err := wf.Start(
+		ctx,
+		&EventTestParams{},
+		workflow.WithRetryStrategy(workflow.RetryStrategy{
+			MaxAttempts: 2,
+			BaseDelay:   1 * time.Second,
+			Factor:      1.0,
+			MaxDelay:    1 * time.Minute,
+		}),
+	)
 	require.NoError(t, err)
 
 	// Run 1: parks on WaitForEvent

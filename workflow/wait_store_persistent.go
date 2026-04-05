@@ -46,7 +46,7 @@ func (p *persistentWaitStore) Emit(eventName string, payload json.RawMessage) []
 	if err != nil {
 		return nil
 	}
-	defer tx.Rollback() //nolint:errcheck
+	defer tx.Rollback() //nolint:errcheck // not needed.
 
 	// First-write-wins: INSERT OR IGNORE
 	result, err := tx.Exec(`
@@ -72,6 +72,10 @@ func (p *persistentWaitStore) Emit(eventName string, payload json.RawMessage) []
 	if err != nil {
 		return nil
 	}
+	if rows.Err() != nil {
+		return nil
+	}
+	defer rows.Close()
 
 	var waiters []waitingWorkflow
 	for rows.Next() {
@@ -85,7 +89,6 @@ func (p *persistentWaitStore) Emit(eventName string, payload json.RawMessage) []
 			WorkflowName: workflowName,
 		})
 	}
-	rows.Close()
 
 	// Remove matched waiters
 	if len(waiters) > 0 {

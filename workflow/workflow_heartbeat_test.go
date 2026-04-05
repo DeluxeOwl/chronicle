@@ -19,19 +19,23 @@ func TestHeartbeat_NoOpWithMemoryQueue(t *testing.T) {
 		Result string `json:"result"`
 	}
 
-	wf := workflow.New(runner, "heartbeat-noop", func(wctx *workflow.Context, params *struct{}) (*Out, error) {
-		result, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			// Call heartbeat inside a step — should be a no-op with MemoryQueue
-			if err := workflow.Heartbeat(wctx, 5*time.Minute); err != nil {
-				return "", err
+	wf := workflow.New(
+		runner,
+		"heartbeat-noop",
+		func(wctx *workflow.Context, params *struct{}) (*Out, error) {
+			result, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				// Call heartbeat inside a step — should be a no-op with MemoryQueue
+				if err := workflow.Heartbeat(wctx, 5*time.Minute); err != nil {
+					return "", err
+				}
+				return "heartbeat-ok", nil
+			})
+			if err != nil {
+				return nil, err
 			}
-			return "heartbeat-ok", nil
-		})
-		if err != nil {
-			return nil, err
-		}
-		return &Out{Result: result}, nil
-	})
+			return &Out{Result: result}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &struct{}{})
@@ -51,21 +55,25 @@ func TestHeartbeat_MultipleCallsInStep(t *testing.T) {
 		Iterations int `json:"iterations"`
 	}
 
-	wf := workflow.New(runner, "heartbeat-multi", func(wctx *workflow.Context, params *struct{}) (*Out, error) {
-		count, err := workflow.Step(wctx, func(ctx context.Context) (int, error) {
-			for i := range 10 {
-				_ = i
-				if err := workflow.Heartbeat(wctx, 1*time.Minute); err != nil {
-					return 0, err
+	wf := workflow.New(
+		runner,
+		"heartbeat-multi",
+		func(wctx *workflow.Context, params *struct{}) (*Out, error) {
+			count, err := workflow.Step(wctx, func(ctx context.Context) (int, error) {
+				for i := range 10 {
+					_ = i
+					if err := workflow.Heartbeat(wctx, 1*time.Minute); err != nil {
+						return 0, err
+					}
 				}
+				return 10, nil
+			})
+			if err != nil {
+				return nil, err
 			}
-			return 10, nil
-		})
-		if err != nil {
-			return nil, err
-		}
-		return &Out{Iterations: count}, nil
-	})
+			return &Out{Iterations: count}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &struct{}{})
@@ -85,21 +93,25 @@ func TestHeartbeat_WorkerDriven(t *testing.T) {
 		Result string `json:"result"`
 	}
 
-	wf := workflow.New(runner, "heartbeat-worker", func(wctx *workflow.Context, params *struct{}) (*Out, error) {
-		result, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			// Simulate long-running work with heartbeats
-			for range 3 {
-				if err := workflow.Heartbeat(wctx, 2*time.Minute); err != nil {
-					return "", err
+	wf := workflow.New(
+		runner,
+		"heartbeat-worker",
+		func(wctx *workflow.Context, params *struct{}) (*Out, error) {
+			result, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				// Simulate long-running work with heartbeats
+				for range 3 {
+					if err := workflow.Heartbeat(wctx, 2*time.Minute); err != nil {
+						return "", err
+					}
 				}
+				return "worker-heartbeat-ok", nil
+			})
+			if err != nil {
+				return nil, err
 			}
-			return "worker-heartbeat-ok", nil
-		})
-		if err != nil {
-			return nil, err
-		}
-		return &Out{Result: result}, nil
-	})
+			return &Out{Result: result}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &struct{}{})

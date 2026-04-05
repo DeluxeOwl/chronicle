@@ -33,7 +33,7 @@ func setupSleepRunner(t *testing.T, clock *controllableClock) *workflow.Runner {
 }
 
 type SleepTestParams struct {
-	Value string `json:"value"`
+	Value string `json:"value" exhaustruct:"optional"`
 }
 
 type SleepTestOutput struct {
@@ -44,30 +44,34 @@ func TestSleep_BasicFlow(t *testing.T) {
 	clock := newClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
 	runner := setupSleepRunner(t, clock)
 
-	wf := workflow.New(runner, "sleep-basic", func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
-		// Step 1: do some work
-		val, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			return "before-sleep", nil
-		})
-		if err != nil {
-			return nil, err
-		}
+	wf := workflow.New(
+		runner,
+		"sleep-basic",
+		func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
+			// Step 1: do some work
+			val, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				return "before-sleep", nil
+			})
+			if err != nil {
+				return nil, err
+			}
 
-		// Sleep for 24 hours
-		if err := workflow.Sleep(wctx, 24*time.Hour); err != nil {
-			return nil, err
-		}
+			// Sleep for 24 hours
+			if err := workflow.Sleep(wctx, 24*time.Hour); err != nil {
+				return nil, err
+			}
 
-		// Step 2: after sleep
-		result, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			return val + "-after-sleep", nil
-		})
-		if err != nil {
-			return nil, err
-		}
+			// Step 2: after sleep
+			result, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				return val + "-after-sleep", nil
+			})
+			if err != nil {
+				return nil, err
+			}
 
-		return &SleepTestOutput{Result: result}, nil
-	})
+			return &SleepTestOutput{Result: result}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &SleepTestParams{Value: "test"})
@@ -90,12 +94,16 @@ func TestSleep_StillSleepingOnReplay(t *testing.T) {
 	clock := newClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
 	runner := setupSleepRunner(t, clock)
 
-	wf := workflow.New(runner, "sleep-still", func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
-		if err := workflow.Sleep(wctx, 72*time.Hour); err != nil {
-			return nil, err
-		}
-		return &SleepTestOutput{Result: "done"}, nil
-	})
+	wf := workflow.New(
+		runner,
+		"sleep-still",
+		func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
+			if err := workflow.Sleep(wctx, 72*time.Hour); err != nil {
+				return nil, err
+			}
+			return &SleepTestOutput{Result: "done"}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &SleepTestParams{})
@@ -128,43 +136,47 @@ func TestSleep_MultipleSleepsInSequence(t *testing.T) {
 
 	stepLog := []string{}
 
-	wf := workflow.New(runner, "multi-sleep", func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
-		_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			stepLog = append(stepLog, "step-1")
-			return "s1", nil
-		})
-		if err != nil {
-			return nil, err
-		}
+	wf := workflow.New(
+		runner,
+		"multi-sleep",
+		func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
+			_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				stepLog = append(stepLog, "step-1")
+				return "s1", nil
+			})
+			if err != nil {
+				return nil, err
+			}
 
-		// First sleep: 1 hour
-		if err := workflow.Sleep(wctx, 1*time.Hour); err != nil {
-			return nil, err
-		}
+			// First sleep: 1 hour
+			if err := workflow.Sleep(wctx, 1*time.Hour); err != nil {
+				return nil, err
+			}
 
-		_, err = workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			stepLog = append(stepLog, "step-2")
-			return "s2", nil
-		})
-		if err != nil {
-			return nil, err
-		}
+			_, err = workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				stepLog = append(stepLog, "step-2")
+				return "s2", nil
+			})
+			if err != nil {
+				return nil, err
+			}
 
-		// Second sleep: 3 days
-		if err := workflow.Sleep(wctx, 72*time.Hour); err != nil {
-			return nil, err
-		}
+			// Second sleep: 3 days
+			if err := workflow.Sleep(wctx, 72*time.Hour); err != nil {
+				return nil, err
+			}
 
-		_, err = workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			stepLog = append(stepLog, "step-3")
-			return "s3", nil
-		})
-		if err != nil {
-			return nil, err
-		}
+			_, err = workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				stepLog = append(stepLog, "step-3")
+				return "s3", nil
+			})
+			if err != nil {
+				return nil, err
+			}
 
-		return &SleepTestOutput{Result: "all-done"}, nil
-	})
+			return &SleepTestOutput{Result: "all-done"}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &SleepTestParams{})
@@ -197,13 +209,17 @@ func TestSleep_LongDuration_Days(t *testing.T) {
 	clock := newClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
 	runner := setupSleepRunner(t, clock)
 
-	wf := workflow.New(runner, "sleep-days", func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
-		// Sleep for 30 days
-		if err := workflow.Sleep(wctx, 30*24*time.Hour); err != nil {
-			return nil, err
-		}
-		return &SleepTestOutput{Result: "woke-after-30-days"}, nil
-	})
+	wf := workflow.New(
+		runner,
+		"sleep-days",
+		func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
+			// Sleep for 30 days
+			if err := workflow.Sleep(wctx, 30*24*time.Hour); err != nil {
+				return nil, err
+			}
+			return &SleepTestOutput{Result: "woke-after-30-days"}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &SleepTestParams{})
@@ -224,13 +240,17 @@ func TestSleep_LongDuration_Weeks(t *testing.T) {
 	clock := newClock(time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC))
 	runner := setupSleepRunner(t, clock)
 
-	wf := workflow.New(runner, "sleep-weeks", func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
-		// Sleep for 2 weeks
-		if err := workflow.Sleep(wctx, 14*24*time.Hour); err != nil {
-			return nil, err
-		}
-		return &SleepTestOutput{Result: "woke-after-2-weeks"}, nil
-	})
+	wf := workflow.New(
+		runner,
+		"sleep-weeks",
+		func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
+			// Sleep for 2 weeks
+			if err := workflow.Sleep(wctx, 14*24*time.Hour); err != nil {
+				return nil, err
+			}
+			return &SleepTestOutput{Result: "woke-after-2-weeks"}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &SleepTestParams{})
@@ -259,12 +279,16 @@ func TestSleep_SurvivesCrash(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	wf1 := workflow.New(runner1, "crash-test", func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
-		if err := workflow.Sleep(wctx, 48*time.Hour); err != nil {
-			return nil, err
-		}
-		return &SleepTestOutput{Result: "survived-crash"}, nil
-	})
+	wf1 := workflow.New(
+		runner1,
+		"crash-test",
+		func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
+			if err := workflow.Sleep(wctx, 48*time.Hour); err != nil {
+				return nil, err
+			}
+			return &SleepTestOutput{Result: "survived-crash"}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf1.Start(ctx, &SleepTestParams{})
@@ -282,12 +306,16 @@ func TestSleep_SurvivesCrash(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	wf2 := workflow.New(runner2, "crash-test", func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
-		if err := workflow.Sleep(wctx, 48*time.Hour); err != nil {
-			return nil, err
-		}
-		return &SleepTestOutput{Result: "survived-crash"}, nil
-	})
+	wf2 := workflow.New(
+		runner2,
+		"crash-test",
+		func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
+			if err := workflow.Sleep(wctx, 48*time.Hour); err != nil {
+				return nil, err
+			}
+			return &SleepTestOutput{Result: "survived-crash"}, nil
+		},
+	)
 
 	// Re-run — the sleep step is replayed, clock shows it elapsed
 	output, err := wf2.Run(ctx, instanceID)
@@ -299,12 +327,16 @@ func TestSleep_AlreadyCompletedWorkflow(t *testing.T) {
 	clock := newClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
 	runner := setupSleepRunner(t, clock)
 
-	wf := workflow.New(runner, "already-done", func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
-		if err := workflow.Sleep(wctx, 1*time.Hour); err != nil {
-			return nil, err
-		}
-		return &SleepTestOutput{Result: "done"}, nil
-	})
+	wf := workflow.New(
+		runner,
+		"already-done",
+		func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
+			if err := workflow.Sleep(wctx, 1*time.Hour); err != nil {
+				return nil, err
+			}
+			return &SleepTestOutput{Result: "done"}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &SleepTestParams{})
@@ -332,32 +364,36 @@ func TestSleep_WithStepsBeforeAndAfter(t *testing.T) {
 	step1Count := 0
 	step2Count := 0
 
-	wf := workflow.New(runner, "steps-around-sleep", func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
-		// Step before sleep
-		val, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			step1Count++
-			return "prepared", nil
-		})
-		if err != nil {
-			return nil, err
-		}
+	wf := workflow.New(
+		runner,
+		"steps-around-sleep",
+		func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
+			// Step before sleep
+			val, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				step1Count++
+				return "prepared", nil
+			})
+			if err != nil {
+				return nil, err
+			}
 
-		// Sleep
-		if err := workflow.Sleep(wctx, 6*time.Hour); err != nil {
-			return nil, err
-		}
+			// Sleep
+			if err := workflow.Sleep(wctx, 6*time.Hour); err != nil {
+				return nil, err
+			}
 
-		// Step after sleep — should use result from step before
-		result, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			step2Count++
-			return val + "-processed", nil
-		})
-		if err != nil {
-			return nil, err
-		}
+			// Step after sleep — should use result from step before
+			result, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				step2Count++
+				return val + "-processed", nil
+			})
+			if err != nil {
+				return nil, err
+			}
 
-		return &SleepTestOutput{Result: result}, nil
-	})
+			return &SleepTestOutput{Result: result}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &SleepTestParams{})
@@ -383,13 +419,17 @@ func TestSleep_ZeroDuration(t *testing.T) {
 	clock := newClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
 	runner := setupSleepRunner(t, clock)
 
-	wf := workflow.New(runner, "zero-sleep", func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
-		// Sleep for 0 — should effectively be a no-op on replay
-		if err := workflow.Sleep(wctx, 0); err != nil {
-			return nil, err
-		}
-		return &SleepTestOutput{Result: "instant"}, nil
-	})
+	wf := workflow.New(
+		runner,
+		"zero-sleep",
+		func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
+			// Sleep for 0 — should effectively be a no-op on replay
+			if err := workflow.Sleep(wctx, 0); err != nil {
+				return nil, err
+			}
+			return &SleepTestOutput{Result: "instant"}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &SleepTestParams{})
@@ -413,12 +453,16 @@ func TestSleep_SleepErrorDoesNotMarkWorkflowFailed(t *testing.T) {
 	clock := newClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
 	runner := setupSleepRunner(t, clock)
 
-	wf := workflow.New(runner, "not-failed", func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
-		if err := workflow.Sleep(wctx, 1*time.Hour); err != nil {
-			return nil, err
-		}
-		return &SleepTestOutput{Result: "ok"}, nil
-	})
+	wf := workflow.New(
+		runner,
+		"not-failed",
+		func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
+			if err := workflow.Sleep(wctx, 1*time.Hour); err != nil {
+				return nil, err
+			}
+			return &SleepTestOutput{Result: "ok"}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &SleepTestParams{})
@@ -450,12 +494,16 @@ func TestSleep_MultipleWorkflowsSleepingConcurrently(t *testing.T) {
 	clock := newClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
 	runner := setupSleepRunner(t, clock)
 
-	wf := workflow.New(runner, "concurrent-sleep", func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
-		if err := workflow.Sleep(wctx, 2*time.Hour); err != nil {
-			return nil, err
-		}
-		return &SleepTestOutput{Result: "woke-" + params.Value}, nil
-	})
+	wf := workflow.New(
+		runner,
+		"concurrent-sleep",
+		func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
+			if err := workflow.Sleep(wctx, 2*time.Hour); err != nil {
+				return nil, err
+			}
+			return &SleepTestOutput{Result: "woke-" + params.Value}, nil
+		},
+	)
 
 	ctx := t.Context()
 
@@ -490,21 +538,25 @@ func TestSleep_Step2BeforeSleep(t *testing.T) {
 
 	step2Executed := 0
 
-	wf := workflow.New(runner, "step2-sleep", func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
-		err := workflow.Step2(wctx, func(ctx context.Context) error {
-			step2Executed++
-			return nil
-		})
-		if err != nil {
-			return nil, err
-		}
+	wf := workflow.New(
+		runner,
+		"step2-sleep",
+		func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
+			err := workflow.Step2(wctx, func(ctx context.Context) error {
+				step2Executed++
+				return nil
+			})
+			if err != nil {
+				return nil, err
+			}
 
-		if err := workflow.Sleep(wctx, 12*time.Hour); err != nil {
-			return nil, err
-		}
+			if err := workflow.Sleep(wctx, 12*time.Hour); err != nil {
+				return nil, err
+			}
 
-		return &SleepTestOutput{Result: "done"}, nil
-	})
+			return &SleepTestOutput{Result: "done"}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &SleepTestParams{})
@@ -526,21 +578,25 @@ func TestSleep_StepFailureBeforeSleep(t *testing.T) {
 	clock := newClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
 	runner := setupSleepRunner(t, clock)
 
-	wf := workflow.New(runner, "fail-before-sleep", func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
-		_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			return "", errors.New("step exploded")
-		})
-		if err != nil {
-			return nil, err
-		}
+	wf := workflow.New(
+		runner,
+		"fail-before-sleep",
+		func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
+			_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				return "", errors.New("step exploded")
+			})
+			if err != nil {
+				return nil, err
+			}
 
-		// Should never reach here
-		if err := workflow.Sleep(wctx, 1*time.Hour); err != nil {
-			return nil, err
-		}
+			// Should never reach here
+			if err := workflow.Sleep(wctx, 1*time.Hour); err != nil {
+				return nil, err
+			}
 
-		return &SleepTestOutput{Result: "unreachable"}, nil
-	})
+			return &SleepTestOutput{Result: "unreachable"}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &SleepTestParams{})
@@ -556,28 +612,32 @@ func TestSleep_VeryLongDuration_90Days(t *testing.T) {
 	clock := newClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
 	runner := setupSleepRunner(t, clock)
 
-	wf := workflow.New(runner, "sleep-90-days", func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
-		_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			return "before", nil
-		})
-		if err != nil {
-			return nil, err
-		}
+	wf := workflow.New(
+		runner,
+		"sleep-90-days",
+		func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
+			_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				return "before", nil
+			})
+			if err != nil {
+				return nil, err
+			}
 
-		// 90 day sleep
-		if err := workflow.Sleep(wctx, 90*24*time.Hour); err != nil {
-			return nil, err
-		}
+			// 90 day sleep
+			if err := workflow.Sleep(wctx, 90*24*time.Hour); err != nil {
+				return nil, err
+			}
 
-		result, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			return "after-90-days", nil
-		})
-		if err != nil {
-			return nil, err
-		}
+			result, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				return "after-90-days", nil
+			})
+			if err != nil {
+				return nil, err
+			}
 
-		return &SleepTestOutput{Result: result}, nil
-	})
+			return &SleepTestOutput{Result: result}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &SleepTestParams{})

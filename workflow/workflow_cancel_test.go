@@ -19,17 +19,21 @@ func TestCancelWorkflow_ManualCancel(t *testing.T) {
 	stepReached := make(chan struct{})
 	proceed := make(chan struct{})
 
-	wf := workflow.New(runner, "cancellable", func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
-		_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			close(stepReached)
-			<-proceed // Block until test signals to continue
-			return "done", nil
-		})
-		if err != nil {
-			return nil, err
-		}
-		return &WorkerTestOutput{Result: "done"}, nil
-	})
+	wf := workflow.New(
+		runner,
+		"cancellable",
+		func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
+			_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				close(stepReached)
+				<-proceed // Block until test signals to continue
+				return "done", nil
+			})
+			if err != nil {
+				return nil, err
+			}
+			return &WorkerTestOutput{Result: "done"}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &WorkerTestParams{Value: "test"})
@@ -56,9 +60,13 @@ func TestCancelWorkflow_Idempotent(t *testing.T) {
 	runner, err := workflow.NewSqliteRunner(db)
 	require.NoError(t, err)
 
-	wf := workflow.New(runner, "cancel-idem", func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
-		return &WorkerTestOutput{Result: "ok"}, nil
-	})
+	wf := workflow.New(
+		runner,
+		"cancel-idem",
+		func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
+			return &WorkerTestOutput{Result: "ok"}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &WorkerTestParams{Value: "test"})
@@ -82,9 +90,13 @@ func TestCancelWorkflow_CompletedIsNoop(t *testing.T) {
 	runner, err := workflow.NewSqliteRunner(db)
 	require.NoError(t, err)
 
-	wf := workflow.New(runner, "completed-cancel", func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
-		return &WorkerTestOutput{Result: "done"}, nil
-	})
+	wf := workflow.New(
+		runner,
+		"completed-cancel",
+		func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
+			return &WorkerTestOutput{Result: "done"}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &WorkerTestParams{Value: "test"})
@@ -108,15 +120,19 @@ func TestCancelWorkflow_WorkerHandlesCancelled(t *testing.T) {
 	runner, err := workflow.NewSqliteRunner(db)
 	require.NoError(t, err)
 
-	wf := workflow.New(runner, "worker-cancel", func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
-		_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			return "step-1", nil
-		})
-		if err != nil {
-			return nil, err
-		}
-		return &WorkerTestOutput{Result: "done"}, nil
-	})
+	wf := workflow.New(
+		runner,
+		"worker-cancel",
+		func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
+			_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				return "step-1", nil
+			})
+			if err != nil {
+				return nil, err
+			}
+			return &WorkerTestOutput{Result: "done"}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &WorkerTestParams{Value: "test"})
@@ -156,26 +172,30 @@ func TestCancellationPolicy_MaxDuration(t *testing.T) {
 	runner, err := workflow.NewSqliteRunner(db, workflow.WithNowFunc(clock.Now))
 	require.NoError(t, err)
 
-	wf := workflow.New(runner, "max-duration", func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
-		_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			return "step-1", nil
-		})
-		if err != nil {
-			return nil, err
-		}
+	wf := workflow.New(
+		runner,
+		"max-duration",
+		func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
+			_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				return "step-1", nil
+			})
+			if err != nil {
+				return nil, err
+			}
 
-		if err := workflow.Sleep(wctx, 30*time.Minute); err != nil {
-			return nil, err
-		}
+			if err := workflow.Sleep(wctx, 30*time.Minute); err != nil {
+				return nil, err
+			}
 
-		_, err = workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			return "step-2", nil
-		})
-		if err != nil {
-			return nil, err
-		}
-		return &WorkerTestOutput{Result: "done"}, nil
-	})
+			_, err = workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				return "step-2", nil
+			})
+			if err != nil {
+				return nil, err
+			}
+			return &WorkerTestOutput{Result: "done"}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &WorkerTestParams{Value: "test"},
@@ -208,26 +228,30 @@ func TestCancellationPolicy_MaxDelay(t *testing.T) {
 	runner, err := workflow.NewSqliteRunner(db, workflow.WithNowFunc(clock.Now))
 	require.NoError(t, err)
 
-	wf := workflow.New(runner, "max-delay", func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
-		_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			return "step-1", nil
-		})
-		if err != nil {
-			return nil, err
-		}
+	wf := workflow.New(
+		runner,
+		"max-delay",
+		func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
+			_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				return "step-1", nil
+			})
+			if err != nil {
+				return nil, err
+			}
 
-		if err := workflow.Sleep(wctx, 30*time.Minute); err != nil {
-			return nil, err
-		}
+			if err := workflow.Sleep(wctx, 30*time.Minute); err != nil {
+				return nil, err
+			}
 
-		_, err = workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			return "step-2", nil
-		})
-		if err != nil {
-			return nil, err
-		}
-		return &WorkerTestOutput{Result: "done"}, nil
-	})
+			_, err = workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				return "step-2", nil
+			})
+			if err != nil {
+				return nil, err
+			}
+			return &WorkerTestOutput{Result: "done"}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &WorkerTestParams{Value: "test"},
@@ -260,15 +284,19 @@ func TestCancellationPolicy_WithinLimitsCompletes(t *testing.T) {
 	runner, err := workflow.NewSqliteRunner(db, workflow.WithNowFunc(clock.Now))
 	require.NoError(t, err)
 
-	wf := workflow.New(runner, "within-limits", func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
-		_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			return "step-1", nil
-		})
-		if err != nil {
-			return nil, err
-		}
-		return &WorkerTestOutput{Result: "done"}, nil
-	})
+	wf := workflow.New(
+		runner,
+		"within-limits",
+		func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
+			_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				return "step-1", nil
+			})
+			if err != nil {
+				return nil, err
+			}
+			return &WorkerTestOutput{Result: "done"}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &WorkerTestParams{Value: "test"},
@@ -295,28 +323,32 @@ func TestCancellationPolicy_WorkerAutoCancel(t *testing.T) {
 
 	var stepCount atomic.Int32
 
-	wf := workflow.New(runner, "worker-auto-cancel", func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
-		_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			stepCount.Add(1)
-			return "step-1", nil
-		})
-		if err != nil {
-			return nil, err
-		}
+	wf := workflow.New(
+		runner,
+		"worker-auto-cancel",
+		func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
+			_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				stepCount.Add(1)
+				return "step-1", nil
+			})
+			if err != nil {
+				return nil, err
+			}
 
-		if err := workflow.Sleep(wctx, 30*time.Minute); err != nil {
-			return nil, err
-		}
+			if err := workflow.Sleep(wctx, 30*time.Minute); err != nil {
+				return nil, err
+			}
 
-		_, err = workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			stepCount.Add(1)
-			return "step-2", nil
-		})
-		if err != nil {
-			return nil, err
-		}
-		return &WorkerTestOutput{Result: "done"}, nil
-	})
+			_, err = workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				stepCount.Add(1)
+				return "step-2", nil
+			})
+			if err != nil {
+				return nil, err
+			}
+			return &WorkerTestOutput{Result: "done"}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &WorkerTestParams{Value: "test"},
@@ -362,15 +394,19 @@ func TestCancelWorkflow_SyncQueueCleansUpTask(t *testing.T) {
 	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db)
 	require.NoError(t, err)
 
-	wf := workflow.New(runner, "sync-cancel-cleanup", func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
-		_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			return "step-1", nil
-		})
-		if err != nil {
-			return nil, err
-		}
-		return &WorkerTestOutput{Result: "done"}, nil
-	})
+	wf := workflow.New(
+		runner,
+		"sync-cancel-cleanup",
+		func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
+			_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				return "step-1", nil
+			})
+			if err != nil {
+				return nil, err
+			}
+			return &WorkerTestOutput{Result: "done"}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &WorkerTestParams{Value: "test"})
@@ -383,7 +419,8 @@ func TestCancelWorkflow_SyncQueueCleansUpTask(t *testing.T) {
 	// Verify the task was cleaned up from the queue.
 	// The SyncQueue.Process should have deleted the task on workflowCancelled.
 	var count int
-	err = db.QueryRow(`SELECT COUNT(*) FROM workflow_ready_tasks WHERE instance_id = ?`, string(instanceID)).Scan(&count)
+	err = db.QueryRow(`SELECT COUNT(*) FROM workflow_ready_tasks WHERE instance_id = ?`, string(instanceID)).
+		Scan(&count)
 	require.NoError(t, err)
 	require.Equal(t, 0, count)
 }

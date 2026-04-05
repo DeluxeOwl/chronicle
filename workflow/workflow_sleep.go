@@ -63,7 +63,7 @@ func Sleep(wctx *Context, d time.Duration) error {
 				return fmt.Errorf("enqueue sleep wake task: %w", err)
 			}
 
-			runner.logger.Debug(
+			runner.logger.DebugContext(wctx.ctx,
 				"sleep replay, still sleeping",
 				"instanceID", wctx.instanceID,
 				"stepIndex", stepIndex,
@@ -73,7 +73,7 @@ func Sleep(wctx *Context, d time.Duration) error {
 		}
 
 		// Sleep has elapsed, continue execution
-		runner.logger.Debug(
+		runner.logger.DebugContext(wctx.ctx,
 			"sleep replay, elapsed",
 			"instanceID", wctx.instanceID,
 			"stepIndex", stepIndex,
@@ -113,7 +113,7 @@ func Sleep(wctx *Context, d time.Duration) error {
 		return fmt.Errorf("enqueue sleep wake task: %w", err)
 	}
 
-	runner.logger.Info(
+	runner.logger.InfoContext(wctx.ctx,
 		"workflow sleeping",
 		"instanceID", wctx.instanceID,
 		"stepIndex", stepIndex,
