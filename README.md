@@ -236,7 +236,7 @@ func NewEmpty() *Account {
 
 And now, opening an account, and let's say **you can't open an account on a Sunday** (as an example of a business rule):
 ```go
-func Open(id AccountID, currentTime time.Time) (*Account, error) {
+func Open(id AccountID, currentTime time.Time, holderName string) (*Account, error) {
 	if currentTime.Weekday() == time.Sunday {
 		return nil, errors.New("sorry, you can't open an account on Sunday ¯\\_(ツ)_/¯")
 	}
@@ -253,7 +253,7 @@ func (a *Account) recordThat(event AccountEvent) error {
 
 Getting back to `Open`, recording an event is now straightforward:
 ```go
-func Open(id AccountID, currentTime time.Time) (*Account, error) {
+func Open(id AccountID, currentTime time.Time, holderName string) (*Account, error) {
 	if currentTime.Weekday() == time.Sunday {
 		return nil, errors.New("sorry, you can't open an account on Sunday ¯\\_(ツ)_/¯")
 	}
@@ -403,3 +403,8 @@ You can find this example in [./examples/1_quickstart](./examples/1_quickstart).
 You can find the implementation of the account in [./examples/internal/account/account.go](./examples/internal/account/account.go).
 
 **Note:** you will see an additional `accountv2` package that is 95% identical to the `account` package + shared event metadata. You can ignore this package as most examples assume the `account` package. You can find more info in the [Shared event metadata section](docs/shared-event-metadata.md).
+
+TODO:
+- postgres impl
+- does it retry optimistically or do we need the middleware
+- docs + examples
