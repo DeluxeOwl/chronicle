@@ -403,3 +403,8 @@ You can find this example in [./examples/1_quickstart](./examples/1_quickstart).
 You can find the implementation of the account in [./examples/internal/account/account.go](./examples/internal/account/account.go).
 
 **Note:** you will see an additional `accountv2` package that is 95% identical to the `account` package + shared event metadata. You can ignore this package as most examples assume the `account` package. You can find more info in the [Shared event metadata section](docs/shared-event-metadata.md).
+
+TODO:
+- postgres impl
+- does it retry optimistically or do we need the middleware
+- docs + examples
