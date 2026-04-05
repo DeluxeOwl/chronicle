@@ -6,16 +6,16 @@ import (
 )
 
 // persistentWaitStore is a SQL-backed implementation of eventWaitStore.
-// It uses workflow_waiting_events and workflow_emitted_events tables to
+// It uses workflow_waiting_events and workflow_published_events tables to
 // durably track event waiting state across process restarts.
 //
 // The transactional writes (insert/delete waiters during event processing)
 // are handled by SyncQueue.Process() within the same DB transaction as
 // event writes. This store handles the non-transactional operations:
-// emitting events (from EmitEvent) and checking for emitted events
-// (from AwaitEvent replay).
+// publishing events (from PublishEvent) and checking for published events
+// (from WaitForEvent replay).
 //
-// This enables distributed AwaitEvent/EmitEvent: an event emitted from
+// This enables distributed WaitForEvent/PublishEvent: an event published from
 // one process can wake workflows running on another, because both read
 // from the same SQL tables.
 type persistentWaitStore struct {
@@ -23,7 +23,7 @@ type persistentWaitStore struct {
 }
 
 // newPersistentWaitStore creates a persistent wait store.
-// The required tables (workflow_waiting_events, workflow_emitted_events) must
+// The required tables (workflow_waiting_events, workflow_published_events) must
 // already exist — they are created by NewSyncQueue / NewAsyncQueue.
 func newPersistentWaitStore(db *sql.DB) *persistentWaitStore {
 	return &persistentWaitStore{db: db}
@@ -31,26 +31,26 @@ func newPersistentWaitStore(db *sql.DB) *persistentWaitStore {
 
 // Register is a no-op for the persistent store.
 // The SyncQueue.Process() handles inserting waiters into workflow_waiting_events
-// atomically during the event-save transaction. It also detects pre-emitted
+// atomically during the event-save transaction. It also detects pre-published
 // events and creates immediate wake-up tasks.
 func (p *persistentWaitStore) Register(_ InstanceID, _ string, _ string) {
 	// No-op: handled atomically by SyncQueue.Process() for workflowWaiting events.
 }
 
-// Emit stores an event payload (first-write-wins) and returns any workflows
+// Publish stores an event payload (first-write-wins) and returns any workflows
 // that were waiting for this event. Matched waiters are removed from the
 // waiting table. All operations run in a single transaction to prevent
 // missed wake-ups.
-func (p *persistentWaitStore) Emit(eventName string, payload json.RawMessage) []waitingWorkflow {
+func (p *persistentWaitStore) Publish(eventName string, payload json.RawMessage) []waitingWorkflow {
 	tx, err := p.db.Begin()
 	if err != nil {
 		return nil
 	}
-	defer tx.Rollback() //nolint:errcheck
+	defer tx.Rollback() //nolint:errcheck // not needed.
 
 	// First-write-wins: INSERT OR IGNORE
 	result, err := tx.Exec(`
-		INSERT OR IGNORE INTO workflow_emitted_events (event_name, payload)
+		INSERT OR IGNORE INTO workflow_published_events (event_name, payload)
 		VALUES (?, ?)
 	`, eventName, string(payload))
 	if err != nil {
@@ -59,7 +59,7 @@ func (p *persistentWaitStore) Emit(eventName string, payload json.RawMessage) []
 
 	affected, _ := result.RowsAffected()
 	if affected == 0 {
-		// Event was already emitted — first-write-wins, no new waiters to wake.
+		// Event was already published — first-write-wins, no new waiters to wake.
 		return nil
 	}
 
@@ -72,6 +72,10 @@ func (p *persistentWaitStore) Emit(eventName string, payload json.RawMessage) []
 	if err != nil {
 		return nil
 	}
+	if rows.Err() != nil {
+		return nil
+	}
+	defer rows.Close()
 
 	var waiters []waitingWorkflow
 	for rows.Next() {
@@ -85,7 +89,6 @@ func (p *persistentWaitStore) Emit(eventName string, payload json.RawMessage) []
 			WorkflowName: workflowName,
 		})
 	}
-	rows.Close()
 
 	// Remove matched waiters
 	if len(waiters) > 0 {
@@ -101,13 +104,13 @@ func (p *persistentWaitStore) Emit(eventName string, payload json.RawMessage) []
 	return waiters
 }
 
-// GetEvent checks if an event has been emitted by looking up the
-// workflow_emitted_events table. The instanceID is not used for the
-// query — emitted events are global (first-write-wins).
+// GetEvent checks if an event has been published by looking up the
+// workflow_published_events table. The instanceID is not used for the
+// query — published events are global (first-write-wins).
 func (p *persistentWaitStore) GetEvent(_ InstanceID, eventName string) (json.RawMessage, bool) {
 	var payload string
 	err := p.db.QueryRow(`
-		SELECT payload FROM workflow_emitted_events WHERE event_name = ?
+		SELECT payload FROM workflow_published_events WHERE event_name = ?
 	`, eventName).Scan(&payload)
 	if err != nil {
 		return nil, false

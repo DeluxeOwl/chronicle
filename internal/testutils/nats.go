@@ -13,14 +13,14 @@ import (
 func SetupNATS(t testing.TB) (*nats.Conn, error) {
 	t.Helper()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	req := testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
 			Image:        "nats:2.12",
 			ExposedPorts: []string{"4222/tcp"},
-			Entrypoint: []string{"nats-server", "-js"},
-			WaitingFor: wait.ForListeningPort("4222/tcp").WithStartupTimeout(60 * time.Second),
+			Entrypoint:   []string{"nats-server", "-js"},
+			WaitingFor:   wait.ForListeningPort("4222/tcp").WithStartupTimeout(60 * time.Second),
 		},
 		Started: true,
 	}
@@ -47,7 +47,8 @@ func SetupNATS(t testing.TB) (*nats.Conn, error) {
 
 	t.Cleanup(func() {
 		nc.Close()
-		if err := container.Terminate(ctx); err != nil {
+		//nolint:usetesting // not in this case.
+		if err := container.Terminate(context.Background()); err != nil {
 			t.Fatalf("failed to terminate container: %s", err)
 		}
 	})

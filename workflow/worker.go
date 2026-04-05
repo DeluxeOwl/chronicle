@@ -35,9 +35,11 @@ func (o WorkerOptions) pollInterval() time.Duration {
 //
 // When a workflow returns ErrWorkflowSleeping, the task is marked complete
 // because Sleep already enqueued a delayed follow-up task.
+//
+//nolint:gocognit
 func (r *Runner) RunWorker(ctx context.Context, opts WorkerOptions) error {
 	interval := opts.pollInterval()
-	r.logger.Info("worker starting", "pollInterval", interval)
+	r.logger.InfoContext(ctx, "worker starting", "pollInterval", interval)
 
 	for {
 		task, err := r.queue.Poll(ctx)
@@ -57,7 +59,7 @@ func (r *Runner) RunWorker(ctx context.Context, opts WorkerOptions) error {
 
 		wf, ok := r.workflows[task.WorkflowName]
 		if !ok {
-			r.logger.Error(
+			r.logger.ErrorContext(ctx,
 				"unknown workflow, failing task",
 				"instanceID", task.InstanceID,
 				"workflowName", task.WorkflowName,
@@ -66,13 +68,14 @@ func (r *Runner) RunWorker(ctx context.Context, opts WorkerOptions) error {
 			continue
 		}
 
-		r.logger.Debug(
+		r.logger.DebugContext(ctx,
 			"worker executing task",
 			"instanceID", task.InstanceID,
 			"workflowName", task.WorkflowName,
 		)
 
 		err = wf.execute(ctx, task.InstanceID)
+		//nolint:nestif // It's readable.
 		if err != nil {
 			if isSleepError(err) {
 				// Sleep already enqueued a delayed task — this execution is done.
@@ -85,7 +88,7 @@ func (r *Runner) RunWorker(ctx context.Context, opts WorkerOptions) error {
 				continue
 			}
 			if isWaitingError(err) {
-				// AwaitEvent parked the workflow — it will be woken by EmitEvent.
+				// WaitForEvent parked the workflow — it will be woken by PublishEvent.
 				r.completeTask(ctx, task.InstanceID)
 				continue
 			}
@@ -94,13 +97,20 @@ func (r *Runner) RunWorker(ctx context.Context, opts WorkerOptions) error {
 				r.completeTask(ctx, task.InstanceID)
 				continue
 			}
-			r.logger.Error(
+			r.logger.ErrorContext(ctx,
 				"workflow execution failed",
 				"instanceID", task.InstanceID,
 				"error", err,
 			)
 			if qErr := r.queue.Fail(ctx, task.InstanceID); qErr != nil {
-				r.logger.Error("failed to mark task as failed", "instanceID", task.InstanceID, "error", qErr)
+				r.logger.ErrorContext(
+					ctx,
+					"failed to mark task as failed",
+					"instanceID",
+					task.InstanceID,
+					"error",
+					qErr,
+				)
 			}
 			continue
 		}
@@ -112,6 +122,13 @@ func (r *Runner) RunWorker(ctx context.Context, opts WorkerOptions) error {
 // completeTask marks a task as done, logging on failure.
 func (r *Runner) completeTask(ctx context.Context, instanceID InstanceID) {
 	if err := r.queue.Complete(ctx, instanceID); err != nil {
-		r.logger.Error("failed to complete task", "instanceID", instanceID, "error", err)
+		r.logger.ErrorContext(
+			ctx,
+			"failed to complete task",
+			"instanceID",
+			instanceID,
+			"error",
+			err,
+		)
 	}
 }

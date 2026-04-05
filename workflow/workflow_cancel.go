@@ -14,11 +14,11 @@ var ErrWorkflowCancelled = errors.New("workflow cancelled")
 type CancellationPolicy struct {
 	// MaxDuration cancels the workflow if it has been alive (since its started event)
 	// longer than this duration. Zero means no max-duration limit.
-	MaxDuration time.Duration
+	MaxDuration time.Duration `json:"maxDuration" exhaustruct:"optional"`
 
 	// MaxDelay cancels the workflow if no new step has been completed for this
 	// duration. Zero means no max-delay limit.
-	MaxDelay time.Duration
+	MaxDelay time.Duration `json:"maxDelay" exhaustruct:"optional"`
 }
 
 // workflowCancelled records that a workflow has been cancelled.
@@ -42,13 +42,19 @@ func WithCancellationPolicy(cp CancellationPolicy) StartOption {
 //
 // Cancellation is idempotent: cancelling an already-cancelled, completed, or failed
 // workflow is a no-op.
-func CancelWorkflow(ctx context.Context, runner *Runner, instanceID InstanceID, reason string) error {
+func CancelWorkflow(
+	ctx context.Context,
+	runner *Runner,
+	instanceID InstanceID,
+	reason string,
+) error {
 	instance, err := runner.repo.Get(ctx, instanceID)
 	if err != nil {
 		return fmt.Errorf("load workflow instance for cancel: %w", err)
 	}
 
 	// Only cancel workflows that are still active.
+	//nolint:exhaustive // This is a quick check.
 	switch instance.status {
 	case StatusCompleted, StatusFailed, StatusCancelled:
 		return nil // Already terminal — no-op.
@@ -67,7 +73,7 @@ func CancelWorkflow(ctx context.Context, runner *Runner, instanceID InstanceID, 
 		return fmt.Errorf("save cancelled workflow: %w", err)
 	}
 
-	runner.logger.Info(
+	runner.logger.InfoContext(ctx,
 		"workflow cancelled",
 		"instanceID", instanceID,
 		"reason", reason,

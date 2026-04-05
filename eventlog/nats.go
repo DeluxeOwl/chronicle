@@ -185,6 +185,8 @@ func (c *NATS) AppendEvents(
 //
 // The selector's From/To versions map directly to JetStream sequence numbers
 // in the per-aggregate stream.
+//
+//nolint:gocognit
 func (c *NATS) ReadEvents(
 	ctx context.Context,
 	id event.LogID,
@@ -205,6 +207,7 @@ func (c *NATS) ReadEvents(
 			return
 		}
 
+		//nolint:exhaustruct // Too many fields.
 		consumerCfg := jetstream.ConsumerConfig{
 			FilterSubject:     subject,
 			AckPolicy:         jetstream.AckExplicitPolicy,
@@ -325,7 +328,7 @@ func (c *NATS) AppendInTx(
 	}()
 
 	// Add all but the final message to the batch.
-	for i := 0; i < len(msgs)-1; i++ {
+	for i := range len(msgs) - 1 {
 		msg := msgs[i]
 		opts := []jetstreamext.BatchMsgOpt(nil)
 		if i == 0 {
@@ -337,9 +340,16 @@ func (c *NATS) AppendInTx(
 
 		if err := batch.AddMsg(msg, opts...); err != nil {
 			if actualVersion, ok := parseActualVersionFromError(err); ok {
-				return version.Zero, nil, version.NewConflictError(version.Version(exp), actualVersion)
+				return version.Zero, nil, version.NewConflictError(
+					version.Version(exp),
+					actualVersion,
+				)
 			}
-			return version.Zero, nil, fmt.Errorf("append in tx: add message %d to batch: %w", i+1, err)
+			return version.Zero, nil, fmt.Errorf(
+				"append in tx: add message %d to batch: %w",
+				i+1,
+				err,
+			)
 		}
 	}
 
@@ -401,6 +411,7 @@ func (c *NATS) ensureStream(
 	ctx context.Context,
 	streamName, subject string,
 ) error {
+	//nolint:exhaustruct // Too many fields.
 	cfg := jetstream.StreamConfig{
 		Name:               streamName,
 		Subjects:           []string{subject},
@@ -443,6 +454,7 @@ func convertRawEventsToNatsMsgs(
 			return nil, fmt.Errorf("compute event version: %w", err)
 		}
 
+		//nolint:exhaustruct // Too many fields.
 		msgs[i] = &nats.Msg{
 			Subject: subject,
 			Data:    rawEvent.Data(),
@@ -473,6 +485,7 @@ func (c *NATS) appendSingleEvent(
 
 	newEventVersion := version.Version(expected) + 1
 
+	//nolint:exhaustruct // Too many fields.
 	msg := &nats.Msg{
 		Subject: subject,
 		Data:    rawEvent.Data(),

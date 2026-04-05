@@ -28,7 +28,7 @@ type setupResult struct {
 }
 
 type RetryTestParams struct {
-	Value string `json:"value"`
+	Value string `json:"value" exhaustruct:"optional"`
 }
 
 type RetryTestOutput struct {
@@ -40,21 +40,29 @@ func TestRetry_SucceedsAfterTransientFailure(t *testing.T) {
 
 	var attempts atomic.Int32
 
-	wf := workflow.New(s.runner, "retry-transient", func(wctx *workflow.Context, params *RetryTestParams) (*RetryTestOutput, error) {
-		n := attempts.Add(1)
-		if n < 3 {
-			return nil, errors.New("transient error")
-		}
-		return &RetryTestOutput{Result: "success-on-attempt-3"}, nil
-	})
+	wf := workflow.New(
+		s.runner,
+		"retry-transient",
+		func(wctx *workflow.Context, params *RetryTestParams) (*RetryTestOutput, error) {
+			n := attempts.Add(1)
+			if n < 3 {
+				return nil, errors.New("transient error")
+			}
+			return &RetryTestOutput{Result: "success-on-attempt-3"}, nil
+		},
+	)
 
 	ctx := t.Context()
-	instanceID, err := wf.Start(ctx, &RetryTestParams{Value: "test"}, workflow.WithRetryStrategy(workflow.RetryStrategy{
-		MaxAttempts: 5,
-		BaseDelay:   1 * time.Second,
-		Factor:      2.0,
-		MaxDelay:    1 * time.Minute,
-	}))
+	instanceID, err := wf.Start(
+		ctx,
+		&RetryTestParams{Value: "test"},
+		workflow.WithRetryStrategy(workflow.RetryStrategy{
+			MaxAttempts: 5,
+			BaseDelay:   1 * time.Second,
+			Factor:      2.0,
+			MaxDelay:    1 * time.Minute,
+		}),
+	)
 	require.NoError(t, err)
 
 	// Attempt 1: fails, schedules retry
@@ -96,18 +104,26 @@ func TestRetry_ExhaustsMaxAttempts(t *testing.T) {
 
 	var attempts atomic.Int32
 
-	wf := workflow.New(s.runner, "retry-exhaust", func(wctx *workflow.Context, params *RetryTestParams) (*RetryTestOutput, error) {
-		attempts.Add(1)
-		return nil, errors.New("permanent error")
-	})
+	wf := workflow.New(
+		s.runner,
+		"retry-exhaust",
+		func(wctx *workflow.Context, params *RetryTestParams) (*RetryTestOutput, error) {
+			attempts.Add(1)
+			return nil, errors.New("permanent error")
+		},
+	)
 
 	ctx := t.Context()
-	instanceID, err := wf.Start(ctx, &RetryTestParams{Value: "test"}, workflow.WithRetryStrategy(workflow.RetryStrategy{
-		MaxAttempts: 3,
-		BaseDelay:   1 * time.Second,
-		Factor:      1.0, // fixed delay
-		MaxDelay:    1 * time.Minute,
-	}))
+	instanceID, err := wf.Start(
+		ctx,
+		&RetryTestParams{Value: "test"},
+		workflow.WithRetryStrategy(workflow.RetryStrategy{
+			MaxAttempts: 3,
+			BaseDelay:   1 * time.Second,
+			Factor:      1.0, // fixed delay
+			MaxDelay:    1 * time.Minute,
+		}),
+	)
 	require.NoError(t, err)
 
 	// Attempt 1: fails, schedules retry (attempt 2)
@@ -141,10 +157,14 @@ func TestRetry_NoStrategyMeansNoRetry(t *testing.T) {
 
 	var attempts atomic.Int32
 
-	wf := workflow.New(s.runner, "retry-none", func(wctx *workflow.Context, params *RetryTestParams) (*RetryTestOutput, error) {
-		attempts.Add(1)
-		return nil, errors.New("boom")
-	})
+	wf := workflow.New(
+		s.runner,
+		"retry-none",
+		func(wctx *workflow.Context, params *RetryTestParams) (*RetryTestOutput, error) {
+			attempts.Add(1)
+			return nil, errors.New("boom")
+		},
+	)
 
 	ctx := t.Context()
 	// No WithRetryStrategy — should fail immediately
@@ -168,38 +188,46 @@ func TestRetry_PreservesCompletedSteps(t *testing.T) {
 
 	var step1Count, step2Count atomic.Int32
 
-	wf := workflow.New(s.runner, "retry-preserve-steps", func(wctx *workflow.Context, params *RetryTestParams) (*RetryTestOutput, error) {
-		// Step 1: always succeeds
-		val, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			step1Count.Add(1)
-			return "step1-done", nil
-		})
-		if err != nil {
-			return nil, err
-		}
-
-		// Step 2: fails on first attempt, succeeds on second
-		err = workflow.Step2(wctx, func(ctx context.Context) error {
-			n := step2Count.Add(1)
-			if n == 1 {
-				return errors.New("step2 transient failure")
+	wf := workflow.New(
+		s.runner,
+		"retry-preserve-steps",
+		func(wctx *workflow.Context, params *RetryTestParams) (*RetryTestOutput, error) {
+			// Step 1: always succeeds
+			val, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				step1Count.Add(1)
+				return "step1-done", nil
+			})
+			if err != nil {
+				return nil, err
 			}
-			return nil
-		})
-		if err != nil {
-			return nil, err
-		}
 
-		return &RetryTestOutput{Result: val + "-complete"}, nil
-	})
+			// Step 2: fails on first attempt, succeeds on second
+			err = workflow.Step2(wctx, func(ctx context.Context) error {
+				n := step2Count.Add(1)
+				if n == 1 {
+					return errors.New("step2 transient failure")
+				}
+				return nil
+			})
+			if err != nil {
+				return nil, err
+			}
+
+			return &RetryTestOutput{Result: val + "-complete"}, nil
+		},
+	)
 
 	ctx := t.Context()
-	instanceID, err := wf.Start(ctx, &RetryTestParams{Value: "test"}, workflow.WithRetryStrategy(workflow.RetryStrategy{
-		MaxAttempts: 3,
-		BaseDelay:   1 * time.Second,
-		Factor:      1.0,
-		MaxDelay:    1 * time.Minute,
-	}))
+	instanceID, err := wf.Start(
+		ctx,
+		&RetryTestParams{Value: "test"},
+		workflow.WithRetryStrategy(workflow.RetryStrategy{
+			MaxAttempts: 3,
+			BaseDelay:   1 * time.Second,
+			Factor:      1.0,
+			MaxDelay:    1 * time.Minute,
+		}),
+	)
 	require.NoError(t, err)
 
 	// Attempt 1: step 1 succeeds, step 2 fails, schedules retry
@@ -229,21 +257,29 @@ func TestRetry_SurvivesCrash(t *testing.T) {
 
 	var attempts atomic.Int32
 
-	wf1 := workflow.New(runner1, "crash-retry", func(wctx *workflow.Context, params *RetryTestParams) (*RetryTestOutput, error) {
-		n := attempts.Add(1)
-		if n < 2 {
-			return nil, errors.New("fail before crash")
-		}
-		return &RetryTestOutput{Result: "recovered"}, nil
-	})
+	wf1 := workflow.New(
+		runner1,
+		"crash-retry",
+		func(wctx *workflow.Context, params *RetryTestParams) (*RetryTestOutput, error) {
+			n := attempts.Add(1)
+			if n < 2 {
+				return nil, errors.New("fail before crash")
+			}
+			return &RetryTestOutput{Result: "recovered"}, nil
+		},
+	)
 
 	ctx := t.Context()
-	instanceID, err := wf1.Start(ctx, &RetryTestParams{Value: "test"}, workflow.WithRetryStrategy(workflow.RetryStrategy{
-		MaxAttempts: 5,
-		BaseDelay:   1 * time.Second,
-		Factor:      2.0,
-		MaxDelay:    1 * time.Minute,
-	}))
+	instanceID, err := wf1.Start(
+		ctx,
+		&RetryTestParams{Value: "test"},
+		workflow.WithRetryStrategy(workflow.RetryStrategy{
+			MaxAttempts: 5,
+			BaseDelay:   1 * time.Second,
+			Factor:      2.0,
+			MaxDelay:    1 * time.Minute,
+		}),
+	)
 	require.NoError(t, err)
 
 	// Attempt 1: fails, schedules retry
@@ -255,13 +291,17 @@ func TestRetry_SurvivesCrash(t *testing.T) {
 	runner2, err := workflow.NewSqliteRunner(db, workflow.WithNowFunc(clock.Now))
 	require.NoError(t, err)
 
-	wf2 := workflow.New(runner2, "crash-retry", func(wctx *workflow.Context, params *RetryTestParams) (*RetryTestOutput, error) {
-		n := attempts.Add(1)
-		if n < 2 {
-			return nil, errors.New("fail before crash")
-		}
-		return &RetryTestOutput{Result: "recovered"}, nil
-	})
+	wf2 := workflow.New(
+		runner2,
+		"crash-retry",
+		func(wctx *workflow.Context, params *RetryTestParams) (*RetryTestOutput, error) {
+			n := attempts.Add(1)
+			if n < 2 {
+				return nil, errors.New("fail before crash")
+			}
+			return &RetryTestOutput{Result: "recovered"}, nil
+		},
+	)
 
 	// Attempt 2: the retry strategy was recovered from the event log, workflow succeeds
 	output, err := wf2.Run(ctx, instanceID)
@@ -274,21 +314,29 @@ func TestRetry_ExponentialBackoff(t *testing.T) {
 
 	var attempts atomic.Int32
 
-	wf := workflow.New(s.runner, "retry-backoff", func(wctx *workflow.Context, params *RetryTestParams) (*RetryTestOutput, error) {
-		n := attempts.Add(1)
-		if n < 5 {
-			return nil, errors.New("still failing")
-		}
-		return &RetryTestOutput{Result: "done"}, nil
-	})
+	wf := workflow.New(
+		s.runner,
+		"retry-backoff",
+		func(wctx *workflow.Context, params *RetryTestParams) (*RetryTestOutput, error) {
+			n := attempts.Add(1)
+			if n < 5 {
+				return nil, errors.New("still failing")
+			}
+			return &RetryTestOutput{Result: "done"}, nil
+		},
+	)
 
 	ctx := t.Context()
-	instanceID, err := wf.Start(ctx, &RetryTestParams{}, workflow.WithRetryStrategy(workflow.RetryStrategy{
-		MaxAttempts: 10,
-		BaseDelay:   1 * time.Second,
-		Factor:      2.0,
-		MaxDelay:    30 * time.Second,
-	}))
+	instanceID, err := wf.Start(
+		ctx,
+		&RetryTestParams{},
+		workflow.WithRetryStrategy(workflow.RetryStrategy{
+			MaxAttempts: 10,
+			BaseDelay:   1 * time.Second,
+			Factor:      2.0,
+			MaxDelay:    30 * time.Second,
+		}),
+	)
 	require.NoError(t, err)
 
 	// Attempt 1 → fail → delay = 1s
@@ -331,21 +379,29 @@ func TestRetry_WorkerDrivesRetries(t *testing.T) {
 
 	var attempts atomic.Int32
 
-	wf := workflow.New(runner, "worker-retry", func(wctx *workflow.Context, params *RetryTestParams) (*RetryTestOutput, error) {
-		n := attempts.Add(1)
-		if n < 3 {
-			return nil, errors.New("transient")
-		}
-		return &RetryTestOutput{Result: "worker-retried"}, nil
-	})
+	wf := workflow.New(
+		runner,
+		"worker-retry",
+		func(wctx *workflow.Context, params *RetryTestParams) (*RetryTestOutput, error) {
+			n := attempts.Add(1)
+			if n < 3 {
+				return nil, errors.New("transient")
+			}
+			return &RetryTestOutput{Result: "worker-retried"}, nil
+		},
+	)
 
 	ctx := t.Context()
-	instanceID, err := wf.Start(ctx, &RetryTestParams{Value: "test"}, workflow.WithRetryStrategy(workflow.RetryStrategy{
-		MaxAttempts: 5,
-		BaseDelay:   100 * time.Millisecond, // small delays for testing
-		Factor:      1.0,
-		MaxDelay:    1 * time.Second,
-	}))
+	instanceID, err := wf.Start(
+		ctx,
+		&RetryTestParams{Value: "test"},
+		workflow.WithRetryStrategy(workflow.RetryStrategy{
+			MaxAttempts: 5,
+			BaseDelay:   100 * time.Millisecond, // small delays for testing
+			Factor:      1.0,
+			MaxDelay:    1 * time.Second,
+		}),
+	)
 	require.NoError(t, err)
 
 	workerCtx, cancel := context.WithCancel(ctx)
@@ -380,40 +436,48 @@ func TestRetry_WithSleep(t *testing.T) {
 
 	var failingStepCount atomic.Int32
 
-	wf := workflow.New(s.runner, "retry-with-sleep", func(wctx *workflow.Context, params *RetryTestParams) (*RetryTestOutput, error) {
-		_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			return "before-sleep", nil
-		})
-		if err != nil {
-			return nil, err
-		}
-
-		if err := workflow.Sleep(wctx, 1*time.Hour); err != nil {
-			return nil, err
-		}
-
-		// This step fails on first attempt after sleep
-		result, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			n := failingStepCount.Add(1)
-			if n == 1 {
-				return "", errors.New("post-sleep failure")
+	wf := workflow.New(
+		s.runner,
+		"retry-with-sleep",
+		func(wctx *workflow.Context, params *RetryTestParams) (*RetryTestOutput, error) {
+			_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				return "before-sleep", nil
+			})
+			if err != nil {
+				return nil, err
 			}
-			return "after-sleep-retry", nil
-		})
-		if err != nil {
-			return nil, err
-		}
 
-		return &RetryTestOutput{Result: result}, nil
-	})
+			if err := workflow.Sleep(wctx, 1*time.Hour); err != nil {
+				return nil, err
+			}
+
+			// This step fails on first attempt after sleep
+			result, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				n := failingStepCount.Add(1)
+				if n == 1 {
+					return "", errors.New("post-sleep failure")
+				}
+				return "after-sleep-retry", nil
+			})
+			if err != nil {
+				return nil, err
+			}
+
+			return &RetryTestOutput{Result: result}, nil
+		},
+	)
 
 	ctx := t.Context()
-	instanceID, err := wf.Start(ctx, &RetryTestParams{}, workflow.WithRetryStrategy(workflow.RetryStrategy{
-		MaxAttempts: 3,
-		BaseDelay:   1 * time.Second,
-		Factor:      1.0,
-		MaxDelay:    1 * time.Minute,
-	}))
+	instanceID, err := wf.Start(
+		ctx,
+		&RetryTestParams{},
+		workflow.WithRetryStrategy(workflow.RetryStrategy{
+			MaxAttempts: 3,
+			BaseDelay:   1 * time.Second,
+			Factor:      1.0,
+			MaxDelay:    1 * time.Minute,
+		}),
+	)
 	require.NoError(t, err)
 
 	// Run 1: step 1 succeeds, hits sleep
@@ -442,21 +506,29 @@ func TestRetry_MaxDelayClamps(t *testing.T) {
 
 	var attempts atomic.Int32
 
-	wf := workflow.New(s.runner, "retry-clamp", func(wctx *workflow.Context, params *RetryTestParams) (*RetryTestOutput, error) {
-		n := attempts.Add(1)
-		if n < 6 {
-			return nil, errors.New("failing")
-		}
-		return &RetryTestOutput{Result: "clamped"}, nil
-	})
+	wf := workflow.New(
+		s.runner,
+		"retry-clamp",
+		func(wctx *workflow.Context, params *RetryTestParams) (*RetryTestOutput, error) {
+			n := attempts.Add(1)
+			if n < 6 {
+				return nil, errors.New("failing")
+			}
+			return &RetryTestOutput{Result: "clamped"}, nil
+		},
+	)
 
 	ctx := t.Context()
-	instanceID, err := wf.Start(ctx, &RetryTestParams{}, workflow.WithRetryStrategy(workflow.RetryStrategy{
-		MaxAttempts: 10,
-		BaseDelay:   1 * time.Second,
-		Factor:      10.0,        // aggressive factor
-		MaxDelay:    5 * time.Second, // but clamped to 5s
-	}))
+	instanceID, err := wf.Start(
+		ctx,
+		&RetryTestParams{},
+		workflow.WithRetryStrategy(workflow.RetryStrategy{
+			MaxAttempts: 10,
+			BaseDelay:   1 * time.Second,
+			Factor:      10.0,            // aggressive factor
+			MaxDelay:    5 * time.Second, // but clamped to 5s
+		}),
+	)
 	require.NoError(t, err)
 
 	for range 5 {
@@ -475,7 +547,7 @@ func TestRetry_DefaultStrategy(t *testing.T) {
 	rs := workflow.DefaultRetryStrategy()
 	require.Equal(t, 5, rs.MaxAttempts)
 	require.Equal(t, 1*time.Second, rs.BaseDelay)
-	require.Equal(t, 2.0, rs.Factor)
+	require.InEpsilon(t, 2.0, rs.Factor, 0.01)
 	require.Equal(t, 5*time.Minute, rs.MaxDelay)
 }
 
@@ -488,35 +560,51 @@ func TestRetry_MultipleWorkflowsDifferentStrategies(t *testing.T) {
 		Val string `json:"val"`
 	}
 
-	wfA := workflow.New(s.runner, "retry-a", func(wctx *workflow.Context, params *RetryTestParams) (*Out, error) {
-		n := attemptsA.Add(1)
-		if n < 2 {
-			return nil, errors.New("a fails once")
-		}
-		return &Out{Val: "a-ok"}, nil
-	})
+	wfA := workflow.New(
+		s.runner,
+		"retry-a",
+		func(wctx *workflow.Context, params *RetryTestParams) (*Out, error) {
+			n := attemptsA.Add(1)
+			if n < 2 {
+				return nil, errors.New("a fails once")
+			}
+			return &Out{Val: "a-ok"}, nil
+		},
+	)
 
-	wfB := workflow.New(s.runner, "retry-b", func(wctx *workflow.Context, params *RetryTestParams) (*Out, error) {
-		attemptsB.Add(1)
-		return nil, errors.New("b always fails")
-	})
+	wfB := workflow.New(
+		s.runner,
+		"retry-b",
+		func(wctx *workflow.Context, params *RetryTestParams) (*Out, error) {
+			attemptsB.Add(1)
+			return nil, errors.New("b always fails")
+		},
+	)
 
 	ctx := t.Context()
 
-	idA, err := wfA.Start(ctx, &RetryTestParams{}, workflow.WithRetryStrategy(workflow.RetryStrategy{
-		MaxAttempts: 5,
-		BaseDelay:   1 * time.Second,
-		Factor:      1.0,
-		MaxDelay:    1 * time.Minute,
-	}))
+	idA, err := wfA.Start(
+		ctx,
+		&RetryTestParams{},
+		workflow.WithRetryStrategy(workflow.RetryStrategy{
+			MaxAttempts: 5,
+			BaseDelay:   1 * time.Second,
+			Factor:      1.0,
+			MaxDelay:    1 * time.Minute,
+		}),
+	)
 	require.NoError(t, err)
 
-	idB, err := wfB.Start(ctx, &RetryTestParams{}, workflow.WithRetryStrategy(workflow.RetryStrategy{
-		MaxAttempts: 2,
-		BaseDelay:   1 * time.Second,
-		Factor:      1.0,
-		MaxDelay:    1 * time.Minute,
-	}))
+	idB, err := wfB.Start(
+		ctx,
+		&RetryTestParams{},
+		workflow.WithRetryStrategy(workflow.RetryStrategy{
+			MaxAttempts: 2,
+			BaseDelay:   1 * time.Second,
+			Factor:      1.0,
+			MaxDelay:    1 * time.Minute,
+		}),
+	)
 	require.NoError(t, err)
 
 	// A: attempt 1 fails → retry
@@ -551,27 +639,35 @@ func TestRetry_StepFailureRecordedButStepReExecutesOnRetry(t *testing.T) {
 
 	var stepExecCount atomic.Int32
 
-	wf := workflow.New(s.runner, "retry-step-reexec", func(wctx *workflow.Context, params *RetryTestParams) (*RetryTestOutput, error) {
-		result, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			n := stepExecCount.Add(1)
-			if n == 1 {
-				return "", errors.New("step fails first time")
+	wf := workflow.New(
+		s.runner,
+		"retry-step-reexec",
+		func(wctx *workflow.Context, params *RetryTestParams) (*RetryTestOutput, error) {
+			result, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				n := stepExecCount.Add(1)
+				if n == 1 {
+					return "", errors.New("step fails first time")
+				}
+				return fmt.Sprintf("success-attempt-%d", n), nil
+			})
+			if err != nil {
+				return nil, err
 			}
-			return fmt.Sprintf("success-attempt-%d", n), nil
-		})
-		if err != nil {
-			return nil, err
-		}
-		return &RetryTestOutput{Result: result}, nil
-	})
+			return &RetryTestOutput{Result: result}, nil
+		},
+	)
 
 	ctx := t.Context()
-	instanceID, err := wf.Start(ctx, &RetryTestParams{}, workflow.WithRetryStrategy(workflow.RetryStrategy{
-		MaxAttempts: 3,
-		BaseDelay:   1 * time.Second,
-		Factor:      1.0,
-		MaxDelay:    1 * time.Minute,
-	}))
+	instanceID, err := wf.Start(
+		ctx,
+		&RetryTestParams{},
+		workflow.WithRetryStrategy(workflow.RetryStrategy{
+			MaxAttempts: 3,
+			BaseDelay:   1 * time.Second,
+			Factor:      1.0,
+			MaxDelay:    1 * time.Minute,
+		}),
+	)
 	require.NoError(t, err)
 
 	// Attempt 1: step fails

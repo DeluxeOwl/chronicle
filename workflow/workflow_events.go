@@ -11,7 +11,7 @@ import (
 
 // ErrWorkflowWaiting is returned by Run when the workflow is waiting for an event.
 // The caller should not treat this as a failure — the workflow will be automatically
-// re-triggered when the event is emitted (or when the timeout expires).
+// re-triggered when the event is published (or when the timeout expires).
 var ErrWorkflowWaiting = errors.New("workflow is waiting for event")
 
 // isWaitingError checks if an error is ErrWorkflowWaiting.
@@ -23,16 +23,16 @@ func isWaitingError(err error) bool {
 // before the specified timeout.
 var ErrEventTimeout = errors.New("event wait timed out")
 
-// awaitEventResult is persisted as a step result for an AwaitEvent step.
+// waitForEventResult is persisted as a step result for an WaitForEvent step.
 // It stores the event name being waited for and, once the event arrives,
 // the payload.
-type awaitEventResult struct {
+type waitForEventResult struct {
 	EventName string          `json:"eventName"`
-	Payload   json.RawMessage `json:"payload,omitempty"`
-	Resolved  bool            `json:"resolved"`
-	TimedOut  bool            `json:"timedOut,omitempty"`
-	Timeout   time.Duration   `json:"timeout,omitempty"`
-	Deadline  time.Time       `json:"deadline,omitempty"`
+	Payload   json.RawMessage `json:"payload,omitempty" exhaustruct:"optional"`
+	Resolved  bool            `json:"resolved" exhaustruct:"optional"`
+	TimedOut  bool            `json:"timedOut,omitempty" exhaustruct:"optional"`
+	Timeout   time.Duration   `json:"timeout,omitempty" exhaustruct:"optional"`
+	Deadline  time.Time       `json:"deadline,omitempty" exhaustruct:"optional"`
 }
 
 // workflowWaiting records that a workflow is waiting for an external event.
@@ -56,20 +56,20 @@ type workflowEventReceived struct {
 func (*workflowEventReceived) EventName() string { return "workflow/event_received" }
 func (*workflowEventReceived) isWorkflowEvent()  {}
 
-// AwaitEventOptions configures an AwaitEvent call.
-type AwaitEventOptions struct {
+// WaitForEventOptions configures an WaitForEvent call.
+type WaitForEventOptions struct {
 	// Timeout is the maximum time to wait for the event.
 	// If zero, the workflow waits indefinitely.
 	Timeout time.Duration
 }
 
-// AwaitEvent suspends the workflow until a named event is emitted via EmitEvent.
+// WaitForEvent suspends the workflow until a named event is published via PublishEvent.
 //
 // Like Sleep, this is a durable checkpoint. The wait state is recorded in the event log.
 // If the process restarts, calling Run again on this instance will check whether the
-// event has been emitted and either continue waiting or resume execution.
+// event has been published and either continue waiting or resume execution.
 //
-// When a workflow hits an AwaitEvent that hasn't been resolved yet, Run returns
+// When a workflow hits an WaitForEvent that hasn't been resolved yet, Run returns
 // ErrWorkflowWaiting.
 //
 // Example:
@@ -77,8 +77,10 @@ type AwaitEventOptions struct {
 //	type ShipmentEvent struct {
 //	    TrackingNumber string `json:"tracking_number"`
 //	}
-//	shipment, err := workflow.AwaitEvent[ShipmentEvent](wctx, "order.shipped:order-42")
-func AwaitEvent[T any](wctx *Context, eventName string, opts ...AwaitEventOptions) (T, error) {
+//	shipment, err := workflow.WaitForEvent[ShipmentEvent](wctx, "order.shipped:order-42")
+//
+//nolint:gocognit,funlen
+func WaitForEvent[T any](wctx *Context, eventName string, opts ...WaitForEventOptions) (T, error) {
 	var zero T
 	runner := wctx.runner
 
@@ -100,8 +102,9 @@ func AwaitEvent[T any](wctx *Context, eventName string, opts ...AwaitEventOption
 	}
 
 	// Check if this step was already recorded (replay)
+	//nolint:nestif // This is readable
 	if cachedResult, ok := instance.stepResults[stepIndex]; ok {
-		var ar awaitEventResult
+		var ar waitForEventResult
 		if err := json.Unmarshal(cachedResult, &ar); err != nil {
 			return zero, fmt.Errorf("unmarshal cached await event result: %w", err)
 		}
@@ -122,7 +125,7 @@ func AwaitEvent[T any](wctx *Context, eventName string, opts ...AwaitEventOption
 		// Check timeout deadline
 		if !ar.Deadline.IsZero() && !now.Before(ar.Deadline) {
 			// Timeout has expired — record as timed out
-			timedOutResult := awaitEventResult{
+			timedOutResult := waitForEventResult{
 				EventName: ar.EventName,
 				TimedOut:  true,
 				Timeout:   ar.Timeout,
@@ -155,7 +158,7 @@ func AwaitEvent[T any](wctx *Context, eventName string, opts ...AwaitEventOption
 		payload, found := runner.waitStore.GetEvent(wctx.instanceID, eventName)
 		if found {
 			// Event has arrived! Update the step result
-			resolvedResult := awaitEventResult{
+			resolvedResult := waitForEventResult{
 				EventName: eventName,
 				Payload:   payload,
 				Resolved:  true,
@@ -197,7 +200,7 @@ func AwaitEvent[T any](wctx *Context, eventName string, opts ...AwaitEventOption
 		}
 
 		// Still waiting
-		runner.logger.Debug(
+		runner.logger.DebugContext(wctx.ctx,
 			"await event replay, still waiting",
 			"instanceID", wctx.instanceID,
 			"stepIndex", stepIndex,
@@ -212,7 +215,7 @@ func AwaitEvent[T any](wctx *Context, eventName string, opts ...AwaitEventOption
 		deadline = now.Add(timeout)
 	}
 
-	ar := awaitEventResult{
+	ar := waitForEventResult{
 		EventName: eventName,
 		Resolved:  false,
 		Timeout:   timeout,
@@ -258,7 +261,7 @@ func AwaitEvent[T any](wctx *Context, eventName string, opts ...AwaitEventOption
 		}
 	}
 
-	runner.logger.Info(
+	runner.logger.InfoContext(wctx.ctx,
 		"workflow waiting for event",
 		"instanceID", wctx.instanceID,
 		"stepIndex", stepIndex,
@@ -269,23 +272,23 @@ func AwaitEvent[T any](wctx *Context, eventName string, opts ...AwaitEventOption
 	return zero, ErrWorkflowWaiting
 }
 
-// EmitEvent emits a named event that can wake up workflows waiting via AwaitEvent.
+// PublishEvent publishes a named event that can wake up workflows waiting via WaitForEvent.
 // The payload is stored and delivered to any workflow waiting for this event name.
 //
-// Events are idempotent: the first emit for a given name wins, subsequent emits are ignored.
+// Events are idempotent: the first publish for a given name wins, subsequent publishes are ignored.
 //
 // Example:
 //
-//	err := workflow.EmitEvent(ctx, runner, "order.shipped:order-42",
+//	err := workflow.PublishEvent(ctx, runner, "order.shipped:order-42",
 //	    map[string]any{"tracking_number": "XYZ"})
-func EmitEvent(ctx context.Context, runner *Runner, eventName string, payload any) error {
+func PublishEvent(ctx context.Context, runner *Runner, eventName string, payload any) error {
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal event payload: %w", err)
 	}
 
 	// Store the event and get any waiting workflows
-	waiters := runner.waitStore.Emit(eventName, payloadJSON)
+	waiters := runner.waitStore.Publish(eventName, payloadJSON)
 
 	// Enqueue wake-up tasks for all waiting workflows
 	for _, w := range waiters {
@@ -293,7 +296,7 @@ func EmitEvent(ctx context.Context, runner *Runner, eventName string, payload an
 			InstanceID:   w.InstanceID,
 			WorkflowName: w.WorkflowName,
 		}); err != nil {
-			runner.logger.Error(
+			runner.logger.ErrorContext(ctx,
 				"failed to enqueue event wake task",
 				"instanceID", w.InstanceID,
 				"eventName", eventName,
@@ -303,8 +306,8 @@ func EmitEvent(ctx context.Context, runner *Runner, eventName string, payload an
 		}
 	}
 
-	runner.logger.Info(
-		"event emitted",
+	runner.logger.InfoContext(ctx,
+		"event published",
 		"eventName", eventName,
 		"waitersWoken", len(waiters),
 	)
@@ -321,17 +324,17 @@ type waitingWorkflow struct {
 // eventWaitStore is the abstraction for managing event waiting state.
 // The in-memory implementation (waitStore) is used for single-process mode;
 // the persistent implementation (persistentWaitStore) is used with SyncQueue
-// for distributed systems where EmitEvent from one process must be able to
+// for distributed systems where PublishEvent from one process must be able to
 // wake workflows running on another.
 type eventWaitStore interface {
 	// Register records that a workflow is waiting for an event.
-	// For the in-memory store, this also checks for pre-emitted events.
+	// For the in-memory store, this also checks for pre-published events.
 	// For the persistent store, this is a no-op (handled by SyncQueue.Process).
 	Register(instanceID InstanceID, eventName string, workflowName string)
 
-	// Emit stores an event payload and returns the list of workflows that were waiting.
-	// First-write-wins: if the event has already been emitted, returns nil.
-	Emit(eventName string, payload json.RawMessage) []waitingWorkflow
+	// Publish stores an event payload and returns the list of workflows that were waiting.
+	// First-write-wins: if the event has already been published, returns nil.
+	Publish(eventName string, payload json.RawMessage) []waitingWorkflow
 
 	// GetEvent checks if an event has been received for a specific workflow instance.
 	GetEvent(instanceID InstanceID, eventName string) (json.RawMessage, bool)
@@ -346,7 +349,7 @@ type waitStore struct {
 	waiters map[string][]waitingWorkflow
 
 	// eventName → payload (first-write-wins)
-	emitted map[string]json.RawMessage
+	published map[string]json.RawMessage
 
 	// instanceID:eventName → payload (for replay lookups)
 	received map[string]json.RawMessage
@@ -354,22 +357,23 @@ type waitStore struct {
 
 func newWaitStore() *waitStore {
 	return &waitStore{
-		waiters:  make(map[string][]waitingWorkflow),
-		emitted:  make(map[string]json.RawMessage),
-		received: make(map[string]json.RawMessage),
+		waiters:   make(map[string][]waitingWorkflow),
+		published: make(map[string]json.RawMessage),
+		received:  make(map[string]json.RawMessage),
+		mu:        sync.Mutex{},
 	}
 }
 
 // Register records that a workflow is waiting for an event.
-// If the event has already been emitted, the payload is stored for the
+// If the event has already been published, the payload is stored for the
 // workflow's instance but no wake-up is triggered here — the caller
 // should check GetEvent on the next Run.
 func (ws *waitStore) Register(instanceID InstanceID, eventName string, workflowName string) {
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
 
-	// If event already emitted, store for this instance
-	if payload, ok := ws.emitted[eventName]; ok {
+	// If event already published, store for this instance
+	if payload, ok := ws.published[eventName]; ok {
 		key := string(instanceID) + ":" + eventName
 		ws.received[key] = payload
 		return
@@ -381,18 +385,18 @@ func (ws *waitStore) Register(instanceID InstanceID, eventName string, workflowN
 	})
 }
 
-// Emit stores an event payload and returns the list of workflows that were waiting.
-// First-write-wins: if the event has already been emitted, returns nil.
-func (ws *waitStore) Emit(eventName string, payload json.RawMessage) []waitingWorkflow {
+// Publish stores an event payload and returns the list of workflows that were waiting.
+// First-write-wins: if the event has already been published, returns nil.
+func (ws *waitStore) Publish(eventName string, payload json.RawMessage) []waitingWorkflow {
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
 
 	// First-write-wins
-	if _, ok := ws.emitted[eventName]; ok {
+	if _, ok := ws.published[eventName]; ok {
 		return nil
 	}
 
-	ws.emitted[eventName] = payload
+	ws.published[eventName] = payload
 
 	// Move all waiters to received
 	waiters := ws.waiters[eventName]

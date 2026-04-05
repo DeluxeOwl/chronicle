@@ -13,7 +13,7 @@ type controllableClock struct {
 }
 
 func newClock(t time.Time) *controllableClock {
-	return &controllableClock{now: t}
+	return &controllableClock{now: t, mu: sync.Mutex{}}
 }
 
 func (c *controllableClock) Now() time.Time {

@@ -96,7 +96,8 @@ func SetupEventLogs(t *testing.T) ([]EventLog, func()) {
 
 			cleanupPostgres()
 
-			nats.Drain()
+			err = nats.Drain()
+			require.NoError(t, err)
 		}
 }
 

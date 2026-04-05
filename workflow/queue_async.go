@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -108,12 +109,12 @@ func NewAsyncQueue(db *sql.DB, opts ...AsyncQueueOption) (*AsyncQueue, error) {
 	}
 
 	if _, err := db.Exec(`
-		CREATE TABLE IF NOT EXISTS workflow_emitted_events (
+		CREATE TABLE IF NOT EXISTS workflow_published_events (
 			event_name TEXT PRIMARY KEY,
 			payload TEXT NOT NULL
 		)
 	`); err != nil {
-		return nil, fmt.Errorf("create emitted_events table: %w", err)
+		return nil, fmt.Errorf("create published_events table: %w", err)
 	}
 
 	return q, nil
@@ -141,6 +142,8 @@ func (q *AsyncQueue) MatchesEvent(eventName string) bool {
 
 // Handle processes a single global event record and updates the ready_tasks
 // table accordingly. This is called by the AsyncProjectionRunner.
+//
+//nolint:gocognit,funlen
 func (q *AsyncQueue) Handle(ctx context.Context, rec *event.GlobalRecord) error {
 	instanceID := InstanceID(rec.LogID())
 
@@ -195,8 +198,8 @@ func (q *AsyncQueue) Handle(ctx context.Context, rec *event.GlobalRecord) error 
 		if err := q.insertWaitingEvent(ctx, instanceID, workflowName, e.AwaitingEvent, e.StepIndex, e.Deadline); err != nil {
 			return err
 		}
-		// Check if event was already emitted (pre-emit case).
-		if q.isEventEmitted(e.AwaitingEvent) {
+		// Check if event was already published (pre-publish case).
+		if q.isEventPublished(e.AwaitingEvent) {
 			return q.upsertTask(ctx, instanceID, workflowName, q.nowFunc())
 		}
 		if !e.Deadline.IsZero() {
@@ -267,7 +270,7 @@ func (q *AsyncQueue) Poll(ctx context.Context) (*QueuedTask, error) {
 	if err != nil {
 		return nil, fmt.Errorf("async queue poll begin tx: %w", err)
 	}
-	defer tx.Rollback() //nolint:errcheck
+	defer tx.Rollback() //nolint:errcheck // This is fine.
 
 	var instanceID, workflowName string
 	var runAfterNs int64
@@ -280,9 +283,12 @@ func (q *AsyncQueue) Poll(ctx context.Context) (*QueuedTask, error) {
 		ORDER BY run_after_ns
 		LIMIT 1
 	`, nowNs, nowNs).Scan(&instanceID, &workflowName, &runAfterNs)
-	if err == sql.ErrNoRows {
+
+	if errors.Is(err, sql.ErrNoRows) {
+		//nolint:nilnil // This is fine.
 		return nil, nil
 	}
+
 	if err != nil {
 		return nil, fmt.Errorf("async queue poll select: %w", err)
 	}
@@ -301,7 +307,9 @@ func (q *AsyncQueue) Poll(ctx context.Context) (*QueuedTask, error) {
 	if err != nil {
 		return nil, fmt.Errorf("async queue poll rows affected: %w", err)
 	}
+
 	if affected == 0 {
+		//nolint:nilnil // This is fine.
 		return nil, nil
 	}
 
@@ -344,7 +352,11 @@ func (q *AsyncQueue) Fail(_ context.Context, instanceID InstanceID) error {
 }
 
 // ExtendLease extends the claim timeout for a running task.
-func (q *AsyncQueue) ExtendLease(_ context.Context, instanceID InstanceID, lease time.Duration) error {
+func (q *AsyncQueue) ExtendLease(
+	_ context.Context,
+	instanceID InstanceID,
+	lease time.Duration,
+) error {
 	newDeadline := q.nowFunc().Add(lease).UnixNano()
 	_, err := q.db.Exec(`
 		UPDATE workflow_ready_tasks
@@ -367,7 +379,12 @@ func (q *AsyncQueue) Len() int {
 // --- Internal helpers ---
 
 // upsertTask inserts or replaces a task in the ready_tasks table.
-func (q *AsyncQueue) upsertTask(_ context.Context, instanceID InstanceID, workflowName string, runAfter time.Time) error {
+func (q *AsyncQueue) upsertTask(
+	_ context.Context,
+	instanceID InstanceID,
+	workflowName string,
+	runAfter time.Time,
+) error {
 	runAfterNs := int64(0)
 	if !runAfter.IsZero() {
 		runAfterNs = runAfter.UnixNano()
@@ -430,11 +447,11 @@ func (q *AsyncQueue) insertWaitingEvent(
 	return nil
 }
 
-// isEventEmitted checks if an event has already been emitted.
-func (q *AsyncQueue) isEventEmitted(eventName string) bool {
+// isEventPublished checks if an event has already been published.
+func (q *AsyncQueue) isEventPublished(eventName string) bool {
 	var count int
 	err := q.db.QueryRow(`
-		SELECT COUNT(*) FROM workflow_emitted_events WHERE event_name = ?
+		SELECT COUNT(*) FROM workflow_published_events WHERE event_name = ?
 	`, eventName).Scan(&count)
 	return err == nil && count > 0
 }
@@ -456,6 +473,6 @@ func (q *AsyncQueue) deleteAllWaitingEvents(instanceID InstanceID) {
 
 // Compile-time interface checks.
 var (
-	_ TaskQueue            = (*AsyncQueue)(nil)
+	_ TaskQueue             = (*AsyncQueue)(nil)
 	_ event.AsyncProjection = (*AsyncQueue)(nil)
 )

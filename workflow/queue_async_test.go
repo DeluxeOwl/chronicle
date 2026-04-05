@@ -38,7 +38,10 @@ func newMemoryCheckpointer() *memoryCheckpointer {
 	return &memoryCheckpointer{versions: make(map[string]version.Version)}
 }
 
-func (m *memoryCheckpointer) GetCheckpoint(_ context.Context, projectionName string) (version.Version, error) {
+func (m *memoryCheckpointer) GetCheckpoint(
+	_ context.Context,
+	projectionName string,
+) (version.Version, error) {
 	v, ok := m.versions[projectionName]
 	if !ok {
 		return version.Zero, nil
@@ -46,7 +49,11 @@ func (m *memoryCheckpointer) GetCheckpoint(_ context.Context, projectionName str
 	return v, nil
 }
 
-func (m *memoryCheckpointer) SaveCheckpoint(_ context.Context, projectionName string, v version.Version) error {
+func (m *memoryCheckpointer) SaveCheckpoint(
+	_ context.Context,
+	projectionName string,
+	v version.Version,
+) error {
 	m.versions[projectionName] = v
 	return nil
 }
@@ -72,7 +79,7 @@ func setupAsyncRunner(t *testing.T, opts ...workflow.RunnerOption) (*workflow.Ru
 	require.NoError(t, err)
 
 	// Start the async projection runner in the background.
-	projCtx, projCancel := context.WithCancel(context.Background())
+	projCtx, projCancel := context.WithCancel(t.Context())
 	checkpointer := newMemoryCheckpointer()
 	projRunner, err := event.NewAsyncProjectionRunner(
 		memLog,
@@ -98,15 +105,19 @@ func TestAsyncQueue_SimpleWorkflowCompletion(t *testing.T) {
 	runner, cleanup := setupAsyncRunner(t)
 	defer cleanup()
 
-	wf := workflow.New(runner, "simple-async", func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
-		val, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			return "hello-" + params.Value, nil
-		})
-		if err != nil {
-			return nil, err
-		}
-		return &WorkerTestOutput{Result: val}, nil
-	})
+	wf := workflow.New(
+		runner,
+		"simple-async",
+		func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
+			val, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				return "hello-" + params.Value, nil
+			})
+			if err != nil {
+				return nil, err
+			}
+			return &WorkerTestOutput{Result: val}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &WorkerTestParams{Value: "async"})
@@ -138,26 +149,30 @@ func TestAsyncQueue_SleepAndWakeUp(t *testing.T) {
 	runner, cleanup := setupAsyncRunner(t, workflow.WithNowFunc(clock.Now))
 	defer cleanup()
 
-	wf := workflow.New(runner, "sleep-async", func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
-		_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			return "before", nil
-		})
-		if err != nil {
-			return nil, err
-		}
+	wf := workflow.New(
+		runner,
+		"sleep-async",
+		func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
+			_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				return "before", nil
+			})
+			if err != nil {
+				return nil, err
+			}
 
-		if err := workflow.Sleep(wctx, 2*time.Hour); err != nil {
-			return nil, err
-		}
+			if err := workflow.Sleep(wctx, 2*time.Hour); err != nil {
+				return nil, err
+			}
 
-		result, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			return "after-sleep", nil
-		})
-		if err != nil {
-			return nil, err
-		}
-		return &WorkerTestOutput{Result: result}, nil
-	})
+			result, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				return "after-sleep", nil
+			})
+			if err != nil {
+				return nil, err
+			}
+			return &WorkerTestOutput{Result: result}, nil
+		},
+	)
 
 	ctx := t.Context()
 	instanceID, err := wf.Start(ctx, &WorkerTestParams{Value: "test"})
@@ -198,27 +213,35 @@ func TestAsyncQueue_RetryOnFailure(t *testing.T) {
 
 	var attempts atomic.Int32
 
-	wf := workflow.New(runner, "retry-async", func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
-		_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			n := attempts.Add(1)
-			if n < 3 {
-				return "", errors.New("transient error")
+	wf := workflow.New(
+		runner,
+		"retry-async",
+		func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
+			_, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				n := attempts.Add(1)
+				if n < 3 {
+					return "", errors.New("transient error")
+				}
+				return "success", nil
+			})
+			if err != nil {
+				return nil, err
 			}
-			return "success", nil
-		})
-		if err != nil {
-			return nil, err
-		}
-		return &WorkerTestOutput{Result: "done"}, nil
-	})
+			return &WorkerTestOutput{Result: "done"}, nil
+		},
+	)
 
 	ctx := t.Context()
-	instanceID, err := wf.Start(ctx, &WorkerTestParams{Value: "retry"}, workflow.WithRetryStrategy(workflow.RetryStrategy{
-		MaxAttempts: 5,
-		BaseDelay:   1 * time.Millisecond, // tiny delays for testing
-		Factor:      1.0,
-		MaxDelay:    10 * time.Millisecond,
-	}))
+	instanceID, err := wf.Start(
+		ctx,
+		&WorkerTestParams{Value: "retry"},
+		workflow.WithRetryStrategy(workflow.RetryStrategy{
+			MaxAttempts: 5,
+			BaseDelay:   1 * time.Millisecond, // tiny delays for testing
+			Factor:      1.0,
+			MaxDelay:    10 * time.Millisecond,
+		}),
+	)
 	require.NoError(t, err)
 
 	workerCtx, cancel := context.WithCancel(ctx)
@@ -247,15 +270,19 @@ func TestAsyncQueue_MultipleWorkflows(t *testing.T) {
 	runner, cleanup := setupAsyncRunner(t)
 	defer cleanup()
 
-	wf := workflow.New(runner, "multi-async", func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
-		val, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-			return "result-" + params.Value, nil
-		})
-		if err != nil {
-			return nil, err
-		}
-		return &WorkerTestOutput{Result: val}, nil
-	})
+	wf := workflow.New(
+		runner,
+		"multi-async",
+		func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
+			val, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				return "result-" + params.Value, nil
+			})
+			if err != nil {
+				return nil, err
+			}
+			return &WorkerTestOutput{Result: val}, nil
+		},
+	)
 
 	ctx := t.Context()
 	const n = 5
@@ -279,7 +306,6 @@ func TestAsyncQueue_MultipleWorkflows(t *testing.T) {
 
 	// All workflows should complete.
 	for _, id := range ids {
-		id := id
 		require.Eventually(t, func() bool {
 			result, err := wf.GetResult(ctx, id)
 			return err == nil && result != nil

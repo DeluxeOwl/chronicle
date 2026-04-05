@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -118,12 +119,12 @@ func NewSyncQueue(db *sql.DB, opts ...SyncQueueOption) (*SyncQueue, error) {
 	}
 
 	if _, err := db.Exec(`
-		CREATE TABLE IF NOT EXISTS workflow_emitted_events (
+		CREATE TABLE IF NOT EXISTS workflow_published_events (
 			event_name TEXT PRIMARY KEY,
 			payload TEXT NOT NULL
 		)
 	`); err != nil {
-		return nil, fmt.Errorf("create emitted_events table: %w", err)
+		return nil, fmt.Errorf("create published_events table: %w", err)
 	}
 
 	return q, nil
@@ -131,7 +132,7 @@ func NewSyncQueue(db *sql.DB, opts ...SyncQueueOption) (*SyncQueue, error) {
 
 // --- TaskQueue implementation ---
 
-// Enqueue inserts a task into the ready_tasks table. This is used by EmitEvent
+// Enqueue inserts a task into the ready_tasks table. This is used by PublishEvent
 // (which operates outside the event-save transaction) and as a fallback for
 // backward compatibility. When used with a TransactionalRepository, the
 // Process method handles atomic task creation, so this is often a redundant
@@ -139,8 +140,8 @@ func NewSyncQueue(db *sql.DB, opts ...SyncQueueOption) (*SyncQueue, error) {
 //
 // Uses MIN(run_after_ns) on conflict to avoid overwriting a better (earlier)
 // run_after created atomically by Process. For example, when Process detects
-// a pre-emitted event and creates an immediate task, a subsequent Enqueue
-// from AwaitEvent with a deadline must not overwrite it.
+// a pre-published event and creates an immediate task, a subsequent Enqueue
+// from WaitForEvent with a deadline must not overwrite it.
 func (q *SyncQueue) Enqueue(_ context.Context, task QueuedTask) error {
 	runAfterNs := int64(0)
 	if !task.RunAfter.IsZero() {
@@ -174,7 +175,7 @@ func (q *SyncQueue) Poll(ctx context.Context) (*QueuedTask, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sync queue poll begin tx: %w", err)
 	}
-	defer tx.Rollback() //nolint:errcheck
+	defer tx.Rollback() //nolint:errcheck // This is fine
 
 	// Find the next ready, unclaimed task.
 	var instanceID, workflowName string
@@ -188,7 +189,8 @@ func (q *SyncQueue) Poll(ctx context.Context) (*QueuedTask, error) {
 		ORDER BY run_after_ns
 		LIMIT 1
 	`, nowNs, nowNs).Scan(&instanceID, &workflowName, &runAfterNs)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
+		//nolint:nilnil // not needed.
 		return nil, nil
 	}
 	if err != nil {
@@ -212,6 +214,7 @@ func (q *SyncQueue) Poll(ctx context.Context) (*QueuedTask, error) {
 	}
 	if affected == 0 {
 		// Another worker claimed it between our SELECT and UPDATE — retry next poll.
+		//nolint:nilnil // not needed.
 		return nil, nil
 	}
 
@@ -259,7 +262,11 @@ func (q *SyncQueue) Fail(_ context.Context, instanceID InstanceID) error {
 
 // ExtendLease extends the claim timeout for a running task, signaling that
 // the worker is still making progress on a long-running step.
-func (q *SyncQueue) ExtendLease(_ context.Context, instanceID InstanceID, lease time.Duration) error {
+func (q *SyncQueue) ExtendLease(
+	_ context.Context,
+	instanceID InstanceID,
+	lease time.Duration,
+) error {
 	newDeadline := q.nowFunc().Add(lease).UnixNano()
 	_, err := q.db.Exec(`
 		UPDATE workflow_ready_tasks
@@ -335,17 +342,17 @@ func (q *SyncQueue) processEvent(
 		if err := q.insertWaitingEventTx(ctx, tx, root.id, root.workflowName, e.AwaitingEvent, e.StepIndex, e.Deadline); err != nil {
 			return err
 		}
-		// Check if the event was already emitted (pre-emit case).
+		// Check if the event was already published (pre-publish case).
 		// If so, create an immediate task so the worker picks it up.
-		if q.isEventEmittedTx(tx, e.AwaitingEvent) {
+		if q.isEventPublishedTx(tx, e.AwaitingEvent) {
 			return q.upsertTaskTx(ctx, tx, root.id, root.workflowName, q.nowFunc())
 		}
 		if !e.Deadline.IsZero() {
 			// Timeout configured — schedule a wake-up at the deadline.
 			return q.upsertTaskTx(ctx, tx, root.id, root.workflowName, e.Deadline)
 		}
-		// No deadline and no pre-emitted event — the workflow is parked
-		// until EmitEvent creates a task.
+		// No deadline and no pre-published event — the workflow is parked
+		// until PublishEvent creates a task.
 		return nil
 
 	case *workflowEventReceived:
@@ -450,12 +457,12 @@ func (q *SyncQueue) insertWaitingEventTx(
 	return nil
 }
 
-// isEventEmittedTx checks if an event has already been emitted by querying
-// the workflow_emitted_events table within the current transaction.
-func (q *SyncQueue) isEventEmittedTx(tx *sql.Tx, eventName string) bool {
+// isEventPublishedTx checks if an event has already been published by querying
+// the workflow_published_events table within the current transaction.
+func (q *SyncQueue) isEventPublishedTx(tx *sql.Tx, eventName string) bool {
 	var count int
 	err := tx.QueryRow(`
-		SELECT COUNT(*) FROM workflow_emitted_events WHERE event_name = ?
+		SELECT COUNT(*) FROM workflow_published_events WHERE event_name = ?
 	`, eventName).Scan(&count)
 	return err == nil && count > 0
 }
@@ -495,6 +502,10 @@ func (q *SyncQueue) deleteAllWaitingEventsTx(
 
 // Compile-time interface checks.
 var (
-	_ TaskQueue = (*SyncQueue)(nil)
-	_ aggregate.TransactionalAggregateProcessor[*sql.Tx, InstanceID, WorkflowEvent, *WorkflowInstance] = (*SyncQueue)(nil)
+	_ TaskQueue = (*SyncQueue)(
+		nil,
+	)
+	_ aggregate.TransactionalAggregateProcessor[*sql.Tx, InstanceID, WorkflowEvent, *WorkflowInstance] = (*SyncQueue)(
+		nil,
+	)
 )
