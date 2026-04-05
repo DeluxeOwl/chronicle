@@ -332,3 +332,79 @@ For custom metadata (tenant, order ID, etc.), you'd need to either:
 3. Add a separate `workflowLabelled` event type
 
 None of this is shipped. Compare with Temporal, which has built-in search attributes, a visibility store, and `ListWorkflowExecutions` with SQL-like filtering out of the box.
+
+### 6. Does Poll claim tasks? What happens if the poller crashes right after Poll? Can tasks be lost?
+
+Each queue implementation handles this differently, and one of them **does lose tasks**.
+
+**`MemoryQueue`**: Poll **removes the task from the slice** and returns it. There is no claim/lease concept. If the process crashes after Poll but before the workflow finishes, the task is gone — it was removed from the in-memory slice, and there's nothing to recover it from. `Complete` and `Fail` are both no-ops (the comment says "Poll already removed the task"). So yes, **tasks are lost on crash with MemoryQueue**. This is expected — it's the testing/single-process queue.
+
+**`SyncQueue`**: Poll **claims the task in-place** using a lease. It does NOT delete the row. The Poll transaction atomically:
+1. SELECTs the next ready task where `claimed_by IS NULL OR claimed_until_ns <= now` (unclaimed or expired lease)
+2. UPDATEs the row setting `claimed_by = workerID` and `claimed_until_ns = now + leaseDuration` (default 30s)
+3. COMMITs
+
+If the worker crashes after Poll, the task row is still in the `workflow_ready_tasks` table — it's just claimed. After `claimed_until_ns` passes (the lease expires), another worker's Poll will see it as eligible again (the `OR claimed_until_ns <= ?` clause). **No task is lost.** The worst case is a delay equal to the lease duration before another worker picks it up.
+
+`Complete` and `Fail` delete the row, but only `WHERE instance_id = ? AND claimed_by = ?` — so they only delete if this worker still owns the claim. If the lease expired and another worker reclaimed it, the delete affects 0 rows, which is correct.
+
+There's one subtlety: `SyncQueue.Process()` (the transactional processor) uses `INSERT OR REPLACE` when creating tasks for sleeps/retries. This replaces the entire row including `claimed_by`, which effectively revokes the old claim. The comment on `Complete` calls this out: "If the task was already replaced by the processor (e.g., sleep created a delayed task), the claimed_by won't match and 0 rows are deleted — which is correct because the delayed task should survive."
+
+**`AsyncQueue`**: Identical lease semantics to SyncQueue. Poll claims with `claimed_by` + `claimed_until_ns`, Complete/Fail delete only if `claimed_by` matches. Crash after Poll → lease expires → another worker picks it up. **No task is lost.**
+
+**Summary:**
+
+| Queue | Poll behavior | Crash after Poll | Tasks lost? |
+|---|---|---|---|
+| `MemoryQueue` | Removes from slice | Task gone from memory | **Yes** |
+| `SyncQueue` | Claims with lease (UPDATE row) | Lease expires, another worker reclaims | **No** |
+| `AsyncQueue` | Claims with lease (UPDATE row) | Lease expires, another worker reclaims | **No** |
+
+Even in the worst case (all queues wiped), the event log is the source of truth. You could rebuild the task queue by scanning the event log for workflows in non-terminal states. But the workflow package doesn't ship that recovery mechanism — you'd have to build it.
+
+### 7. Does the user have to call Heartbeat manually? How does Temporal handle this? Is the 30s lease too short?
+
+**Yes, the user must call `Heartbeat` manually.** There is no automatic lease extension. The worker loop in `RunWorker` does `wf.execute(ctx, instanceID)` and blocks until the entire `Run` completes — replay plus execution of the next step. There is no background goroutine extending the lease during that time. If a step takes longer than the lease duration (default 30s), the lease expires, and another worker can claim the task.
+
+**How Temporal handles this differently:**
+
+Temporal separates two very different things that Chronicle's workflow package conflates:
+
+1. **Workflow Tasks** (replay + decision-making) — these are short-lived. The Temporal SDK automatically heartbeats them. The default `WorkflowTaskTimeout` is 10 seconds. The user never thinks about this. The SDK handles it transparently because workflow code is deterministic replay — it's always fast.
+
+2. **Activity Tasks** (the actual side-effecting work, equivalent to `Step`) — these have their own separate timeouts:
+   - `StartToCloseTimeout` — max wall-clock time for the activity (e.g., 5 minutes). No heartbeat needed if you know the upper bound.
+   - `HeartbeatTimeout` — optional. If set, the user must call `activity.RecordHeartbeat()` periodically. If the worker crashes, Temporal detects it when no heartbeat arrives within the timeout and retries the activity on another worker.
+   - If `HeartbeatTimeout` is NOT set, the activity runs until `StartToCloseTimeout` expires. No manual heartbeating required.
+
+The key insight: in Temporal, **short activities don't need heartbeating at all.** You only opt into heartbeating for long-running activities where you want fast crash detection. And even then, the activity timeout is separate from any queue lease — it's managed server-side by the Temporal cluster.
+
+**In Chronicle's workflow package, the lease covers EVERYTHING** — replay, step execution, all of it. There's a single 30s window. This means:
+
+- A step that makes an HTTP call taking 5 seconds? Fine, well within 30s.
+- A step that processes a large file for 2 minutes? The lease expires at 30s, another worker claims the task and starts executing the same step concurrently. Now you have the concurrent execution + `ConflictError` problem from Q4.
+- Even replay can be slow if the workflow has hundreds of steps (each step reloads the aggregate from the event log).
+
+**Is 30s too short?** It depends on the workload. For most workflows with fast steps (API calls, database writes), 30s is fine. For anything with steps that can take over 30s, the user MUST sprinkle `Heartbeat` calls inside their step functions or increase the lease via `WithSyncQueueLeaseDuration`. This is a footgun because:
+
+1. The user has to know about it. There's no warning or documentation nudge at the `Step` call site.
+2. `Heartbeat` requires access to `wctx`, but `Step`'s callback only receives a plain `context.Context`. The user has to close over `wctx` from the outer scope, which is awkward:
+
+```go
+result, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+    for i := range 100 {
+        processChunk(i)
+        // Must use wctx from outer scope, not ctx
+        if err := workflow.Heartbeat(wctx, 5*time.Minute); err != nil {
+            return "", err
+        }
+    }
+    return "done", nil
+})
+```
+
+**What could be improved:**
+
+- **Automatic lease extension**: the worker loop could spawn a background goroutine that extends the lease every `leaseDuration/2` while `execute` is running. This is what Temporal's SDK does for workflow tasks. The user would never need to think about it for normal steps.
+- **Per-step timeout instead of (or in addition to) a global lease**: let the user declare `Step(wctx, fn, workflow.WithStepTimeout(5*time.Minute))` so the framework knows the expected duration and can set the lease accordingly.
+- **Separate the replay lease from the execution lease**: replay should always be fast (it's just reading events and deserializing). The long part is step execution. The framework could extend the lease automatically right before executing a step function.
