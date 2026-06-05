@@ -69,7 +69,7 @@ func CancelWorkflow(
 		return fmt.Errorf("record workflow cancelled: %w", err)
 	}
 
-	if _, _, err := runner.repo.Save(ctx, instance); err != nil {
+	if _, _, err := saveOrConflictAbort(ctx, runner.repo, instance); err != nil {
 		return fmt.Errorf("save cancelled workflow: %w", err)
 	}
 

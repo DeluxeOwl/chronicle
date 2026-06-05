@@ -148,7 +148,7 @@ func WaitForEvent[T any](wctx *Context, eventName string, opts ...WaitForEventOp
 			}); err != nil {
 				return zero, fmt.Errorf("record event timeout: %w", err)
 			}
-			if _, _, err := runner.repo.Save(wctx.ctx, instance); err != nil {
+			if _, _, err := saveOrConflictAbort(wctx.ctx, runner.repo, instance); err != nil {
 				return zero, fmt.Errorf("save event timeout: %w", err)
 			}
 			return zero, ErrEventTimeout
@@ -188,7 +188,7 @@ func WaitForEvent[T any](wctx *Context, eventName string, opts ...WaitForEventOp
 			}); err != nil {
 				return zero, fmt.Errorf("record resolved step: %w", err)
 			}
-			if _, _, err := runner.repo.Save(wctx.ctx, instance); err != nil {
+			if _, _, err := saveOrConflictAbort(wctx.ctx, runner.repo, instance); err != nil {
 				return zero, fmt.Errorf("save resolved event: %w", err)
 			}
 
@@ -243,7 +243,7 @@ func WaitForEvent[T any](wctx *Context, eventName string, opts ...WaitForEventOp
 		return zero, fmt.Errorf("record await event step: %w", err)
 	}
 
-	if _, _, err := runner.repo.Save(wctx.ctx, instance); err != nil {
+	if _, _, err := saveOrConflictAbort(wctx.ctx, runner.repo, instance); err != nil {
 		return zero, fmt.Errorf("save await event step: %w", err)
 	}
 

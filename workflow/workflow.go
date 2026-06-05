@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/DeluxeOwl/chronicle/aggregate"
 	"github.com/DeluxeOwl/chronicle/event"
 	"github.com/DeluxeOwl/chronicle/eventlog"
+	"github.com/DeluxeOwl/chronicle/version"
 	"github.com/gofrs/uuid/v5"
 )
 
@@ -192,6 +194,36 @@ func NewEmpty() *WorkflowInstance {
 	}
 }
 
+// ErrConflictAbort is returned when a save fails due to an optimistic concurrency
+// conflict (version.ConflictError). This is a benign condition that means another
+// worker already advanced this workflow instance. The current execution should be
+// silently abandoned — the workflow is NOT failed.
+var ErrConflictAbort = errors.New("conflict abort: another worker advanced this instance")
+
+// isConflictAbortError checks if an error is ErrConflictAbort.
+func isConflictAbortError(err error) bool {
+	return errors.Is(err, ErrConflictAbort)
+}
+
+// saveOrConflictAbort wraps repo.Save and converts version.ConflictError
+// into ErrConflictAbort. All save sites in the workflow package should use
+// this instead of calling repo.Save directly.
+func saveOrConflictAbort(
+	ctx context.Context,
+	repo aggregate.Repository[InstanceID, WorkflowEvent, *WorkflowInstance],
+	instance *WorkflowInstance,
+) (version.Version, aggregate.CommittedEvents[WorkflowEvent], error) {
+	v, ce, err := repo.Save(ctx, instance)
+	if err != nil {
+		var conflictErr *version.ConflictError
+		if errors.As(err, &conflictErr) {
+			return v, ce, ErrConflictAbort
+		}
+		return v, ce, err
+	}
+	return v, ce, nil
+}
+
 // executableWorkflow is the non-generic interface that the worker loop
 // uses to drive workflows it discovers via the registry.
 type executableWorkflow interface {
@@ -207,6 +239,7 @@ type Runner struct {
 	queue         TaskQueue
 	workflows     map[string]executableWorkflow
 	waitStore     eventWaitStore
+	syncQueueOpts []SyncQueueOption // forwarded to NewSqliteRunnerWithSyncQueue
 }
 
 // NewRunner creates a new workflow runner with the given event log.
@@ -294,6 +327,7 @@ func NewSqliteRunnerWithSyncQueue(db *sql.DB, opts ...RunnerOption) (*Runner, er
 	syncOpts := []SyncQueueOption{
 		WithSyncQueueNowFunc(tmpRunner.nowFunc),
 	}
+	syncOpts = append(syncOpts, tmpRunner.syncQueueOpts...)
 
 	syncQueue, err := NewSyncQueue(db, syncOpts...)
 	if err != nil {
@@ -550,6 +584,16 @@ func (w *Workflow[Params, Output]) Run(
 	output, err := w.fn(wctx, &params)
 	//nolint:nestif // This is readable.
 	if err != nil {
+		// If a save failed due to optimistic concurrency, another worker already
+		// advanced this instance. Silently abandon this execution.
+		if isConflictAbortError(err) {
+			w.logger.InfoContext(ctx,
+				"conflict abort — another worker advanced this instance",
+				"instanceID", instanceID,
+			)
+			return nil, ErrConflictAbort
+		}
+
 		// If the workflow is sleeping, don't record it as a failure.
 		// The scheduler will re-trigger Run when the sleep elapses.
 		if isSleepError(err) {
@@ -577,6 +621,10 @@ func (w *Workflow[Params, Output]) Run(
 		// Attempt to schedule a retry if a strategy is configured
 		retried, retryErr := w.runner.scheduleRetry(wctx, instance, err)
 		if retryErr != nil {
+			// If retry scheduling itself conflicts, abort silently.
+			if isConflictAbortError(retryErr) {
+				return nil, ErrConflictAbort
+			}
 			return nil, fmt.Errorf(
 				"workflow failed and failed to schedule retry: %w (original error: %w)",
 				retryErr,
@@ -593,7 +641,10 @@ func (w *Workflow[Params, Output]) Run(
 		}); err != nil {
 			return nil, fmt.Errorf("record workflow failure: %w", err)
 		}
-		if _, _, saveErr := w.runner.repo.Save(ctx, instance); saveErr != nil {
+		if _, _, saveErr := saveOrConflictAbort(ctx, w.runner.repo, instance); saveErr != nil {
+			if isConflictAbortError(saveErr) {
+				return nil, ErrConflictAbort
+			}
 			return nil, fmt.Errorf(
 				"workflow failed and failed to save: %w (original error: %w)",
 				saveErr,
@@ -623,7 +674,14 @@ func (w *Workflow[Params, Output]) Run(
 	}
 
 	// Save final state
-	if _, _, err := w.runner.repo.Save(ctx, instance); err != nil {
+	if _, _, err := saveOrConflictAbort(ctx, w.runner.repo, instance); err != nil {
+		if isConflictAbortError(err) {
+			w.logger.InfoContext(ctx,
+				"conflict abort on completion save — another worker advanced this instance",
+				"instanceID", instanceID,
+			)
+			return nil, ErrConflictAbort
+		}
 		return nil, fmt.Errorf("save completed workflow: %w", err)
 	}
 
@@ -726,7 +784,10 @@ func Step[Result any](wctx *Context, fn func(context.Context) (Result, error)) (
 		}); err != nil {
 			return zero, fmt.Errorf("record step failure: %w", err)
 		}
-		if _, _, saveErr := wctx.runner.repo.Save(wctx.ctx, instance); saveErr != nil {
+		if _, _, saveErr := saveOrConflictAbort(wctx.ctx, wctx.runner.repo, instance); saveErr != nil {
+			if isConflictAbortError(saveErr) {
+				return zero, saveErr
+			}
 			return zero, fmt.Errorf(
 				"step failed and failed to save: %w (original error: %w)",
 				saveErr,
@@ -752,7 +813,7 @@ func Step[Result any](wctx *Context, fn func(context.Context) (Result, error)) (
 	}
 
 	// Save after each step for durability
-	if _, _, err := wctx.runner.repo.Save(wctx.ctx, instance); err != nil {
+	if _, _, err := saveOrConflictAbort(wctx.ctx, wctx.runner.repo, instance); err != nil {
 		return zero, fmt.Errorf("save step result: %w", err)
 	}
 
@@ -809,7 +870,10 @@ func Step2(wctx *Context, fn func(context.Context) error) error {
 		}); err != nil {
 			return fmt.Errorf("record step failure: %w", err)
 		}
-		if _, _, saveErr := wctx.runner.repo.Save(wctx.ctx, instance); saveErr != nil {
+		if _, _, saveErr := saveOrConflictAbort(wctx.ctx, wctx.runner.repo, instance); saveErr != nil {
+			if isConflictAbortError(saveErr) {
+				return saveErr
+			}
 			return fmt.Errorf(
 				"step failed and failed to save: %w (original error: %w)",
 				saveErr,
@@ -829,8 +893,7 @@ func Step2(wctx *Context, fn func(context.Context) error) error {
 	}
 
 	// Save after each step for durability
-	_, _, err = wctx.runner.repo.Save(wctx.ctx, instance)
-	if err != nil {
+	if _, _, err := saveOrConflictAbort(wctx.ctx, wctx.runner.repo, instance); err != nil {
 		return fmt.Errorf("save step result: %w", err)
 	}
 

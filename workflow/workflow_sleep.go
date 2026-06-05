@@ -100,7 +100,7 @@ func Sleep(wctx *Context, d time.Duration) error {
 		return fmt.Errorf("record sleep step: %w", err)
 	}
 
-	if _, _, err := runner.repo.Save(wctx.ctx, instance); err != nil {
+	if _, _, err := saveOrConflictAbort(wctx.ctx, runner.repo, instance); err != nil {
 		return fmt.Errorf("save sleep step: %w", err)
 	}
 
@@ -146,6 +146,14 @@ func WithNowFunc(fn func() time.Time) RunnerOption {
 func WithTaskQueue(q TaskQueue) RunnerOption {
 	return func(r *Runner) {
 		r.queue = q
+	}
+}
+
+// WithSyncQueueOpts passes SyncQueue options through to
+// NewSqliteRunnerWithSyncQueue. Ignored by NewRunner.
+func WithSyncQueueOpts(opts ...SyncQueueOption) RunnerOption {
+	return func(r *Runner) {
+		r.syncQueueOpts = append(r.syncQueueOpts, opts...)
 	}
 }
 

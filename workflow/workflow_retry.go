@@ -108,7 +108,7 @@ func (r *Runner) scheduleRetry(
 		return false, fmt.Errorf("record workflow retried: %w", err)
 	}
 
-	if _, _, err := r.repo.Save(ctx.ctx, instance); err != nil {
+	if _, _, err := saveOrConflictAbort(ctx.ctx, r.repo, instance); err != nil {
 		return false, fmt.Errorf("save workflow retried: %w", err)
 	}
 
