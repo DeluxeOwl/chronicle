@@ -143,7 +143,7 @@ func (q *AsyncQueue) MatchesEvent(eventName string) bool {
 // Handle processes a single global event record and updates the ready_tasks
 // table accordingly. This is called by the AsyncProjectionRunner.
 //
-//nolint:gocognit,funlen
+//nolint:funlen
 func (q *AsyncQueue) Handle(ctx context.Context, rec *event.GlobalRecord) error {
 	instanceID := InstanceID(rec.LogID())
 
@@ -163,13 +163,7 @@ func (q *AsyncQueue) Handle(ctx context.Context, rec *event.GlobalRecord) error 
 		// Check if this is a sleep step.
 		var sr sleepResult
 		if err := json.Unmarshal(e.Result, &sr); err == nil && !sr.WakeAt.IsZero() {
-			// We need the workflow name — get it from the existing task or use the logID.
-			workflowName := q.getWorkflowName(instanceID)
-			if workflowName == "" {
-				// Fallback: the workflow name isn't available; use the logID as a
-				// best-effort. The worker will look it up by name from the registry.
-				workflowName = string(rec.LogID())
-			}
+			workflowName := q.resolveWorkflowName(e.WorkflowName, instanceID)
 			return q.upsertTask(ctx, instanceID, workflowName, sr.WakeAt)
 		}
 		return nil
@@ -179,10 +173,7 @@ func (q *AsyncQueue) Handle(ctx context.Context, rec *event.GlobalRecord) error 
 		if err := json.Unmarshal(rec.Data(), &e); err != nil {
 			return fmt.Errorf("unmarshal workflowRetried: %w", err)
 		}
-		workflowName := q.getWorkflowName(instanceID)
-		if workflowName == "" {
-			workflowName = string(rec.LogID())
-		}
+		workflowName := q.resolveWorkflowName(e.WorkflowName, instanceID)
 		return q.upsertTask(ctx, instanceID, workflowName, e.NextRunAfter)
 
 	case "workflow/waiting":
@@ -190,10 +181,7 @@ func (q *AsyncQueue) Handle(ctx context.Context, rec *event.GlobalRecord) error 
 		if err := json.Unmarshal(rec.Data(), &e); err != nil {
 			return fmt.Errorf("unmarshal workflowWaiting: %w", err)
 		}
-		workflowName := q.getWorkflowName(instanceID)
-		if workflowName == "" {
-			workflowName = string(rec.LogID())
-		}
+		workflowName := q.resolveWorkflowName(q.getWorkflowName(instanceID), instanceID)
 		// Record the waiter.
 		if err := q.insertWaitingEvent(ctx, instanceID, workflowName, e.AwaitingEvent, e.StepIndex, e.Deadline); err != nil {
 			return err
@@ -213,10 +201,7 @@ func (q *AsyncQueue) Handle(ctx context.Context, rec *event.GlobalRecord) error 
 			return fmt.Errorf("unmarshal workflowEventReceived: %w", err)
 		}
 		q.deleteWaitingEvent(instanceID, e.ReceivedEvent)
-		workflowName := q.getWorkflowName(instanceID)
-		if workflowName == "" {
-			workflowName = string(rec.LogID())
-		}
+		workflowName := q.resolveWorkflowName(e.WorkflowName, instanceID)
 		return q.upsertTask(ctx, instanceID, workflowName, q.nowFunc())
 
 	case "workflow/completed":
@@ -409,6 +394,20 @@ func (q *AsyncQueue) deleteTask(_ context.Context, instanceID InstanceID) error 
 		return fmt.Errorf("async queue delete task: %w", err)
 	}
 	return nil
+}
+
+// resolveWorkflowName returns the best available workflow name. It prefers the
+// name embedded in the event payload (available since v2), falls back to the
+// DB lookup, and only uses the instance ID as a last resort.
+func (q *AsyncQueue) resolveWorkflowName(fromEvent string, instanceID InstanceID) string {
+	if fromEvent != "" {
+		return fromEvent
+	}
+	if name := q.getWorkflowName(instanceID); name != "" {
+		return name
+	}
+	// Last resort — should not happen for events produced by v2+ code.
+	return string(instanceID)
 }
 
 // getWorkflowName retrieves the workflow_name from the ready_tasks table for

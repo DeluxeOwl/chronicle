@@ -56,7 +56,8 @@ func TestSyncQueue_SimpleWorkflowCompletion(t *testing.T) {
 	go func() {
 		defer close(done)
 		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -112,7 +113,8 @@ func TestSyncQueue_SleepAndWakeUp(t *testing.T) {
 	go func() {
 		defer close(done)
 		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -178,7 +180,8 @@ func TestSyncQueue_RetryWithBackoff(t *testing.T) {
 	go func() {
 		defer close(done)
 		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -292,7 +295,8 @@ func TestSyncQueue_CrashRecovery(t *testing.T) {
 	go func() {
 		defer close(done)
 		_ = runner2.RunWorker(workerCtx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -336,7 +340,8 @@ func TestSyncQueue_CrashRecovery_SleepSurvivesRestart(t *testing.T) {
 	go func() {
 		defer close(done1)
 		_ = runner1.RunWorker(worker1Ctx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -385,7 +390,8 @@ func TestSyncQueue_CrashRecovery_SleepSurvivesRestart(t *testing.T) {
 	go func() {
 		defer close(done2)
 		_ = runner2.RunWorker(worker2Ctx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -436,7 +442,8 @@ func TestSyncQueue_MultipleInstances(t *testing.T) {
 	go func() {
 		defer close(done)
 		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -489,7 +496,8 @@ func TestSyncQueue_WorkflowFailureDoesNotCrashWorker(t *testing.T) {
 	go func() {
 		defer close(done)
 		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -538,7 +546,8 @@ func TestSyncQueue_HeartbeatExtendsLease(t *testing.T) {
 	go func() {
 		defer close(done)
 		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -583,7 +592,8 @@ func TestSyncQueue_WaitForEventAndPublish(t *testing.T) {
 	go func() {
 		defer close(done)
 		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -634,7 +644,8 @@ func TestSyncQueue_TaskCleanedUpAfterCompletion(t *testing.T) {
 	go func() {
 		defer close(done)
 		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -672,7 +683,8 @@ func TestSyncQueue_GracefulShutdown(t *testing.T) {
 	workerErr := make(chan error, 1)
 	go func() {
 		workerErr <- runner.RunWorker(workerCtx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -728,7 +740,8 @@ func TestSyncQueue_MultipleWorkflowTypes(t *testing.T) {
 	go func() {
 		defer close(done)
 		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -903,7 +916,8 @@ func TestSyncQueue_PersistentWaitForEvent_CrashRecovery(t *testing.T) {
 	go func() {
 		defer close(done1)
 		_ = runner1.RunWorker(worker1Ctx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -961,7 +975,8 @@ func TestSyncQueue_PersistentWaitForEvent_CrashRecovery(t *testing.T) {
 	go func() {
 		defer close(done2)
 		_ = runner2.RunWorker(worker2Ctx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -1017,7 +1032,8 @@ func TestSyncQueue_PersistentWaitForEvent_PrePublish(t *testing.T) {
 	go func() {
 		defer close(done)
 		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -1083,7 +1099,8 @@ func TestSyncQueue_PersistentWaitForEvent_PrePublishWithTimeout(t *testing.T) {
 	go func() {
 		defer close(done)
 		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -1137,7 +1154,8 @@ func TestSyncQueue_PersistentWaitForEvent_MultipleWaiters(t *testing.T) {
 	go func() {
 		defer close(done)
 		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -1209,7 +1227,8 @@ func TestSyncQueue_PersistentWaitForEvent_PublishIdempotent(t *testing.T) {
 	go func() {
 		defer close(done)
 		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -1278,7 +1297,8 @@ func TestSyncQueue_PersistentWaitForEvent_WaiterCleanedUpOnCompletion(t *testing
 	go func() {
 		defer close(done)
 		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -1341,7 +1361,8 @@ func TestSyncQueue_PersistentWaitForEvent_WithTimeout_CrashRecovery(t *testing.T
 	go func() {
 		defer close(done1)
 		_ = runner1.RunWorker(worker1Ctx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -1387,7 +1408,8 @@ func TestSyncQueue_PersistentWaitForEvent_WithTimeout_CrashRecovery(t *testing.T
 	go func() {
 		defer close(done2)
 		_ = runner2.RunWorker(worker2Ctx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -1441,7 +1463,8 @@ func TestSyncQueue_ExpiredLeaseReclaimable(t *testing.T) {
 	go func() {
 		defer close(done)
 		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -1459,4 +1482,19 @@ func TestSyncQueue_ExpiredLeaseReclaimable(t *testing.T) {
 
 	cancel()
 	<-done
+}
+
+func TestPersistentPublish_ReturnsErrorOnDBFailure(t *testing.T) {
+	// Regression test for: persistentWaitStore.Publish swallows DB errors.
+	// When the DB is down, PublishEvent should return an error instead of
+	// silently pretending there are no waiters.
+	db := setupSyncDB(t)
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	require.NoError(t, err)
+
+	// Close the DB to simulate a failure
+	db.Close()
+
+	err = workflow.PublishEvent(t.Context(), runner, "some-event", map[string]string{"key": "val"})
+	require.Error(t, err, "PublishEvent should return an error when the DB is down")
 }

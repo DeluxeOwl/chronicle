@@ -153,9 +153,15 @@ func (r *EventRegistry[E]) GetFunc(eventName string) (FuncFor[E], bool) {
 // concreteRegistry is an adapter that allows a type-specific registry (Registry[E])
 // to be backed by a global, type-erased registry (Registry[Any]). This is useful in
 // larger systems to ensure event name uniqueness across all aggregates.
+//
+// The concreteFactories map is a per-type cache of factory closures. Because
+// GetFunc may be called concurrently from many goroutines (e.g. worker pools
+// loading aggregates in parallel), access to the cache is protected by an
+// RWMutex. The underlying anyRegistry is independently thread-safe.
 type concreteRegistry[E Any] struct {
 	anyRegistry       Registry[Any]
 	concreteFactories map[string]func() E
+	cacheMu           sync.RWMutex
 }
 
 // NewConcreteRegistryFromAny creates a new type-safe registry that wraps a global,
@@ -177,6 +183,7 @@ func NewConcreteRegistryFromAny[E Any](anyRegistry Registry[Any]) Registry[E] {
 	return &concreteRegistry[E]{
 		anyRegistry:       anyRegistry,
 		concreteFactories: map[string]func() E{},
+		cacheMu:           sync.RWMutex{},
 	}
 }
 
@@ -203,17 +210,24 @@ func (r *concreteRegistry[E]) RegisterEvents(root EventFuncCreator[E]) error {
 
 // GetFunc retrieves a factory from the underlying `event.Any` registry and
 // safely casts it to the expected concrete type `E`.
+//
+// Safe for concurrent use: the per-type factory cache is guarded by an RWMutex.
+// The common case (cache hit) takes only a read lock.
 func (r *concreteRegistry[E]) GetFunc(eventName string) (FuncFor[E], bool) {
 	anyFactory, ok := r.anyRegistry.GetFunc(eventName)
 	if !ok {
 		return nil, false
 	}
 
+	// Fast path: cache hit under a read lock.
+	r.cacheMu.RLock()
 	if concreteFactory, exists := r.concreteFactories[eventName]; exists {
+		r.cacheMu.RUnlock()
 		return concreteFactory, true
 	}
+	r.cacheMu.RUnlock()
 
-	// Create and cache new factory
+	// Slow path: build the factory and insert under a write lock.
 	newFactory := func() E {
 		anyInstance := anyFactory()
 		concreteInstance, ok := anyInstance.(E)
@@ -228,7 +242,16 @@ func (r *concreteRegistry[E]) GetFunc(eventName string) (FuncFor[E], bool) {
 		return concreteInstance
 	}
 
+	r.cacheMu.Lock()
+	// Double-check: another goroutine may have populated the cache while we
+	// were upgrading from RLock to Lock. Keep their entry so the cache stays
+	// stable (TestConcreteRegistry_GetFuncCachesFactory relies on identity).
+	if existing, exists := r.concreteFactories[eventName]; exists {
+		r.cacheMu.Unlock()
+		return existing, true
+	}
 	r.concreteFactories[eventName] = newFactory
+	r.cacheMu.Unlock()
 	return newFactory, true
 }
 

@@ -150,7 +150,8 @@ func TestCancelWorkflow_WorkerHandlesCancelled(t *testing.T) {
 	go func() {
 		defer close(done)
 		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -365,7 +366,8 @@ func TestCancellationPolicy_WorkerAutoCancel(t *testing.T) {
 	go func() {
 		defer close(done)
 		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 

@@ -38,11 +38,8 @@ func Sleep(wctx *Context, d time.Duration) error {
 	stepIndex := wctx.stepCount
 	wctx.stepCount++
 
-	// Reload instance to get latest state
-	instance, err := runner.repo.Get(wctx.ctx, wctx.instanceID)
-	if err != nil {
-		return fmt.Errorf("reload instance for sleep: %w", err)
-	}
+	// Use the shared instance from Context (loaded once in Run)
+	instance := wctx.instance
 
 	now := runner.now()
 
@@ -93,14 +90,15 @@ func Sleep(wctx *Context, d time.Duration) error {
 	}
 
 	if err := instance.recordThat(&stepCompleted{
-		StepIndex:   stepIndex,
-		Result:      resultJSON,
-		CompletedAt: now,
+		StepIndex:    stepIndex,
+		Result:       resultJSON,
+		CompletedAt:  now,
+		WorkflowName: instance.workflowName,
 	}); err != nil {
 		return fmt.Errorf("record sleep step: %w", err)
 	}
 
-	if _, _, err := saveOrConflictAbort(wctx.ctx, runner.repo, instance); err != nil {
+	if err := saveOrConflictAbort(wctx.ctx, runner.repo, instance); err != nil {
 		return fmt.Errorf("save sleep step: %w", err)
 	}
 

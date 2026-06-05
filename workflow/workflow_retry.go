@@ -55,11 +55,13 @@ func (rs RetryStrategy) nextDelay(attempt int) time.Duration {
 
 // workflowRetried records that a failed workflow has been scheduled for retry.
 type workflowRetried struct {
-	Attempt       int             `json:"attempt"`
-	NextRunAfter  time.Time       `json:"nextRunAfter"`
-	BackoffDelay  time.Duration   `json:"backoffDelay"`
-	PreviousError string          `json:"previousError"`
-	RetryStrategy json.RawMessage `json:"retryStrategy"`
+	Attempt         int             `json:"attempt"`
+	NextRunAfter    time.Time       `json:"nextRunAfter"`
+	BackoffDelay    time.Duration   `json:"backoffDelay"`
+	PreviousError   string          `json:"previousError"`
+	RetryStrategy   json.RawMessage `json:"retryStrategy"`
+	FailedStepIndex *int            `json:"failedStepIndex,omitempty"` // nil for backward compat with old events
+	WorkflowName    string          `json:"workflowName,omitempty"`    // populated since v2; empty in old events
 }
 
 func (*workflowRetried) EventName() string { return "workflow/retried" }
@@ -99,16 +101,18 @@ func (r *Runner) scheduleRetry(
 	}
 
 	if err := instance.recordThat(&workflowRetried{
-		Attempt:       nextAttempt,
-		NextRunAfter:  runAfter,
-		BackoffDelay:  delay,
-		PreviousError: workflowErr.Error(),
-		RetryStrategy: retryStrategyJSON,
+		Attempt:         nextAttempt,
+		NextRunAfter:    runAfter,
+		BackoffDelay:    delay,
+		PreviousError:   workflowErr.Error(),
+		RetryStrategy:   retryStrategyJSON,
+		FailedStepIndex: ctx.lastFailedStep,
+		WorkflowName:    instance.workflowName,
 	}); err != nil {
 		return false, fmt.Errorf("record workflow retried: %w", err)
 	}
 
-	if _, _, err := saveOrConflictAbort(ctx.ctx, r.repo, instance); err != nil {
+	if err := saveOrConflictAbort(ctx.ctx, r.repo, instance); err != nil {
 		return false, fmt.Errorf("save workflow retried: %w", err)
 	}
 

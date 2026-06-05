@@ -550,6 +550,44 @@ func TestWorkflowAPIExactlyAsSpecified(t *testing.T) {
 	require.Len(t, output.SentFiles, 3)
 }
 
+func TestStep_DoesNotReloadPerStep(t *testing.T) {
+	db := setupTestDB(t)
+	wfr, err := workflow.NewSqliteRunner(db)
+	require.NoError(t, err)
+
+	const numSteps = 50
+
+	wf := workflow.New(
+		wfr,
+		"many-steps",
+		func(wctx *workflow.Context, params *struct{}) (*struct{ N int }, error) {
+			for i := range numSteps {
+				_, err := workflow.Step(wctx, func(ctx context.Context) (int, error) {
+					return i, nil
+				})
+				if err != nil {
+					return nil, err
+				}
+			}
+			return &struct{ N int }{N: numSteps}, nil
+		},
+	)
+
+	ctx := t.Context()
+	id, err := wf.Start(ctx, &struct{}{})
+	require.NoError(t, err)
+
+	// First run: executes all 50 steps
+	output, err := wf.Run(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, numSteps, output.N)
+
+	// Replay: all 50 steps are cached, should be fast
+	output2, err := wf.Run(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, numSteps, output2.N)
+}
+
 func TestWorkflowEventsAreStored(t *testing.T) {
 	db := setupTestDB(t)
 	wfr, err := workflow.NewSqliteRunner(db)

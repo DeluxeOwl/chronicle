@@ -130,7 +130,8 @@ func TestAsyncQueue_SimpleWorkflowCompletion(t *testing.T) {
 	go func() {
 		defer close(done)
 		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -185,7 +186,8 @@ func TestAsyncQueue_SleepAndWakeUp(t *testing.T) {
 	go func() {
 		defer close(done)
 		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -251,7 +253,8 @@ func TestAsyncQueue_RetryOnFailure(t *testing.T) {
 	go func() {
 		defer close(done)
 		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -300,7 +303,8 @@ func TestAsyncQueue_MultipleWorkflows(t *testing.T) {
 	go func() {
 		defer close(done)
 		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 

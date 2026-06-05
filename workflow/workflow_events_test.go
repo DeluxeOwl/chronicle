@@ -443,7 +443,8 @@ func TestWaitForEvent_WorkerDriven(t *testing.T) {
 	go func() {
 		defer close(done)
 		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -675,4 +676,66 @@ func TestWaitForEvent_TimeoutWithRetry(t *testing.T) {
 	_, err = wf.Run(ctx, instanceID)
 	// This time the step result is already cached as timed out
 	require.Error(t, err)
+}
+
+func TestWaitForEvent_TimeoutRetry_ActuallyReWaits(t *testing.T) {
+	// Regression test for: WaitForEvent timeout cached across retries.
+	// When a WaitForEvent times out and the workflow retries, the retry should
+	// re-enter WaitForEvent (returning ErrWorkflowWaiting), NOT immediately
+	// return the cached ErrEventTimeout.
+	db := setupTestDB(t)
+	clock := newClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	runner, err := workflow.NewSqliteRunner(db, workflow.WithNowFunc(clock.Now))
+	require.NoError(t, err)
+
+	type Payload struct{ Data string }
+
+	wf := workflow.New(runner, "timeout-retry-rewait",
+		func(wctx *workflow.Context, params *struct{}) (*struct{ Result string }, error) {
+			p, err := workflow.WaitForEvent[Payload](wctx, "my-event",
+				workflow.WaitForEventOptions{Timeout: 1 * time.Hour})
+			if err != nil {
+				return nil, err
+			}
+			return &struct{ Result string }{Result: p.Data}, nil
+		},
+	)
+
+	ctx := t.Context()
+	id, err := wf.Start(ctx, &struct{}{},
+		workflow.WithRetryStrategy(workflow.RetryStrategy{
+			MaxAttempts: 3,
+			BaseDelay:   1 * time.Second,
+			Factor:      1.0,
+			MaxDelay:    1 * time.Minute,
+		}),
+	)
+	require.NoError(t, err)
+
+	// Run 1: parks on WaitForEvent
+	_, err = wf.Run(ctx, id)
+	require.ErrorIs(t, err, workflow.ErrWorkflowWaiting)
+
+	// Advance past timeout → times out → retry scheduled
+	clock.Advance(2 * time.Hour)
+	_, err = wf.Run(ctx, id)
+	require.ErrorIs(t, err, workflow.ErrWorkflowRetrying)
+
+	// Advance past retry backoff
+	clock.Advance(2 * time.Second)
+
+	// KEY ASSERTION: The retry should re-enter WaitForEvent (waiting),
+	// NOT immediately time out again.
+	_, err = wf.Run(ctx, id)
+	require.ErrorIs(t, err, workflow.ErrWorkflowWaiting,
+		"retry should re-wait, not return cached timeout")
+
+	// Now publish the event
+	err = workflow.PublishEvent(ctx, runner, "my-event", Payload{Data: "arrived"})
+	require.NoError(t, err)
+
+	// Final run: event resolves → workflow completes
+	output, err := wf.Run(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, "arrived", output.Result)
 }

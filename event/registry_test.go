@@ -238,3 +238,50 @@ func TestConcreteRegistry_GetFuncPanicsOnTypeMismatch(t *testing.T) {
 		factory()
 	}, "should panic when the underlying event type does not match the concrete registry's type")
 }
+
+// TestConcreteRegistry_GetFuncConcurrentSafe reproduces a data race in
+// concreteRegistry.GetFunc. The underlying anyRegistry is RWMutex-protected,
+// but the per-type concreteFactories cache in concreteRegistry is not. When
+// multiple goroutines call GetFunc concurrently on the same eventName, they
+// race on the map read/write of concreteFactories.
+//
+// Run with `-race` to detect.
+func TestConcreteRegistry_GetFuncConcurrentSafe(t *testing.T) {
+	anyRegistry := event.NewRegistry[event.Any]()
+	concreteReg := event.NewConcreteRegistryFromAny[FooEvent](anyRegistry)
+
+	creator := &testEventCreator[FooEvent]{
+		funcs: event.FuncsFor[FooEvent]{
+			func() FooEvent { return new(fooEventAlpha) },
+			func() FooEvent { return new(fooEventBeta) },
+		},
+	}
+	require.NoError(t, concreteReg.RegisterEvents(creator))
+
+	const goroutines = 32
+	const iterations = 500
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	names := []string{"test-event-alpha", "test-event-beta"}
+
+	for i := range goroutines {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			<-start
+			for j := range iterations {
+				name := names[(idx+j)%len(names)]
+				fn, ok := concreteReg.GetFunc(name)
+				if !ok || fn == nil {
+					t.Errorf("GetFunc(%q) returned nil/false", name)
+					return
+				}
+				_ = fn()
+			}
+		}(i)
+	}
+
+	close(start)
+	wg.Wait()
+}

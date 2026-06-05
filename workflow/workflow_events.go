@@ -51,6 +51,7 @@ type workflowEventReceived struct {
 	StepIndex     int             `json:"stepIndex"`
 	ReceivedEvent string          `json:"receivedEvent"`
 	Payload       json.RawMessage `json:"payload"`
+	WorkflowName  string          `json:"workflowName,omitempty"` // populated since v2; empty in old events
 }
 
 func (*workflowEventReceived) EventName() string { return "workflow/event_received" }
@@ -88,11 +89,8 @@ func WaitForEvent[T any](wctx *Context, eventName string, opts ...WaitForEventOp
 	stepIndex := wctx.stepCount
 	wctx.stepCount++
 
-	// Reload instance to get latest state
-	instance, err := runner.repo.Get(wctx.ctx, wctx.instanceID)
-	if err != nil {
-		return zero, fmt.Errorf("reload instance for await event: %w", err)
-	}
+	// Use the shared instance from Context (loaded once in Run)
+	instance := wctx.instance
 
 	now := runner.now()
 
@@ -119,6 +117,8 @@ func WaitForEvent[T any](wctx *Context, eventName string, opts ...WaitForEventOp
 		}
 
 		if ar.TimedOut {
+			failedIdx := stepIndex
+			wctx.lastFailedStep = &failedIdx
 			return zero, ErrEventTimeout
 		}
 
@@ -136,21 +136,19 @@ func WaitForEvent[T any](wctx *Context, eventName string, opts ...WaitForEventOp
 				return zero, fmt.Errorf("marshal timed out result: %w", err)
 			}
 
-			// Reload to record the timeout
-			instance, err = runner.repo.Get(wctx.ctx, wctx.instanceID)
-			if err != nil {
-				return zero, fmt.Errorf("reload for timeout: %w", err)
-			}
 			if err := instance.recordThat(&stepCompleted{
-				StepIndex:   stepIndex,
-				Result:      resultJSON,
-				CompletedAt: now,
+				StepIndex:    stepIndex,
+				Result:       resultJSON,
+				CompletedAt:  now,
+				WorkflowName: instance.workflowName,
 			}); err != nil {
 				return zero, fmt.Errorf("record event timeout: %w", err)
 			}
-			if _, _, err := saveOrConflictAbort(wctx.ctx, runner.repo, instance); err != nil {
+			if err := saveOrConflictAbort(wctx.ctx, runner.repo, instance); err != nil {
 				return zero, fmt.Errorf("save event timeout: %w", err)
 			}
+			failedIdx := stepIndex
+			wctx.lastFailedStep = &failedIdx
 			return zero, ErrEventTimeout
 		}
 
@@ -168,27 +166,24 @@ func WaitForEvent[T any](wctx *Context, eventName string, opts ...WaitForEventOp
 				return zero, fmt.Errorf("marshal resolved result: %w", err)
 			}
 
-			// Reload and record
-			instance, err = runner.repo.Get(wctx.ctx, wctx.instanceID)
-			if err != nil {
-				return zero, fmt.Errorf("reload for event received: %w", err)
-			}
 			if err := instance.recordThat(&workflowEventReceived{
 				StepIndex:     stepIndex,
 				ReceivedEvent: eventName,
 				Payload:       payload,
+				WorkflowName:  instance.workflowName,
 			}); err != nil {
 				return zero, fmt.Errorf("record event received: %w", err)
 			}
 			// Overwrite step result with resolved version
 			if err := instance.recordThat(&stepCompleted{
-				StepIndex:   stepIndex,
-				Result:      resultJSON,
-				CompletedAt: runner.now(),
+				StepIndex:    stepIndex,
+				Result:       resultJSON,
+				CompletedAt:  runner.now(),
+				WorkflowName: instance.workflowName,
 			}); err != nil {
 				return zero, fmt.Errorf("record resolved step: %w", err)
 			}
-			if _, _, err := saveOrConflictAbort(wctx.ctx, runner.repo, instance); err != nil {
+			if err := saveOrConflictAbort(wctx.ctx, runner.repo, instance); err != nil {
 				return zero, fmt.Errorf("save resolved event: %w", err)
 			}
 
@@ -236,14 +231,15 @@ func WaitForEvent[T any](wctx *Context, eventName string, opts ...WaitForEventOp
 	}
 
 	if err := instance.recordThat(&stepCompleted{
-		StepIndex:   stepIndex,
-		Result:      resultJSON,
-		CompletedAt: now,
+		StepIndex:    stepIndex,
+		Result:       resultJSON,
+		CompletedAt:  now,
+		WorkflowName: instance.workflowName,
 	}); err != nil {
 		return zero, fmt.Errorf("record await event step: %w", err)
 	}
 
-	if _, _, err := saveOrConflictAbort(wctx.ctx, runner.repo, instance); err != nil {
+	if err := saveOrConflictAbort(wctx.ctx, runner.repo, instance); err != nil {
 		return zero, fmt.Errorf("save await event step: %w", err)
 	}
 
@@ -288,7 +284,10 @@ func PublishEvent(ctx context.Context, runner *Runner, eventName string, payload
 	}
 
 	// Store the event and get any waiting workflows
-	waiters := runner.waitStore.Publish(eventName, payloadJSON)
+	waiters, err := runner.waitStore.Publish(eventName, payloadJSON)
+	if err != nil {
+		return fmt.Errorf("publish event %q: %w", eventName, err)
+	}
 
 	// Enqueue wake-up tasks for all waiting workflows
 	for _, w := range waiters {
@@ -334,7 +333,7 @@ type eventWaitStore interface {
 
 	// Publish stores an event payload and returns the list of workflows that were waiting.
 	// First-write-wins: if the event has already been published, returns nil.
-	Publish(eventName string, payload json.RawMessage) []waitingWorkflow
+	Publish(eventName string, payload json.RawMessage) ([]waitingWorkflow, error)
 
 	// GetEvent checks if an event has been received for a specific workflow instance.
 	GetEvent(instanceID InstanceID, eventName string) (json.RawMessage, bool)
@@ -387,13 +386,13 @@ func (ws *waitStore) Register(instanceID InstanceID, eventName string, workflowN
 
 // Publish stores an event payload and returns the list of workflows that were waiting.
 // First-write-wins: if the event has already been published, returns nil.
-func (ws *waitStore) Publish(eventName string, payload json.RawMessage) []waitingWorkflow {
+func (ws *waitStore) Publish(eventName string, payload json.RawMessage) ([]waitingWorkflow, error) {
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
 
 	// First-write-wins
 	if _, ok := ws.published[eventName]; ok {
-		return nil
+		return nil, nil
 	}
 
 	ws.published[eventName] = payload
@@ -406,7 +405,7 @@ func (ws *waitStore) Publish(eventName string, payload json.RawMessage) []waitin
 	}
 	delete(ws.waiters, eventName)
 
-	return waiters
+	return waiters, nil
 }
 
 // GetEvent checks if an event has been received for a specific workflow instance.

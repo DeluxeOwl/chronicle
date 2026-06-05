@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	DefaultPollInterval       = 200 * time.Millisecond
+	DefaultPollInterval        = 200 * time.Millisecond
 	DefaultLeaseExtendInterval = 10 * time.Second
 )
 
@@ -22,8 +22,9 @@ type WorkerOptions struct {
 	// prevents other workers from reclaiming the task if a step takes
 	// longer than the queue's lease duration.
 	//
-	// Defaults to 10s. Set to 0 to disable automatic lease extension
-	// (you must then call Heartbeat manually from long-running steps).
+	// Defaults to 10s. Set to a negative value to disable automatic
+	// lease extension (you must then call Heartbeat manually from
+	// long-running steps).
 	LeaseExtendInterval time.Duration
 }
 
@@ -35,9 +36,8 @@ func (o WorkerOptions) pollInterval() time.Duration {
 }
 
 func (o WorkerOptions) leaseExtendInterval() time.Duration {
-	// Explicitly set to 0 disables auto-extension.
 	if o.LeaseExtendInterval < 0 {
-		return DefaultLeaseExtendInterval
+		return 0 // disabled
 	}
 	if o.LeaseExtendInterval == 0 {
 		return DefaultLeaseExtendInterval
@@ -61,7 +61,14 @@ func (o WorkerOptions) leaseExtendInterval() time.Duration {
 func (r *Runner) RunWorker(ctx context.Context, opts WorkerOptions) error {
 	interval := opts.pollInterval()
 	leaseExtend := opts.leaseExtendInterval()
-	r.logger.InfoContext(ctx, "worker starting", "pollInterval", interval, "leaseExtend", leaseExtend)
+	r.logger.InfoContext(
+		ctx,
+		"worker starting",
+		"pollInterval",
+		interval,
+		"leaseExtend",
+		leaseExtend,
+	)
 
 	for {
 		task, err := r.queue.Poll(ctx)
@@ -98,8 +105,14 @@ func (r *Runner) RunWorker(ctx context.Context, opts WorkerOptions) error {
 
 		// Spawn a background goroutine that periodically extends the lease
 		// so long-running steps don't cause lease expiry and task re-claiming.
-		leaseCtx, leaseCancel := context.WithCancel(ctx)
-		go r.autoExtendLease(leaseCtx, task.InstanceID, leaseExtend)
+		var leaseCancel context.CancelFunc
+		if leaseExtend > 0 {
+			var leaseCtx context.Context
+			leaseCtx, leaseCancel = context.WithCancel(ctx)
+			go r.autoExtendLease(leaseCtx, task.InstanceID, leaseExtend)
+		} else {
+			leaseCancel = func() {} // no-op when auto-extension is disabled
+		}
 
 		err = wf.execute(ctx, task.InstanceID)
 		leaseCancel() // stop the lease extender
@@ -160,7 +173,11 @@ func (r *Runner) RunWorker(ctx context.Context, opts WorkerOptions) error {
 // autoExtendLease periodically extends the task's lease until the context is cancelled.
 // This runs as a background goroutine during workflow execution to prevent other workers
 // from reclaiming the task during long-running steps.
-func (r *Runner) autoExtendLease(ctx context.Context, instanceID InstanceID, interval time.Duration) {
+func (r *Runner) autoExtendLease(
+	ctx context.Context,
+	instanceID InstanceID,
+	interval time.Duration,
+) {
 	// Extend lease by 3x the interval to provide safety margin.
 	leaseExtension := interval * 3 //nolint:mnd // Extension is 3x the check interval.
 

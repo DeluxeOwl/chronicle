@@ -114,11 +114,19 @@ func TestConflict_ConcurrentRunDoesNotCorruptWorkflow(t *testing.T) {
 	for _, n := range names {
 		require.NotEqual(t, "workflow/failed", n,
 			"ConflictError caused a spurious workflow/failed event in the log — this is corruption")
-		require.NotEqual(t, "workflow/retried", n,
-			"ConflictError caused a spurious workflow/retried event in the log — this is corruption")
+		require.NotEqual(
+			t,
+			"workflow/retried",
+			n,
+			"ConflictError caused a spurious workflow/retried event in the log — this is corruption",
+		)
 	}
-	require.Equal(t, []string{"workflow/started", "workflow/step_completed", "workflow/completed"}, names,
-		"event log should be clean: started → step_completed → completed")
+	require.Equal(
+		t,
+		[]string{"workflow/started", "workflow/step_completed", "workflow/completed"},
+		names,
+		"event log should be clean: started → step_completed → completed",
+	)
 }
 
 // TestConflict_WithRetryStrategy_DoesNotWasteRetry verifies that

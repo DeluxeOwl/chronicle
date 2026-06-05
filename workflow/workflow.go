@@ -74,9 +74,10 @@ func (*workflowStarted) EventName() string { return "workflow/started" }
 func (*workflowStarted) isWorkflowEvent()  {}
 
 type stepCompleted struct {
-	StepIndex   int             `json:"stepIndex"`
-	Result      json.RawMessage `json:"result"`
-	CompletedAt time.Time       `json:"completedAt,omitempty"`
+	StepIndex    int             `json:"stepIndex"`
+	Result       json.RawMessage `json:"result"`
+	CompletedAt  time.Time       `json:"completedAt,omitempty"`
+	WorkflowName string          `json:"workflowName,omitempty"` // populated since v2; empty in old events
 }
 
 func (*stepCompleted) EventName() string { return "workflow/step_completed" }
@@ -118,6 +119,7 @@ func (w *WorkflowInstance) EventFuncs() event.FuncsFor[WorkflowEvent] {
 	}
 }
 
+//nolint:funlen // single switch over all event kinds; splitting would reduce readability.
 func (w *WorkflowInstance) Apply(evt WorkflowEvent) error {
 	switch e := evt.(type) {
 	case *workflowStarted:
@@ -162,6 +164,12 @@ func (w *WorkflowInstance) Apply(evt WorkflowEvent) error {
 		w.status = StatusRunning
 		if !e.NextRunAfter.IsZero() {
 			w.lastCheckpointAt = e.NextRunAfter
+		}
+		// Clear the cached result of the step that failed so it re-executes on retry.
+		// This is critical for WaitForEvent timeouts: without this, the timed-out
+		// result would be replayed on retry, causing an immediate re-timeout.
+		if e.FailedStepIndex != nil {
+			delete(w.stepResults, *e.FailedStepIndex)
 		}
 		// Restore the retry strategy from the event so it survives replays
 		if e.RetryStrategy != nil {
@@ -212,16 +220,15 @@ func saveOrConflictAbort(
 	ctx context.Context,
 	repo aggregate.Repository[InstanceID, WorkflowEvent, *WorkflowInstance],
 	instance *WorkflowInstance,
-) (version.Version, aggregate.CommittedEvents[WorkflowEvent], error) {
-	v, ce, err := repo.Save(ctx, instance)
-	if err != nil {
+) error {
+	if _, _, err := repo.Save(ctx, instance); err != nil {
 		var conflictErr *version.ConflictError
 		if errors.As(err, &conflictErr) {
-			return v, ce, ErrConflictAbort
+			return ErrConflictAbort
 		}
-		return v, ce, err
+		return err
 	}
-	return v, ce, nil
+	return nil
 }
 
 // executableWorkflow is the non-generic interface that the worker loop
@@ -367,6 +374,7 @@ func NewSqliteRunnerWithSyncQueue(db *sql.DB, opts ...RunnerOption) (*Runner, er
 		return nil, fmt.Errorf("create transactional repository: %w", err)
 	}
 
+	//nolint:exhaustruct // syncQueueOpts already consumed above; not needed on the constructed Runner.
 	r := &Runner{
 		repo:          repo,
 		logger:        tmpRunner.logger,
@@ -383,10 +391,12 @@ func NewSqliteRunnerWithSyncQueue(db *sql.DB, opts ...RunnerOption) (*Runner, er
 // Context is the workflow execution context passed to workflow functions.
 // It implements the context.Context interface.
 type Context struct {
-	ctx        context.Context
-	instanceID InstanceID
-	runner     *Runner
-	stepCount  int // local counter, incremented by each Step/Step2/Sleep call within a Run
+	ctx            context.Context
+	instanceID     InstanceID
+	runner         *Runner
+	stepCount      int               // local counter, incremented by each Step/Step2/Sleep call within a Run
+	lastFailedStep *int              // set by Step/Step2/WaitForEvent when they return an error; used by scheduleRetry
+	instance       *WorkflowInstance // loaded once in Run(), reused across all Step/Sleep/WaitForEvent calls
 }
 
 func (c *Context) Value(key any) any {
@@ -572,12 +582,16 @@ func (w *Workflow[Params, Output]) Run(
 		return nil, fmt.Errorf("unmarshal params: %w", err)
 	}
 
-	// Create workflow context with step counter starting at 0
+	// Create workflow context with step counter starting at 0.
+	// The loaded instance is shared across all Step/Sleep/WaitForEvent calls
+	// within this Run, avoiding O(N²) event replays.
+	//nolint:exhaustruct // lastFailedStep is intentionally nil and set by Step/Step2/WaitForEvent on failure.
 	wctx := &Context{
 		ctx:        ctx,
 		instanceID: instanceID,
 		runner:     w.runner,
 		stepCount:  0,
+		instance:   instance,
 	}
 
 	// Execute workflow function
@@ -608,15 +622,9 @@ func (w *Workflow[Params, Output]) Run(
 		// If the event timed out, it's a real workflow error — let it flow to retry/fail.
 		// ErrEventTimeout is not special-cased here; it's treated like any other step error.
 
-		// Reload instance to get latest state
-		instance, loadErr := w.runner.repo.Get(ctx, instanceID)
-		if loadErr != nil {
-			return nil, fmt.Errorf(
-				"workflow failed and failed to reload: %w (original error: %w)",
-				loadErr,
-				err,
-			)
-		}
+		// Use the in-memory instance from the context — it already has all
+		// events applied (recordThat calls Apply, Save updates the version).
+		instance = wctx.instance
 
 		// Attempt to schedule a retry if a strategy is configured
 		retried, retryErr := w.runner.scheduleRetry(wctx, instance, err)
@@ -641,7 +649,7 @@ func (w *Workflow[Params, Output]) Run(
 		}); err != nil {
 			return nil, fmt.Errorf("record workflow failure: %w", err)
 		}
-		if _, _, saveErr := saveOrConflictAbort(ctx, w.runner.repo, instance); saveErr != nil {
+		if saveErr := saveOrConflictAbort(ctx, w.runner.repo, instance); saveErr != nil {
 			if isConflictAbortError(saveErr) {
 				return nil, ErrConflictAbort
 			}
@@ -654,11 +662,9 @@ func (w *Workflow[Params, Output]) Run(
 		return nil, err
 	}
 
-	// Reload instance to get latest state (steps may have been recorded)
-	instance, err = w.runner.repo.Get(ctx, instanceID)
-	if err != nil {
-		return nil, fmt.Errorf("reload instance after workflow completion: %w", err)
-	}
+	// Use the in-memory instance from the context — it already has all
+	// events applied by Step/Sleep/WaitForEvent calls.
+	instance = wctx.instance
 
 	// Serialize output
 	outputJSON, err := json.Marshal(output)
@@ -674,7 +680,7 @@ func (w *Workflow[Params, Output]) Run(
 	}
 
 	// Save final state
-	if _, _, err := saveOrConflictAbort(ctx, w.runner.repo, instance); err != nil {
+	if err := saveOrConflictAbort(ctx, w.runner.repo, instance); err != nil {
 		if isConflictAbortError(err) {
 			w.logger.InfoContext(ctx,
 				"conflict abort on completion save — another worker advanced this instance",
@@ -751,11 +757,8 @@ func Step[Result any](wctx *Context, fn func(context.Context) (Result, error)) (
 	stepIndex := wctx.stepCount
 	wctx.stepCount++
 
-	// Always reload the instance to get the latest state
-	instance, err := wctx.runner.repo.Get(wctx.ctx, wctx.instanceID)
-	if err != nil {
-		return zero, fmt.Errorf("reload instance for step: %w", err)
-	}
+	// Use the shared instance from Context (loaded once in Run)
+	instance := wctx.instance
 
 	// Check if step already completed (replay mode)
 	if cachedResult, ok := instance.stepResults[stepIndex]; ok {
@@ -784,7 +787,7 @@ func Step[Result any](wctx *Context, fn func(context.Context) (Result, error)) (
 		}); err != nil {
 			return zero, fmt.Errorf("record step failure: %w", err)
 		}
-		if _, _, saveErr := saveOrConflictAbort(wctx.ctx, wctx.runner.repo, instance); saveErr != nil {
+		if saveErr := saveOrConflictAbort(wctx.ctx, wctx.runner.repo, instance); saveErr != nil {
 			if isConflictAbortError(saveErr) {
 				return zero, saveErr
 			}
@@ -794,6 +797,8 @@ func Step[Result any](wctx *Context, fn func(context.Context) (Result, error)) (
 				err,
 			)
 		}
+		failedIdx := stepIndex
+		wctx.lastFailedStep = &failedIdx
 		return zero, err
 	}
 
@@ -805,15 +810,16 @@ func Step[Result any](wctx *Context, fn func(context.Context) (Result, error)) (
 
 	// Record step completion
 	if err := instance.recordThat(&stepCompleted{
-		StepIndex:   stepIndex,
-		Result:      resultJSON,
-		CompletedAt: wctx.runner.now(),
+		StepIndex:    stepIndex,
+		Result:       resultJSON,
+		CompletedAt:  wctx.runner.now(),
+		WorkflowName: instance.workflowName,
 	}); err != nil {
 		return zero, fmt.Errorf("record step completion: %w", err)
 	}
 
 	// Save after each step for durability
-	if _, _, err := saveOrConflictAbort(wctx.ctx, wctx.runner.repo, instance); err != nil {
+	if err := saveOrConflictAbort(wctx.ctx, wctx.runner.repo, instance); err != nil {
 		return zero, fmt.Errorf("save step result: %w", err)
 	}
 
@@ -827,11 +833,8 @@ func Step2(wctx *Context, fn func(context.Context) error) error {
 	stepIndex := wctx.stepCount
 	wctx.stepCount++
 
-	// Always reload the instance to get the latest state
-	instance, err := wctx.runner.repo.Get(wctx.ctx, wctx.instanceID)
-	if err != nil {
-		return fmt.Errorf("reload instance for step2: %w", err)
-	}
+	// Use the shared instance from Context (loaded once in Run)
+	instance := wctx.instance
 
 	// Check if step already completed (replay mode)
 	if _, ok := instance.stepResults[stepIndex]; ok {
@@ -870,7 +873,7 @@ func Step2(wctx *Context, fn func(context.Context) error) error {
 		}); err != nil {
 			return fmt.Errorf("record step failure: %w", err)
 		}
-		if _, _, saveErr := saveOrConflictAbort(wctx.ctx, wctx.runner.repo, instance); saveErr != nil {
+		if saveErr := saveOrConflictAbort(wctx.ctx, wctx.runner.repo, instance); saveErr != nil {
 			if isConflictAbortError(saveErr) {
 				return saveErr
 			}
@@ -880,20 +883,23 @@ func Step2(wctx *Context, fn func(context.Context) error) error {
 				err,
 			)
 		}
+		failedIdx := stepIndex
+		wctx.lastFailedStep = &failedIdx
 		return err
 	}
 
 	// Record step completion with empty result
 	if err := instance.recordThat(&stepCompleted{
-		StepIndex:   stepIndex,
-		Result:      []byte("null"),
-		CompletedAt: wctx.runner.now(),
+		StepIndex:    stepIndex,
+		Result:       []byte("null"),
+		CompletedAt:  wctx.runner.now(),
+		WorkflowName: instance.workflowName,
 	}); err != nil {
 		return fmt.Errorf("record step completion: %w", err)
 	}
 
 	// Save after each step for durability
-	if _, _, err := saveOrConflictAbort(wctx.ctx, wctx.runner.repo, instance); err != nil {
+	if err := saveOrConflictAbort(wctx.ctx, wctx.runner.repo, instance); err != nil {
 		return fmt.Errorf("save step result: %w", err)
 	}
 

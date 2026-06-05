@@ -3,6 +3,7 @@ package workflow
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 )
 
 // persistentWaitStore is a SQL-backed implementation of eventWaitStore.
@@ -41,10 +42,13 @@ func (p *persistentWaitStore) Register(_ InstanceID, _ string, _ string) {
 // that were waiting for this event. Matched waiters are removed from the
 // waiting table. All operations run in a single transaction to prevent
 // missed wake-ups.
-func (p *persistentWaitStore) Publish(eventName string, payload json.RawMessage) []waitingWorkflow {
+func (p *persistentWaitStore) Publish(
+	eventName string,
+	payload json.RawMessage,
+) ([]waitingWorkflow, error) {
 	tx, err := p.db.Begin()
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("persistent wait store publish begin tx: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck // not needed.
 
@@ -54,13 +58,16 @@ func (p *persistentWaitStore) Publish(eventName string, payload json.RawMessage)
 		VALUES (?, ?)
 	`, eventName, string(payload))
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("persistent wait store publish insert: %w", err)
 	}
 
-	affected, _ := result.RowsAffected()
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return nil, fmt.Errorf("persistent wait store publish rows affected: %w", err)
+	}
 	if affected == 0 {
 		// Event was already published — first-write-wins, no new waiters to wake.
-		return nil
+		return nil, nil
 	}
 
 	// Find all workflows waiting for this event
@@ -70,10 +77,7 @@ func (p *persistentWaitStore) Publish(eventName string, payload json.RawMessage)
 		WHERE event_name = ?
 	`, eventName)
 	if err != nil {
-		return nil
-	}
-	if rows.Err() != nil {
-		return nil
+		return nil, fmt.Errorf("persistent wait store publish query waiters: %w", err)
 	}
 	defer rows.Close()
 
@@ -82,26 +86,31 @@ func (p *persistentWaitStore) Publish(eventName string, payload json.RawMessage)
 		var instanceID string
 		var workflowName string
 		if err := rows.Scan(&instanceID, &workflowName); err != nil {
-			continue
+			return nil, fmt.Errorf("persistent wait store publish scan waiter: %w", err)
 		}
 		waiters = append(waiters, waitingWorkflow{
 			InstanceID:   InstanceID(instanceID),
 			WorkflowName: workflowName,
 		})
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("persistent wait store publish iterate waiters: %w", err)
+	}
 
 	// Remove matched waiters
 	if len(waiters) > 0 {
-		_, _ = tx.Exec(`
+		if _, err := tx.Exec(`
 			DELETE FROM workflow_waiting_events WHERE event_name = ?
-		`, eventName)
+		`, eventName); err != nil {
+			return nil, fmt.Errorf("persistent wait store publish delete waiters: %w", err)
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return nil
+		return nil, fmt.Errorf("persistent wait store publish commit: %w", err)
 	}
 
-	return waiters
+	return waiters, nil
 }
 
 // GetEvent checks if an event has been published by looking up the

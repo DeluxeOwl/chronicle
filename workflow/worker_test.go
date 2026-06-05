@@ -62,7 +62,8 @@ func TestWorker_RunsSimpleWorkflowToCompletion(t *testing.T) {
 	go func() {
 		defer close(done)
 		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -119,7 +120,8 @@ func TestWorker_HandlesSleepAndWakesUp(t *testing.T) {
 	go func() {
 		defer close(done)
 		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -184,7 +186,8 @@ func TestWorker_MultipleWorkflowTypes(t *testing.T) {
 	go func() {
 		defer close(done)
 		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -221,7 +224,8 @@ func TestWorker_GracefulShutdown(t *testing.T) {
 	workerErr := make(chan error, 1)
 	go func() {
 		workerErr <- runner.RunWorker(workerCtx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -279,7 +283,8 @@ func TestWorker_UnknownWorkflowFails(t *testing.T) {
 
 	// Worker should run without panicking, even if queue is empty
 	err = runner2.RunWorker(workerCtx, workflow.WorkerOptions{
-		PollInterval: 10 * time.Millisecond,
+		PollInterval:        10 * time.Millisecond,
+		LeaseExtendInterval: 0,
 	})
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 }
@@ -322,7 +327,8 @@ func TestWorker_MultipleInstances(t *testing.T) {
 	go func() {
 		defer close(done)
 		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
@@ -337,6 +343,99 @@ func TestWorker_MultipleInstances(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "done", result.Result)
 	}
+
+	cancel()
+	<-done
+}
+
+func TestWorker_NegativeLeaseExtendInterval_DisablesAutoExtension(t *testing.T) {
+	db := setupWorkerDB(t)
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db,
+		workflow.WithSyncQueueOpts(
+			workflow.WithSyncQueueLeaseDuration(100*time.Millisecond),
+		),
+	)
+	require.NoError(t, err)
+
+	wf := workflow.New(
+		runner,
+		"no-lease-extend",
+		func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
+			val, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				// Step takes longer than the lease duration.
+				// Without auto-extension the lease expires and a second worker
+				// could reclaim the task. With a negative LeaseExtendInterval
+				// auto-extension is disabled, so the lease is NOT extended.
+				time.Sleep(250 * time.Millisecond)
+				return "done", nil
+			})
+			if err != nil {
+				return nil, err
+			}
+			return &WorkerTestOutput{Result: val}, nil
+		},
+	)
+
+	ctx := t.Context()
+	id, err := wf.Start(ctx, &WorkerTestParams{Value: "test"})
+	require.NoError(t, err)
+
+	workerCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: -1, // disable auto-extension
+		})
+	}()
+
+	// The workflow should still complete (single worker, no contention).
+	require.Eventually(t, func() bool {
+		result, err := wf.GetResult(ctx, id)
+		return err == nil && result.Result == "done"
+	}, 3*time.Second, 20*time.Millisecond)
+
+	cancel()
+	<-done
+}
+
+func TestWorker_ZeroLeaseExtendInterval_UsesDefault(t *testing.T) {
+	db := setupWorkerDB(t)
+	runner, err := workflow.NewSqliteRunner(db)
+	require.NoError(t, err)
+
+	wf := workflow.New(
+		runner,
+		"zero-lease",
+		func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
+			return &WorkerTestOutput{Result: "ok"}, nil
+		},
+	)
+
+	ctx := t.Context()
+	id, err := wf.Start(ctx, &WorkerTestParams{Value: "test"})
+	require.NoError(t, err)
+
+	workerCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0, // should use default, not disable
+		})
+	}()
+
+	// Workflow should complete normally with default lease extension.
+	require.Eventually(t, func() bool {
+		result, err := wf.GetResult(ctx, id)
+		return err == nil && result.Result == "ok"
+	}, 2*time.Second, 20*time.Millisecond)
 
 	cancel()
 	<-done
@@ -383,7 +482,8 @@ func TestWorker_WorkflowFailureDoesNotCrashWorker(t *testing.T) {
 	go func() {
 		defer close(done)
 		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
-			PollInterval: 10 * time.Millisecond,
+			PollInterval:        10 * time.Millisecond,
+			LeaseExtendInterval: 0,
 		})
 	}()
 
