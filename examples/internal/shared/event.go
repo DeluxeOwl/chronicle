@@ -25,12 +25,12 @@ func (em *EventMetadata) Time() time.Time {
 	id := uuid.Must(uuid.FromString(em.EventID))
 	timestamp, err := uuid.TimestampFromV7(id)
 	if err != nil {
-		assert.Never("error getting timestamp from id: %v", err)
+		assert.Neverf("error getting timestamp from id: %v", err)
 	}
 
 	time, err := timestamp.Time()
 	if err != nil {
-		assert.Never("error getting time from timestamp: %v", err)
+		assert.Neverf("error getting time from timestamp: %v", err)
 	}
 
 	return time

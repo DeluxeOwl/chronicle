@@ -21,7 +21,7 @@ import (
 // causing the worker to permanently fail the task as "unknown workflow".
 func TestAsyncQueue_WorkflowNameFromEvent_StepCompleted(t *testing.T) {
 	db := setupAsyncDB(t)
-	q, err := workflow.NewAsyncQueue(db)
+	q, err := workflow.NewAsyncQueue(t.Context(), db)
 	require.NoError(t, err)
 
 	// Create a memory event log to produce real GlobalRecord values.
@@ -104,7 +104,7 @@ func TestAsyncQueue_WorkflowNameFromEvent_StepCompleted(t *testing.T) {
 // from the event payload.
 func TestAsyncQueue_WorkflowNameFromEvent_Retried(t *testing.T) {
 	db := setupAsyncDB(t)
-	q, err := workflow.NewAsyncQueue(db)
+	q, err := workflow.NewAsyncQueue(t.Context(), db)
 	require.NoError(t, err)
 
 	memLog := eventlog.NewMemory()
@@ -161,7 +161,7 @@ func TestAsyncQueue_WorkflowNameFromEvent_Retried(t *testing.T) {
 // name from the event payload.
 func TestAsyncQueue_WorkflowNameFromEvent_EventReceived(t *testing.T) {
 	db := setupAsyncDB(t)
-	q, err := workflow.NewAsyncQueue(db)
+	q, err := workflow.NewAsyncQueue(t.Context(), db)
 	require.NoError(t, err)
 
 	memLog := eventlog.NewMemory()
@@ -214,7 +214,7 @@ func TestAsyncQueue_WorkflowNameFromEvent_EventReceived(t *testing.T) {
 // falls back to the DB lookup and ultimately to the instance ID.
 func TestAsyncQueue_WorkflowNameFallback_OldEvents(t *testing.T) {
 	db := setupAsyncDB(t)
-	q, err := workflow.NewAsyncQueue(db)
+	q, err := workflow.NewAsyncQueue(t.Context(), db)
 	require.NoError(t, err)
 
 	memLog := eventlog.NewMemory()

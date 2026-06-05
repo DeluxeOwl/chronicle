@@ -64,7 +64,7 @@ type workflowRetried struct {
 	WorkflowName    string          `json:"workflowName,omitempty"`    // populated since v2; empty in old events
 }
 
-func (*workflowRetried) EventName() string { return "workflow/retried" }
+func (*workflowRetried) EventName() string { return eventNameWorkflowRetried }
 func (*workflowRetried) isWorkflowEvent()  {}
 
 // isRetryError checks if an error is ErrWorkflowRetrying.

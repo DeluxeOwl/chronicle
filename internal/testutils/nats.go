@@ -47,7 +47,6 @@ func SetupNATS(t testing.TB) (*nats.Conn, error) {
 
 	t.Cleanup(func() {
 		nc.Close()
-		//nolint:usetesting // not in this case.
 		if err := container.Terminate(context.Background()); err != nil {
 			t.Fatalf("failed to terminate container: %s", err)
 		}

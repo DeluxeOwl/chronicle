@@ -165,9 +165,8 @@ func (store *Memory) recordsToInternal(
 
 	for i, record := range records {
 		memoryRecord := memStoreRecord{
-			LogID:   record.LogID(),
-			Version: record.Version(),
-			//nolint:gosec // not a problem.
+			LogID:         record.LogID(),
+			Version:       record.Version(),
 			GlobalVersion: startingGlobalVersion + version.Version(i) + 1,
 			Data:          record.Data(),
 			EventName:     record.EventName(),

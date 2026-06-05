@@ -25,31 +25,31 @@ func parseConflictError(err error) (version.Version, bool) {
 
 	// Find the start of our unique error message prefix.
 	// This is more robust than SplitN as it ignores driver prefixes.
-	index := strings.Index(errMsg, conflictErrorPrefix)
-	if index == -1 {
+	_, after, ok := strings.Cut(errMsg, conflictErrorPrefix)
+	if !ok {
 		// Our special error message is not in the string.
 		return version.Zero, false
 	}
 
 	// The version number starts right after our prefix.
-	payload := errMsg[index+len(conflictErrorPrefix):]
+	payload := after
 
 	// Extract the numeric part, stopping at the first non-digit.
 	// This handles cases where there might be trailing text or parentheses.
-	var versionStr string
+	var versionStr strings.Builder
 	for _, r := range payload {
 		if r >= '0' && r <= '9' {
-			versionStr += string(r)
+			versionStr.WriteRune(r)
 		} else {
 			break
 		}
 	}
 
-	if versionStr == "" {
+	if versionStr.String() == "" {
 		return version.Zero, false
 	}
 
-	actual, parseErr := strconv.ParseUint(versionStr, 10, 64)
+	actual, parseErr := strconv.ParseUint(versionStr.String(), 10, 64)
 	if parseErr != nil {
 		// We found the prefix but the following text wasn't a valid number.
 		return version.Zero, false

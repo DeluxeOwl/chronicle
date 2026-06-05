@@ -18,7 +18,6 @@ import (
 func SetupPostgres(t testing.TB) (*sql.DB, func()) {
 	t.Helper()
 
-	//nolint:usetesting // Issues with closing.
 	ctx := context.Background()
 
 	user := "user"

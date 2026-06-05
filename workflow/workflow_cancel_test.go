@@ -319,7 +319,11 @@ func TestCancellationPolicy_WorkerAutoCancel(t *testing.T) {
 	clock := newClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
 	db := setupSyncDB(t)
 
-	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db, workflow.WithNowFunc(clock.Now))
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(
+		t.Context(),
+		db,
+		workflow.WithNowFunc(clock.Now),
+	)
 	require.NoError(t, err)
 
 	var stepCount atomic.Int32
@@ -393,7 +397,7 @@ func TestCancellationPolicy_WorkerAutoCancel(t *testing.T) {
 
 func TestCancelWorkflow_SyncQueueCleansUpTask(t *testing.T) {
 	db := setupSyncDB(t)
-	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(t.Context(), db)
 	require.NoError(t, err)
 
 	wf := workflow.New(

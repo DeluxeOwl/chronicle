@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"slices"
 
 	"github.com/DeluxeOwl/chronicle/encoding"
 	"github.com/DeluxeOwl/chronicle/event"
@@ -177,8 +178,8 @@ func ApplyReadTransformers[E event.Any](
 ) ([]E, error) {
 	var err error
 	// Apply transformers in reverse order for reading
-	for i := len(transformers) - 1; i >= 0; i-- {
-		events, err = transformers[i].TransformForRead(ctx, events)
+	for _, transformer := range slices.Backward(transformers) {
+		events, err = transformer.TransformForRead(ctx, events)
 		if err != nil {
 			return nil, fmt.Errorf("read transform failed: %w", err)
 		}
@@ -285,7 +286,7 @@ func FlushUncommittedEvents[TID ID, E event.Any, R Root[TID, E]](
 	for i, evt := range flushedUncommitted {
 		concrete, ok := event.AnyToConcrete[E](evt)
 		if !ok {
-			assert.Never("any to concrete")
+			assert.Neverf("any to concrete")
 		}
 
 		uncommitted[i] = concrete

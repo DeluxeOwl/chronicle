@@ -43,7 +43,7 @@ func main() {
 
 	pubsub := examplehelper.NewPubSubMemory[OutboxMessage]()
 
-	outboxProcessor, err := accountv2.NewAccountOutboxProcessor(db)
+	outboxProcessor, err := accountv2.NewAccountOutboxProcessor(ctx, db)
 	if err != nil {
 		panic(err)
 	}
@@ -165,7 +165,7 @@ func main() {
 	}
 
 	fmt.Println("\nState of 'outbox_account_events' table immediately after save:")
-	sqlprinter.Query("SELECT id, aggregate_id, event_name FROM outbox_account_events")
+	sqlprinter.Query(ctx, "SELECT id, aggregate_id, event_name FROM outbox_account_events")
 
 	fmt.Println("\nWaiting for subscriber to process all events from the pub/sub...")
 	wg.Wait()
@@ -174,5 +174,5 @@ func main() {
 	time.Sleep(200 * time.Millisecond)
 
 	fmt.Println("\nOutbox table:")
-	sqlprinter.Query("SELECT id, aggregate_id, event_name FROM outbox_account_events")
+	sqlprinter.Query(ctx, "SELECT id, aggregate_id, event_name FROM outbox_account_events")
 }

@@ -350,7 +350,7 @@ func TestWorker_MultipleInstances(t *testing.T) {
 
 func TestWorker_NegativeLeaseExtendInterval_DisablesAutoExtension(t *testing.T) {
 	db := setupWorkerDB(t)
-	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db,
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(t.Context(), db,
 		workflow.WithSyncQueueOpts(
 			workflow.WithSyncQueueLeaseDuration(100*time.Millisecond),
 		),

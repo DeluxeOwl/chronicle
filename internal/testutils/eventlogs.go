@@ -12,6 +12,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	nameSqliteLog   = "sqlite log"
+	namePostgresLog = "postgres log"
+)
+
 type EventLog struct {
 	Name string
 	Log  event.Log
@@ -79,11 +84,11 @@ func SetupEventLogs(t *testing.T) ([]EventLog, func()) {
 				Log:  eventlog.NewMemory(),
 			},
 			{
-				Name: "sqlite log",
+				Name: nameSqliteLog,
 				Log:  sqliteLog,
 			},
 			{
-				Name: "postgres log",
+				Name: namePostgresLog,
 				Log:  postgresLog,
 			},
 			{
@@ -125,11 +130,11 @@ func SetupSQLTransactionalLogs(t *testing.T) ([]TransactionalLog[*sql.Tx], func(
 
 	return []TransactionalLog[*sql.Tx]{
 			{
-				Name: "sqlite log",
+				Name: nameSqliteLog,
 				Log:  sqliteLog,
 			},
 			{
-				Name: "postgres log",
+				Name: namePostgresLog,
 				Log:  postgresLog,
 			},
 		}, func() {
@@ -163,11 +168,11 @@ func SetupGlobalEventLogs(t *testing.T) ([]GlobalEventLog, func()) {
 				Log:  eventlog.NewMemory(),
 			},
 			{
-				Name: "sqlite log",
+				Name: nameSqliteLog,
 				Log:  sqliteLog,
 			},
 			{
-				Name: "postgres log",
+				Name: namePostgresLog,
 				Log:  postgresLog,
 			},
 		}, func() {

@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"time"
 )
@@ -57,7 +58,7 @@ func (q *MemoryQueue) Poll(_ context.Context) (*QueuedTask, error) {
 			continue // not ready yet
 		}
 		// Remove from slice (order-preserving)
-		q.tasks = append(q.tasks[:i], q.tasks[i+1:]...)
+		q.tasks = slices.Delete(q.tasks, i, i+1)
 		return &task, nil
 	}
 

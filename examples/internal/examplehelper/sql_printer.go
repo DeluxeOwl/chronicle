@@ -1,6 +1,7 @@
 package examplehelper
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -19,16 +20,16 @@ func NewSQLPrinter(db *sql.DB) *SQLPrinter {
 	}
 }
 
-func (s *SQLPrinter) Query(query string, args ...any) {
-	rows, err := s.db.Query(query, args...)
+func (s *SQLPrinter) Query(ctx context.Context, query string, args ...any) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		assert.Never("run query: %v", err)
+		assert.Neverf("run query: %v", err)
 	}
 	defer rows.Close()
 
 	cols, err := rows.Columns()
 	if err != nil {
-		assert.Never("get columns: %v", err)
+		assert.Neverf("get columns: %v", err)
 	}
 
 	table := tablewriter.NewWriter(os.Stdout)
@@ -42,7 +43,7 @@ func (s *SQLPrinter) Query(query string, args ...any) {
 
 	for rows.Next() {
 		if err := rows.Scan(valuePtrs...); err != nil {
-			assert.Never("scan row: %v", err)
+			assert.Neverf("scan row: %v", err)
 		}
 
 		row := make([]string, len(cols))
@@ -56,17 +57,17 @@ func (s *SQLPrinter) Query(query string, args ...any) {
 
 		err := table.Append(row)
 		if err != nil {
-			assert.Never("table append: %v", err)
+			assert.Neverf("table append: %v", err)
 		}
 	}
 
 	err = table.Render()
 	if err != nil {
-		assert.Never("table render: %v", err)
+		assert.Neverf("table render: %v", err)
 	}
 
 	err = rows.Err()
 	if err != nil {
-		assert.Never("rows %v", err)
+		assert.Neverf("rows %v", err)
 	}
 }

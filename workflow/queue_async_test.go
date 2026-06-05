@@ -66,7 +66,7 @@ func setupAsyncRunner(t *testing.T, opts ...workflow.RunnerOption) (*workflow.Ru
 	// Use a file-based DB for the async queue tables (separate from the event log).
 	db := setupAsyncDB(t)
 
-	asyncQueue, err := workflow.NewAsyncQueue(db)
+	asyncQueue, err := workflow.NewAsyncQueue(t.Context(), db)
 	require.NoError(t, err)
 
 	// Prepend the queue option so user opts can override.
@@ -322,7 +322,7 @@ func TestAsyncQueue_MultipleWorkflows(t *testing.T) {
 
 func TestAsyncQueue_MatchesEventFilters(t *testing.T) {
 	db := setupAsyncDB(t)
-	q, err := workflow.NewAsyncQueue(db)
+	q, err := workflow.NewAsyncQueue(t.Context(), db)
 	require.NoError(t, err)
 
 	require.True(t, q.MatchesEvent("workflow/started"))

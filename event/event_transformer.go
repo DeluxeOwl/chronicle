@@ -3,6 +3,7 @@ package event
 import (
 	"context"
 	"fmt"
+	"slices"
 )
 
 // TODO: update docs to reflect slice change, add upcasting example + tests + efficiency
@@ -198,8 +199,7 @@ func (c TransformerChain[E]) TransformForRead(ctx context.Context, events []E) (
 	var err error
 	currentEvents := events
 
-	for i := len(c.transformers) - 1; i >= 0; i-- {
-		transformer := c.transformers[i]
+	for _, transformer := range slices.Backward(c.transformers) {
 		currentEvents, err = transformer.TransformForRead(ctx, currentEvents)
 		if err != nil {
 			return nil, err

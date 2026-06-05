@@ -64,7 +64,7 @@ func WithSyncQueueWorkerID(id string) SyncQueueOption {
 // The SyncQueue must be passed as the TransactionalAggregateProcessor when creating
 // a TransactionalRepository so that task creation is atomic with event writes.
 // Use NewSqliteRunnerWithSyncQueue for convenient wiring.
-func NewSyncQueue(db *sql.DB, opts ...SyncQueueOption) (*SyncQueue, error) {
+func NewSyncQueue(ctx context.Context, db *sql.DB, opts ...SyncQueueOption) (*SyncQueue, error) {
 	q := &SyncQueue{
 		db:            db,
 		nowFunc:       time.Now,
@@ -75,7 +75,7 @@ func NewSyncQueue(db *sql.DB, opts ...SyncQueueOption) (*SyncQueue, error) {
 		opt(q)
 	}
 
-	if _, err := db.Exec(`
+	if _, err := db.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS workflow_ready_tasks (
 			instance_id TEXT PRIMARY KEY,
 			workflow_name TEXT NOT NULL,
@@ -88,7 +88,7 @@ func NewSyncQueue(db *sql.DB, opts ...SyncQueueOption) (*SyncQueue, error) {
 	}
 
 	// Index for efficient polling: find unclaimed tasks ordered by run_after.
-	if _, err := db.Exec(`
+	if _, err := db.ExecContext(ctx, `
 		CREATE INDEX IF NOT EXISTS idx_workflow_ready_tasks_poll
 		ON workflow_ready_tasks (run_after_ns)
 		WHERE claimed_by IS NULL
@@ -98,7 +98,7 @@ func NewSyncQueue(db *sql.DB, opts ...SyncQueueOption) (*SyncQueue, error) {
 
 	// Tables for persistent event waiting (used by persistentWaitStore +
 	// transactional inserts in Process).
-	if _, err := db.Exec(`
+	if _, err := db.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS workflow_waiting_events (
 			instance_id TEXT NOT NULL,
 			event_name TEXT NOT NULL,
@@ -111,14 +111,14 @@ func NewSyncQueue(db *sql.DB, opts ...SyncQueueOption) (*SyncQueue, error) {
 		return nil, fmt.Errorf("create waiting_events table: %w", err)
 	}
 
-	if _, err := db.Exec(`
+	if _, err := db.ExecContext(ctx, `
 		CREATE INDEX IF NOT EXISTS idx_workflow_waiting_events_name
 		ON workflow_waiting_events (event_name)
 	`); err != nil {
 		return nil, fmt.Errorf("create waiting_events index: %w", err)
 	}
 
-	if _, err := db.Exec(`
+	if _, err := db.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS workflow_published_events (
 			event_name TEXT PRIMARY KEY,
 			payload TEXT NOT NULL
@@ -142,13 +142,13 @@ func NewSyncQueue(db *sql.DB, opts ...SyncQueueOption) (*SyncQueue, error) {
 // run_after created atomically by Process. For example, when Process detects
 // a pre-published event and creates an immediate task, a subsequent Enqueue
 // from WaitForEvent with a deadline must not overwrite it.
-func (q *SyncQueue) Enqueue(_ context.Context, task QueuedTask) error {
+func (q *SyncQueue) Enqueue(ctx context.Context, task QueuedTask) error {
 	runAfterNs := int64(0)
 	if !task.RunAfter.IsZero() {
 		runAfterNs = task.RunAfter.UnixNano()
 	}
 
-	_, err := q.db.Exec(`
+	_, err := q.db.ExecContext(ctx, `
 		INSERT INTO workflow_ready_tasks (instance_id, workflow_name, run_after_ns, claimed_by, claimed_until_ns)
 		VALUES (?, ?, ?, NULL, NULL)
 		ON CONFLICT(instance_id) DO UPDATE SET
@@ -236,8 +236,8 @@ func (q *SyncQueue) Poll(ctx context.Context) (*QueuedTask, error) {
 // replaced by the processor (e.g., sleep created a delayed task), the
 // claimed_by won't match and 0 rows are deleted — which is correct because
 // the delayed task should survive.
-func (q *SyncQueue) Complete(_ context.Context, instanceID InstanceID) error {
-	_, err := q.db.Exec(`
+func (q *SyncQueue) Complete(ctx context.Context, instanceID InstanceID) error {
+	_, err := q.db.ExecContext(ctx, `
 		DELETE FROM workflow_ready_tasks
 		WHERE instance_id = ? AND claimed_by = ?
 	`, string(instanceID), q.workerID)
@@ -249,8 +249,8 @@ func (q *SyncQueue) Complete(_ context.Context, instanceID InstanceID) error {
 
 // Fail deletes the task claimed by this worker. Same semantics as Complete
 // for the sync queue — the event log is the source of truth for failure state.
-func (q *SyncQueue) Fail(_ context.Context, instanceID InstanceID) error {
-	_, err := q.db.Exec(`
+func (q *SyncQueue) Fail(ctx context.Context, instanceID InstanceID) error {
+	_, err := q.db.ExecContext(ctx, `
 		DELETE FROM workflow_ready_tasks
 		WHERE instance_id = ? AND claimed_by = ?
 	`, string(instanceID), q.workerID)
@@ -263,12 +263,12 @@ func (q *SyncQueue) Fail(_ context.Context, instanceID InstanceID) error {
 // ExtendLease extends the claim timeout for a running task, signaling that
 // the worker is still making progress on a long-running step.
 func (q *SyncQueue) ExtendLease(
-	_ context.Context,
+	ctx context.Context,
 	instanceID InstanceID,
 	lease time.Duration,
 ) error {
 	newDeadline := q.nowFunc().Add(lease).UnixNano()
-	_, err := q.db.Exec(`
+	_, err := q.db.ExecContext(ctx, `
 		UPDATE workflow_ready_tasks
 		SET claimed_until_ns = ?
 		WHERE instance_id = ? AND claimed_by = ?
@@ -282,7 +282,8 @@ func (q *SyncQueue) ExtendLease(
 // Len returns the total number of tasks in the queue (for testing).
 func (q *SyncQueue) Len() int {
 	var count int
-	_ = q.db.QueryRow(`SELECT COUNT(*) FROM workflow_ready_tasks`).Scan(&count)
+	_ = q.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM workflow_ready_tasks`).
+		Scan(&count)
 	return count
 }
 
@@ -344,7 +345,7 @@ func (q *SyncQueue) processEvent(
 		}
 		// Check if the event was already published (pre-publish case).
 		// If so, create an immediate task so the worker picks it up.
-		if q.isEventPublishedTx(tx, e.AwaitingEvent) {
+		if q.isEventPublishedTx(ctx, tx, e.AwaitingEvent) {
 			return q.upsertTaskTx(ctx, tx, root.id, root.workflowName, q.nowFunc())
 		}
 		if !e.Deadline.IsZero() {
@@ -459,9 +460,9 @@ func (q *SyncQueue) insertWaitingEventTx(
 
 // isEventPublishedTx checks if an event has already been published by querying
 // the workflow_published_events table within the current transaction.
-func (q *SyncQueue) isEventPublishedTx(tx *sql.Tx, eventName string) bool {
+func (q *SyncQueue) isEventPublishedTx(ctx context.Context, tx *sql.Tx, eventName string) bool {
 	var count int
-	err := tx.QueryRow(`
+	err := tx.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM workflow_published_events WHERE event_name = ?
 	`, eventName).Scan(&count)
 	return err == nil && count > 0

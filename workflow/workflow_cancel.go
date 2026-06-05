@@ -27,7 +27,7 @@ type workflowCancelled struct {
 	CancelledAt time.Time `json:"cancelledAt"`
 }
 
-func (*workflowCancelled) EventName() string { return "workflow/cancelled" }
+func (*workflowCancelled) EventName() string { return eventNameWorkflowCancelled }
 func (*workflowCancelled) isWorkflowEvent()  {}
 
 // WithCancellationPolicy configures a cancellation policy for the workflow instance.

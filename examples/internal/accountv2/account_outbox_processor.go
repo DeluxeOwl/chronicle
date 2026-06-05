@@ -11,8 +11,8 @@ import (
 
 type AccountOutboxProcessor struct{}
 
-func NewAccountOutboxProcessor(db *sql.DB) (*AccountOutboxProcessor, error) {
-	_, err := db.Exec(`
+func NewAccountOutboxProcessor(ctx context.Context, db *sql.DB) (*AccountOutboxProcessor, error) {
+	_, err := db.ExecContext(ctx, `
         CREATE TABLE IF NOT EXISTS outbox_account_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             aggregate_id TEXT NOT NULL,

@@ -70,17 +70,17 @@ type workflowStarted struct {
 	CancellationPolicy json.RawMessage `json:"cancellationPolicy,omitempty" exhaustruct:"optional"`
 }
 
-func (*workflowStarted) EventName() string { return "workflow/started" }
+func (*workflowStarted) EventName() string { return eventNameWorkflowStarted }
 func (*workflowStarted) isWorkflowEvent()  {}
 
 type stepCompleted struct {
 	StepIndex    int             `json:"stepIndex"`
 	Result       json.RawMessage `json:"result"`
-	CompletedAt  time.Time       `json:"completedAt,omitempty"`
+	CompletedAt  time.Time       `json:"completedAt"`
 	WorkflowName string          `json:"workflowName,omitempty"` // populated since v2; empty in old events
 }
 
-func (*stepCompleted) EventName() string { return "workflow/step_completed" }
+func (*stepCompleted) EventName() string { return eventNameStepCompleted }
 func (*stepCompleted) isWorkflowEvent()  {}
 
 type stepFailed struct {
@@ -95,14 +95,14 @@ type workflowCompleted struct {
 	Result json.RawMessage `json:"result"`
 }
 
-func (*workflowCompleted) EventName() string { return "workflow/completed" }
+func (*workflowCompleted) EventName() string { return eventNameWorkflowCompleted }
 func (*workflowCompleted) isWorkflowEvent()  {}
 
 type workflowFailed struct {
 	Error string `json:"error"`
 }
 
-func (*workflowFailed) EventName() string { return "workflow/failed" }
+func (*workflowFailed) EventName() string { return eventNameWorkflowFailed }
 func (*workflowFailed) isWorkflowEvent()  {}
 
 func (w *WorkflowInstance) EventFuncs() event.FuncsFor[WorkflowEvent] {
@@ -315,7 +315,11 @@ func NewSqliteRunner(db *sql.DB, opts ...RunnerOption) (*Runner, error) {
 // The SyncQueue is wired as a TransactionalAggregateProcessor, meaning the
 // ready_tasks table is populated in the same SQL transaction as the event log
 // append. Workers can pick up tasks from the persistent queue across restarts.
-func NewSqliteRunnerWithSyncQueue(db *sql.DB, opts ...RunnerOption) (*Runner, error) {
+func NewSqliteRunnerWithSyncQueue(
+	ctx context.Context,
+	db *sql.DB,
+	opts ...RunnerOption,
+) (*Runner, error) {
 	logger := slog.Default()
 
 	// Pre-apply options to extract configuration (nowFunc, logger, etc.)
@@ -336,7 +340,7 @@ func NewSqliteRunnerWithSyncQueue(db *sql.DB, opts ...RunnerOption) (*Runner, er
 	}
 	syncOpts = append(syncOpts, tmpRunner.syncQueueOpts...)
 
-	syncQueue, err := NewSyncQueue(db, syncOpts...)
+	syncQueue, err := NewSyncQueue(ctx, db, syncOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("create sync queue: %w", err)
 	}

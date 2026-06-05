@@ -54,7 +54,6 @@ func (re RawEvents) ToRecords(logID LogID, startingVersion version.Version) []*R
 	records := make([]*Record, len(re))
 
 	for i, rawEvt := range re {
-		//nolint:gosec // It's not a problem in practice.
 		records[i] = NewRecord(
 			startingVersion+version.Version(i+1),
 			logID,

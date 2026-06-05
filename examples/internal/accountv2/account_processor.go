@@ -10,8 +10,11 @@ import (
 
 type AccountsWithNameProcessor struct{}
 
-func NewAccountsWithNameProcessor(db *sql.DB) (*AccountsWithNameProcessor, error) {
-	_, err := db.Exec(`
+func NewAccountsWithNameProcessor(
+	ctx context.Context,
+	db *sql.DB,
+) (*AccountsWithNameProcessor, error) {
+	_, err := db.ExecContext(ctx, `
         CREATE TABLE IF NOT EXISTS projection_accounts (
             account_id TEXT PRIMARY KEY,
             holder_name TEXT NOT NULL

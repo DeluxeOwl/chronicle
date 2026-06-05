@@ -28,7 +28,7 @@ func setupSyncDB(t *testing.T) *sql.DB {
 
 func TestSyncQueue_SimpleWorkflowCompletion(t *testing.T) {
 	db := setupSyncDB(t)
-	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(t.Context(), db)
 	require.NoError(t, err)
 
 	wf := workflow.New(
@@ -74,7 +74,11 @@ func TestSyncQueue_SleepAndWakeUp(t *testing.T) {
 	clock := newClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
 	db := setupSyncDB(t)
 
-	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db, workflow.WithNowFunc(clock.Now))
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(
+		t.Context(),
+		db,
+		workflow.WithNowFunc(clock.Now),
+	)
 	require.NoError(t, err)
 
 	wf := workflow.New(
@@ -139,7 +143,11 @@ func TestSyncQueue_RetryWithBackoff(t *testing.T) {
 	clock := newClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
 	db := setupSyncDB(t)
 
-	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db, workflow.WithNowFunc(clock.Now))
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(
+		t.Context(),
+		db,
+		workflow.WithNowFunc(clock.Now),
+	)
 	require.NoError(t, err)
 
 	var attempts atomic.Int32
@@ -216,7 +224,7 @@ func TestSyncQueue_CrashRecovery(t *testing.T) {
 	ctx := t.Context()
 
 	// --- Phase 1: Start a workflow, let it run the first step, then "crash" ---
-	runner1, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	runner1, err := workflow.NewSqliteRunnerWithSyncQueue(t.Context(), db)
 	require.NoError(t, err)
 
 	var step1Count atomic.Int32
@@ -263,7 +271,7 @@ func TestSyncQueue_CrashRecovery(t *testing.T) {
 	runner1 = nil //nolint:wastedassign,ineffassign // This is intended.
 
 	// --- Phase 3: New runner picks up the pending task ---
-	runner2, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	runner2, err := workflow.NewSqliteRunnerWithSyncQueue(t.Context(), db)
 	require.NoError(t, err)
 
 	wf2 := workflow.New(
@@ -317,7 +325,11 @@ func TestSyncQueue_CrashRecovery_SleepSurvivesRestart(t *testing.T) {
 	ctx := t.Context()
 
 	// Phase 1: Start workflow that sleeps
-	runner1, err := workflow.NewSqliteRunnerWithSyncQueue(db, workflow.WithNowFunc(clock.Now))
+	runner1, err := workflow.NewSqliteRunnerWithSyncQueue(
+		t.Context(),
+		db,
+		workflow.WithNowFunc(clock.Now),
+	)
 	require.NoError(t, err)
 
 	wf1 := workflow.New(
@@ -369,7 +381,11 @@ func TestSyncQueue_CrashRecovery_SleepSurvivesRestart(t *testing.T) {
 	// Phase 2: Advance clock past sleep, create new runner.
 	clock.Advance(2 * time.Hour)
 
-	runner2, err := workflow.NewSqliteRunnerWithSyncQueue(db, workflow.WithNowFunc(clock.Now))
+	runner2, err := workflow.NewSqliteRunnerWithSyncQueue(
+		t.Context(),
+		db,
+		workflow.WithNowFunc(clock.Now),
+	)
 	require.NoError(t, err)
 
 	wf2 := workflow.New(
@@ -406,7 +422,7 @@ func TestSyncQueue_CrashRecovery_SleepSurvivesRestart(t *testing.T) {
 
 func TestSyncQueue_MultipleInstances(t *testing.T) {
 	db := setupSyncDB(t)
-	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(t.Context(), db)
 	require.NoError(t, err)
 
 	var count atomic.Int32
@@ -463,7 +479,7 @@ func TestSyncQueue_MultipleInstances(t *testing.T) {
 
 func TestSyncQueue_WorkflowFailureDoesNotCrashWorker(t *testing.T) {
 	db := setupSyncDB(t)
-	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(t.Context(), db)
 	require.NoError(t, err)
 
 	wfFail := workflow.New(
@@ -512,7 +528,7 @@ func TestSyncQueue_WorkflowFailureDoesNotCrashWorker(t *testing.T) {
 
 func TestSyncQueue_HeartbeatExtendsLease(t *testing.T) {
 	db := setupSyncDB(t)
-	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(t.Context(), db)
 	require.NoError(t, err)
 
 	wf := workflow.New(
@@ -562,7 +578,7 @@ func TestSyncQueue_HeartbeatExtendsLease(t *testing.T) {
 
 func TestSyncQueue_WaitForEventAndPublish(t *testing.T) {
 	db := setupSyncDB(t)
-	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(t.Context(), db)
 	require.NoError(t, err)
 
 	type EventPayload struct {
@@ -615,7 +631,7 @@ func TestSyncQueue_WaitForEventAndPublish(t *testing.T) {
 
 func TestSyncQueue_TaskCleanedUpAfterCompletion(t *testing.T) {
 	db := setupSyncDB(t)
-	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(t.Context(), db)
 	require.NoError(t, err)
 
 	wf := workflow.New(
@@ -667,7 +683,7 @@ func TestSyncQueue_TaskCleanedUpAfterCompletion(t *testing.T) {
 
 func TestSyncQueue_GracefulShutdown(t *testing.T) {
 	db := setupSyncDB(t)
-	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(t.Context(), db)
 	require.NoError(t, err)
 
 	_ = workflow.New(
@@ -701,7 +717,7 @@ func TestSyncQueue_GracefulShutdown(t *testing.T) {
 
 func TestSyncQueue_MultipleWorkflowTypes(t *testing.T) {
 	db := setupSyncDB(t)
-	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(t.Context(), db)
 	require.NoError(t, err)
 
 	type OutputA struct {
@@ -762,7 +778,7 @@ func TestSyncQueue_MultipleWorkflowTypes(t *testing.T) {
 func TestSyncQueue_DirectRunStillWorks(t *testing.T) {
 	// Verify that Run() (direct execution, not via worker) still works with SyncQueue.
 	db := setupSyncDB(t)
-	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(t.Context(), db)
 	require.NoError(t, err)
 
 	wf := workflow.New(
@@ -800,7 +816,7 @@ func TestSyncQueue_ReplayAfterCrash(t *testing.T) {
 	ctx := t.Context()
 
 	// Phase 1: Run a multi-step workflow to completion.
-	runner1, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	runner1, err := workflow.NewSqliteRunnerWithSyncQueue(t.Context(), db)
 	require.NoError(t, err)
 
 	step1Exec := 0
@@ -833,7 +849,7 @@ func TestSyncQueue_ReplayAfterCrash(t *testing.T) {
 	// Don't run it yet; just let the task sit in the queue.
 
 	// Phase 2: "Crash" and create a new runner.
-	runner2, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	runner2, err := workflow.NewSqliteRunnerWithSyncQueue(t.Context(), db)
 	require.NoError(t, err)
 
 	wf2 := workflow.New(
@@ -892,7 +908,7 @@ func TestSyncQueue_PersistentWaitForEvent_CrashRecovery(t *testing.T) {
 	}
 
 	// Phase 1: Start a workflow, let it park on WaitForEvent, then "crash".
-	runner1, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	runner1, err := workflow.NewSqliteRunnerWithSyncQueue(t.Context(), db)
 	require.NoError(t, err)
 
 	wf1 := workflow.New(
@@ -940,7 +956,7 @@ func TestSyncQueue_PersistentWaitForEvent_CrashRecovery(t *testing.T) {
 	// "Crash" — discard runner1. In-memory state is lost.
 
 	// Phase 2: New runner, same DB. PublishEvent should find the waiter.
-	runner2, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	runner2, err := workflow.NewSqliteRunnerWithSyncQueue(t.Context(), db)
 	require.NoError(t, err)
 
 	wf2 := workflow.New(
@@ -1000,7 +1016,7 @@ func TestSyncQueue_PersistentWaitForEvent_PrePublish(t *testing.T) {
 		Data string `json:"data"`
 	}
 
-	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(t.Context(), db)
 	require.NoError(t, err)
 
 	wf := workflow.New(
@@ -1057,7 +1073,11 @@ func TestSyncQueue_PersistentWaitForEvent_PrePublishWithTimeout(t *testing.T) {
 		Data string `json:"data"`
 	}
 
-	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db, workflow.WithNowFunc(clock.Now))
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(
+		t.Context(),
+		db,
+		workflow.WithNowFunc(clock.Now),
+	)
 	require.NoError(t, err)
 
 	wf := workflow.New(
@@ -1123,7 +1143,7 @@ func TestSyncQueue_PersistentWaitForEvent_MultipleWaiters(t *testing.T) {
 		Data string `json:"data"`
 	}
 
-	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(t.Context(), db)
 	require.NoError(t, err)
 
 	wf := workflow.New(
@@ -1202,7 +1222,7 @@ func TestSyncQueue_PersistentWaitForEvent_PublishIdempotent(t *testing.T) {
 		Data string `json:"data"`
 	}
 
-	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(t.Context(), db)
 	require.NoError(t, err)
 
 	wf := workflow.New(
@@ -1261,7 +1281,7 @@ func TestSyncQueue_PersistentWaitForEvent_WaiterCleanedUpOnCompletion(t *testing
 	db := setupSyncDB(t)
 	ctx := t.Context()
 
-	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(t.Context(), db)
 	require.NoError(t, err)
 
 	wf := workflow.New(
@@ -1331,7 +1351,11 @@ func TestSyncQueue_PersistentWaitForEvent_WithTimeout_CrashRecovery(t *testing.T
 	}
 
 	// Phase 1: Start workflow, let it park with a timeout.
-	runner1, err := workflow.NewSqliteRunnerWithSyncQueue(db, workflow.WithNowFunc(clock.Now))
+	runner1, err := workflow.NewSqliteRunnerWithSyncQueue(
+		t.Context(),
+		db,
+		workflow.WithNowFunc(clock.Now),
+	)
 	require.NoError(t, err)
 
 	wf1 := workflow.New(
@@ -1379,7 +1403,11 @@ func TestSyncQueue_PersistentWaitForEvent_WithTimeout_CrashRecovery(t *testing.T
 	// Phase 2: Advance clock past timeout, new runner.
 	clock.Advance(2 * time.Hour)
 
-	runner2, err := workflow.NewSqliteRunnerWithSyncQueue(db, workflow.WithNowFunc(clock.Now))
+	runner2, err := workflow.NewSqliteRunnerWithSyncQueue(
+		t.Context(),
+		db,
+		workflow.WithNowFunc(clock.Now),
+	)
 	require.NoError(t, err)
 
 	_ = workflow.New(
@@ -1430,7 +1458,7 @@ func TestSyncQueue_ExpiredLeaseReclaimable(t *testing.T) {
 	db := setupSyncDB(t)
 
 	// Create a queue with a very short lease
-	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db,
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(t.Context(), db,
 		workflow.WithNowFunc(clock.Now),
 	)
 	require.NoError(t, err)
@@ -1489,7 +1517,7 @@ func TestPersistentPublish_ReturnsErrorOnDBFailure(t *testing.T) {
 	// When the DB is down, PublishEvent should return an error instead of
 	// silently pretending there are no waiters.
 	db := setupSyncDB(t)
-	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(t.Context(), db)
 	require.NoError(t, err)
 
 	// Close the DB to simulate a failure

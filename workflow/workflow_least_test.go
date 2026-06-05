@@ -51,7 +51,7 @@ func eventNames(t *testing.T, db *sql.DB, instanceID workflow.InstanceID) []stri
 // save a spurious workflowFailed event. We assert that no such event exists.
 func TestConflict_ConcurrentRunDoesNotCorruptWorkflow(t *testing.T) {
 	db := setupPlaygroundDB(t)
-	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(t.Context(), db)
 	require.NoError(t, err)
 
 	var ready sync.WaitGroup
@@ -133,7 +133,7 @@ func TestConflict_ConcurrentRunDoesNotCorruptWorkflow(t *testing.T) {
 // a ConflictError doesn't consume a retry attempt.
 func TestConflict_WithRetryStrategy_DoesNotWasteRetry(t *testing.T) {
 	db := setupPlaygroundDB(t)
-	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(t.Context(), db)
 	require.NoError(t, err)
 
 	var ready sync.WaitGroup
@@ -205,7 +205,7 @@ func TestConflict_WithRetryStrategy_DoesNotWasteRetry(t *testing.T) {
 // ConflictError the same way as Step.
 func TestConflict_Step2_DoesNotCorrupt(t *testing.T) {
 	db := setupPlaygroundDB(t)
-	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(t.Context(), db)
 	require.NoError(t, err)
 
 	var ready sync.WaitGroup
@@ -276,12 +276,12 @@ func TestAutoLease_LeaseExtendedDuringLongStep(t *testing.T) {
 	db := setupPlaygroundDB(t)
 
 	// Build runner with a short-lease SyncQueue.
-	syncQueue, err := workflow.NewSyncQueue(db,
+	syncQueue, err := workflow.NewSyncQueue(t.Context(), db,
 		workflow.WithSyncQueueLeaseDuration(200*time.Millisecond),
 	)
 	require.NoError(t, err)
 
-	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db)
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(t.Context(), db)
 	require.NoError(t, err)
 
 	type Out struct {
@@ -347,7 +347,7 @@ func TestAutoLease_TwoWorkers_NoConflict(t *testing.T) {
 	_, err = db.Exec("PRAGMA journal_mode=WAL")
 	require.NoError(t, err)
 
-	runner, err := workflow.NewSqliteRunnerWithSyncQueue(db,
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(t.Context(), db,
 		workflow.WithSyncQueueOpts(
 			workflow.WithSyncQueueLeaseDuration(200*time.Millisecond),
 		),

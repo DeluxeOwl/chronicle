@@ -6,10 +6,10 @@
     "go-task@latest",
     "golines@latest",
     "commitlint-rs@latest",
-    "go@1.24",
     "lefthook@latest",
     "yek@latest",
-    "goose@latest"
+    "goose@latest",
+    "go@latest"
   ],
   "shell": {
     "init_hook": [

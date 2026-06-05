@@ -65,7 +65,9 @@ func main() {
 	}
 	defer db.Close()
 
-	_, err = db.Exec(`
+	ctx := context.Background()
+
+	_, err = db.ExecContext(ctx, `
         CREATE TABLE IF NOT EXISTS unique_usernames (
 			username TEXT NOT NULL UNIQUE
 		);
@@ -95,8 +97,6 @@ func main() {
 		panic(err)
 	}
 
-	ctx := context.Background()
-
 	// Alice's account
 	accA, _ := accountv2.Open(accountv2.AccountID("alice-account-01"), timeProvider, "Alice")
 	_ = accA.DepositMoney(100)
@@ -107,7 +107,7 @@ func main() {
 	}
 
 	fmt.Println("\nState of unique usernames table:")
-	sqlprinter.Query("SELECT username FROM unique_usernames")
+	sqlprinter.Query(ctx, "SELECT username FROM unique_usernames")
 
 	fmt.Println("\nAttempting to create a duplicate user 'Alice'")
 	accC, _ := accountv2.Open(accountv2.AccountID("duplicate-alice-03"), timeProvider, "Alice")
@@ -119,10 +119,10 @@ func main() {
 	}
 
 	fmt.Println("\nFinal state of unique usernames table:")
-	sqlprinter.Query("SELECT username FROM unique_usernames")
+	sqlprinter.Query(ctx, "SELECT username FROM unique_usernames")
 
 	fmt.Println("\nAll events (note that the duplicate 'Alice' event was not saved):")
-	sqlprinter.Query(
+	sqlprinter.Query(ctx,
 		"SELECT log_id, version, event_name, json_extract(data, '$') as data FROM chronicle_events",
 	)
 }

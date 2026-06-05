@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -34,7 +35,7 @@ func newPersistentWaitStore(db *sql.DB) *persistentWaitStore {
 // The SyncQueue.Process() handles inserting waiters into workflow_waiting_events
 // atomically during the event-save transaction. It also detects pre-published
 // events and creates immediate wake-up tasks.
-func (p *persistentWaitStore) Register(_ InstanceID, _ string, _ string) {
+func (p *persistentWaitStore) Register(_ context.Context, _ InstanceID, _ string, _ string) {
 	// No-op: handled atomically by SyncQueue.Process() for workflowWaiting events.
 }
 
@@ -43,17 +44,18 @@ func (p *persistentWaitStore) Register(_ InstanceID, _ string, _ string) {
 // waiting table. All operations run in a single transaction to prevent
 // missed wake-ups.
 func (p *persistentWaitStore) Publish(
+	ctx context.Context,
 	eventName string,
 	payload json.RawMessage,
 ) ([]waitingWorkflow, error) {
-	tx, err := p.db.Begin()
+	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("persistent wait store publish begin tx: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck // not needed.
 
 	// First-write-wins: INSERT OR IGNORE
-	result, err := tx.Exec(`
+	result, err := tx.ExecContext(ctx, `
 		INSERT OR IGNORE INTO workflow_published_events (event_name, payload)
 		VALUES (?, ?)
 	`, eventName, string(payload))
@@ -71,7 +73,7 @@ func (p *persistentWaitStore) Publish(
 	}
 
 	// Find all workflows waiting for this event
-	rows, err := tx.Query(`
+	rows, err := tx.QueryContext(ctx, `
 		SELECT instance_id, workflow_name
 		FROM workflow_waiting_events
 		WHERE event_name = ?
@@ -99,7 +101,7 @@ func (p *persistentWaitStore) Publish(
 
 	// Remove matched waiters
 	if len(waiters) > 0 {
-		if _, err := tx.Exec(`
+		if _, err := tx.ExecContext(ctx, `
 			DELETE FROM workflow_waiting_events WHERE event_name = ?
 		`, eventName); err != nil {
 			return nil, fmt.Errorf("persistent wait store publish delete waiters: %w", err)
@@ -116,9 +118,13 @@ func (p *persistentWaitStore) Publish(
 // GetEvent checks if an event has been published by looking up the
 // workflow_published_events table. The instanceID is not used for the
 // query — published events are global (first-write-wins).
-func (p *persistentWaitStore) GetEvent(_ InstanceID, eventName string) (json.RawMessage, bool) {
+func (p *persistentWaitStore) GetEvent(
+	ctx context.Context,
+	_ InstanceID,
+	eventName string,
+) (json.RawMessage, bool) {
 	var payload string
-	err := p.db.QueryRow(`
+	err := p.db.QueryRowContext(ctx, `
 		SELECT payload FROM workflow_published_events WHERE event_name = ?
 	`, eventName).Scan(&payload)
 	if err != nil {
