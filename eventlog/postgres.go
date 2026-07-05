@@ -129,9 +129,10 @@ func (p *Postgres) AppendEvents(
 }
 
 // AppendInTx writes events within an existing database transaction.
-// It relies on the `trg_chronicle_check_event_version` trigger in the database to
-// perform the optimistic concurrency check. If the check fails, the trigger
-// raises an exception which is parsed into a `version.ConflictError`.
+// It performs optimistic concurrency control in application code: a single
+// advisory lock serializes writers to the same log_id, a single version
+// check validates the expected version, and then all events are inserted
+// without per-row trigger overhead.
 //
 // This method is primarily for internal use by `TransactionalRepository` or advanced scenarios.
 //
@@ -155,6 +156,33 @@ func (p *Postgres) AppendInTx(
 		return version.Zero, nil, fmt.Errorf("append in tx: %w", ErrUnsupportedCheck)
 	}
 
+	// Acquire a transaction-level advisory lock for this log_id.
+	// This serializes concurrent writers to the same aggregate, preventing
+	// the race where two transactions both read the same max version before
+	// either has committed. The lock is released when the transaction ends.
+	_, err := tx.ExecContext(ctx,
+		"SELECT pg_advisory_xact_lock(hashtext($1))", string(id))
+	if err != nil {
+		return version.Zero, nil, fmt.Errorf("append in tx: advisory lock: %w", err)
+	}
+
+	// Single version check for the entire batch instead of per-row.
+	var maxVersion uint64
+	err = tx.QueryRowContext(ctx,
+		"SELECT COALESCE(MAX(version), 0) FROM chronicle_events WHERE log_id = $1",
+		string(id),
+	).Scan(&maxVersion)
+	if err != nil {
+		return version.Zero, nil, fmt.Errorf("append in tx: version check: %w", err)
+	}
+
+	if maxVersion != uint64(exp) {
+		return version.Zero, nil, version.NewConflictError(
+			version.Version(exp),
+			version.Version(maxVersion),
+		)
+	}
+
 	stmt, err := tx.PrepareContext(
 		ctx,
 		"INSERT INTO chronicle_events (log_id, version, event_name, data) VALUES ($1, $2, $3, $4)",
@@ -174,6 +202,8 @@ func (p *Postgres) AppendInTx(
 			record.Data(),
 		)
 		if err != nil {
+			// Backwards compatibility: if the old trigger-based migration
+			// hasn't been applied yet, parse the trigger's error format.
 			if actualVersion, isConflict := parseConflictError(err); isConflict {
 				return version.Zero, nil, version.NewConflictError(
 					version.Version(exp),
