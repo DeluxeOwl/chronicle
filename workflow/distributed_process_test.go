@@ -38,6 +38,7 @@ const (
 	distributedWorker    = "worker"
 	distributedPublisher = "publisher"
 	distributedCanceller = "canceller"
+	distributedStarter   = "starter"
 	distributedEventName = "distributed:approval"
 	distributedLease     = 600 * time.Millisecond
 )
@@ -55,17 +56,18 @@ type distributedOutput struct {
 }
 
 type distributedChildConfig struct {
-	Backend      string              `json:"backend"`
-	Database     string              `json:"database"`
-	Tag          string              `json:"tag"`
-	Role         string              `json:"role"`
-	HoldFinish   bool                `json:"holdFinish"`
-	Heartbeat    bool                `json:"heartbeat"`
-	Delay        time.Duration       `json:"delay"`
-	Payload      string              `json:"payload"`
-	ClockOffset  time.Duration       `json:"clockOffset" exhaustruct:"optional"`
-	InstanceID   workflow.InstanceID `json:"instanceID" exhaustruct:"optional"`
-	Publications []string            `json:"publications" exhaustruct:"optional"`
+	Backend       string              `json:"backend"`
+	Database      string              `json:"database"`
+	Tag           string              `json:"tag"`
+	Role          string              `json:"role"`
+	HoldFinish    bool                `json:"holdFinish"`
+	Heartbeat     bool                `json:"heartbeat"`
+	Delay         time.Duration       `json:"delay"`
+	Payload       string              `json:"payload"`
+	ClockOffset   time.Duration       `json:"clockOffset" exhaustruct:"optional"`
+	LeaseDuration time.Duration       `json:"leaseDuration" exhaustruct:"optional"`
+	InstanceID    workflow.InstanceID `json:"instanceID" exhaustruct:"optional"`
+	Publications  []string            `json:"publications" exhaustruct:"optional"`
 }
 
 type distributedMessage struct {
@@ -87,22 +89,59 @@ func TestDistributedWorkflowChild(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(configJSON), &config))
 	ctx, stop := signal.NotifyContext(t.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	db := openDistributedDB(t, config.Backend, config.Database)
-	runner, err := newDistributedRunner(
-		ctx,
-		db,
-		config.Backend,
-		workflow.WithNowFunc(func() time.Time { return time.Now().Add(config.ClockOffset) }),
-	)
-	require.NoError(t, err)
 	var outputMu sync.Mutex
 	emit := func(message distributedMessage) error {
 		outputMu.Lock()
 		defer outputMu.Unlock()
 		return json.NewEncoder(os.Stdout).Encode(message)
 	}
+	if config.Role == distributedStarter {
+		require.NoError(
+			t,
+			emit(
+				distributedMessage{
+					Type:       "ready",
+					InstanceID: "",
+					Step:       "",
+					Stale:      false,
+					Error:      "",
+				},
+			),
+		)
+		var command string
+		_, err := fmt.Fscanln(os.Stdin, &command)
+		require.NoError(t, err)
+	}
+	db := openDistributedDB(t, config.Backend, config.Database)
+	runner, err := newDistributedRunnerWithLease(
+		ctx, db, config.Backend, config.LeaseDuration,
+		workflow.WithNowFunc(func() time.Time { return time.Now().Add(config.ClockOffset) }),
+	)
+	require.NoError(t, err)
 	if config.Role == distributedPublisher {
 		require.NoError(t, runDistributedPublisher(ctx, runner, config, emit))
+		return
+	}
+	if config.Role == distributedStarter {
+		definition := workflow.New(
+			runner,
+			"concurrent-start",
+			func(*workflow.Context, *struct{}) (*struct{}, error) { return &struct{}{}, nil },
+		)
+		id, err := definition.Start(ctx, &struct{}{})
+		require.NoError(t, err)
+		require.NoError(
+			t,
+			emit(
+				distributedMessage{
+					Type:       "started",
+					InstanceID: id,
+					Step:       "",
+					Stale:      false,
+					Error:      "",
+				},
+			),
+		)
 		return
 	}
 	if config.Role == distributedCanceller {
@@ -165,15 +204,28 @@ func newDistributedRunner(
 	backend string,
 	opts ...workflow.RunnerOption,
 ) (*workflow.Runner, error) {
+	return newDistributedRunnerWithLease(ctx, db, backend, distributedLease, opts...)
+}
+
+func newDistributedRunnerWithLease(
+	ctx context.Context,
+	db *sql.DB,
+	backend string,
+	lease time.Duration,
+	opts ...workflow.RunnerOption,
+) (*workflow.Runner, error) {
+	if lease == 0 {
+		lease = distributedLease
+	}
 	if backend == distributedPostgres {
 		opts = append(opts, workflow.WithPostgresQueueOpts(
-			workflow.WithPostgresQueueLeaseDuration(distributedLease),
+			workflow.WithPostgresQueueLeaseDuration(lease),
 			workflow.WithPostgresQueueWorkerID("shared-process-label"),
 		))
 		return workflow.NewPostgresRunnerWithSyncQueue(ctx, db, opts...)
 	}
 	opts = append(opts, workflow.WithSyncQueueOpts(
-		workflow.WithSyncQueueLeaseDuration(distributedLease),
+		workflow.WithSyncQueueLeaseDuration(lease),
 		workflow.WithSyncQueueWorkerID("shared-process-label"),
 	))
 	return workflow.NewSqliteRunnerWithSyncQueue(ctx, db, opts...)

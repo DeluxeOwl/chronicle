@@ -40,6 +40,7 @@ type waitForEventResult struct {
 type workflowWaiting struct {
 	StepIndex     int           `json:"stepIndex"`
 	AwaitingEvent string        `json:"awaitingEvent"`
+	WorkflowName  string        `json:"workflowName,omitempty" exhaustruct:"optional"`
 	Timeout       time.Duration `json:"timeout,omitempty"`
 	Deadline      time.Time     `json:"deadline"`
 	StartedAt     time.Time     `json:"startedAt,omitempty" exhaustruct:"optional"`
@@ -137,7 +138,7 @@ func WaitForEvent[T any](wctx *Context, eventName string, opts ...WaitForEventOp
 		if err != nil {
 			return zero, infrastructureError(err)
 		}
-		if err := instance.recordThat(&workflowWaiting{StepIndex: stepIndex, AwaitingEvent: eventName, Timeout: options.Timeout, Deadline: wait.Deadline, StartedAt: now, Name: config.name}); err != nil {
+		if err := instance.recordThat(&workflowWaiting{StepIndex: stepIndex, AwaitingEvent: eventName, WorkflowName: instance.workflowName, Timeout: options.Timeout, Deadline: wait.Deadline, StartedAt: now, Name: config.name}); err != nil {
 			return zero, infrastructureError(err)
 		}
 		if err := instance.recordThat(&stepCompleted{StepIndex: stepIndex, Result: encoded, CompletedAt: now, WorkflowName: instance.workflowName, Name: config.name, Kind: stepKindWait}); err != nil {
@@ -155,8 +156,7 @@ func WaitForEvent[T any](wctx *Context, eventName string, opts ...WaitForEventOp
 		return result, nil
 	}
 	if wait.TimedOut {
-		wctx.lastFailedStep = &stepIndex
-		return zero, ErrEventTimeout
+		return zero, wctx.rememberStepError(stepIndex, ErrEventTimeout)
 	}
 	wctx.runner.waitStore.Register(wctx.ctx, wctx.instanceID, eventName, instance.workflowName)
 	return resumeEventWait[T](wctx, stepIndex, wait, config)
@@ -206,8 +206,7 @@ func resumeEventWait[T any](
 		if err := saveEventWait(wctx, index, wait, config); err != nil {
 			return zero, err
 		}
-		wctx.lastFailedStep = &index
-		return zero, ErrEventTimeout
+		return zero, wctx.rememberStepError(index, ErrEventTimeout)
 	}
 	if !wait.Deadline.IsZero() {
 		if err := wctx.runner.enqueueTask(wctx.ctx, QueuedTask{InstanceID: wctx.instanceID, WorkflowName: wctx.instance.workflowName, RunAfter: wait.Deadline}); err != nil {

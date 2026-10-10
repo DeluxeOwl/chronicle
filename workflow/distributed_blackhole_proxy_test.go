@@ -26,6 +26,7 @@ type distributedBlackholeProxy struct {
 	target      string
 	mu          sync.Mutex
 	marker      []byte
+	markerTag   byte
 	connections map[net.Conn]struct{}
 	trapped     chan *distributedBlackholeTrap
 	acceptDone  chan struct{}
@@ -48,7 +49,7 @@ func startDistributedBlackholeProxy(
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(t.Context())
 	proxy := &distributedBlackholeProxy{
-		ctx: ctx, listener: listener, target: databaseURL.Host, mu: sync.Mutex{}, marker: nil,
+		ctx: ctx, listener: listener, target: databaseURL.Host, mu: sync.Mutex{}, marker: nil, markerTag: 0,
 		connections: make(map[net.Conn]struct{}), trapped: make(chan *distributedBlackholeTrap, 1),
 		acceptDone: make(chan struct{}), forwarders: sync.WaitGroup{},
 	}
@@ -86,15 +87,22 @@ func (p *distributedBlackholeProxy) arm(marker string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.marker = []byte(marker)
+	p.markerTag = 'D'
+}
+
+// A COMMIT completion proves PostgreSQL accepted the transaction even when
+// its result cannot reach the client. This is not an idle-transaction fault.
+func (p *distributedBlackholeProxy) armCommit() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.marker = []byte("COMMIT\x00")
+	p.markerTag = 'C'
 }
 
 func (p *distributedBlackholeProxy) trapRow(tag byte, payload []byte) *distributedBlackholeTrap {
-	if tag != 'D' {
-		return nil
-	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if len(p.marker) == 0 || !bytes.Contains(payload, p.marker) {
+	if tag != p.markerTag || len(p.marker) == 0 || !bytes.Contains(payload, p.marker) {
 		return nil
 	}
 	p.marker = nil

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -74,8 +75,16 @@ func NewSyncQueue(ctx context.Context, db *sql.DB, opts ...SyncQueueOption) (*Sy
 	if err := validateLease(q.leaseDuration); err != nil {
 		return nil, err
 	}
-	if err := ensureReadyTasksSchema(ctx, db); err != nil {
+	if err := retrySQLiteInitialization(ctx, q.initializeSchema); err != nil {
 		return nil, err
+	}
+	return q, nil
+}
+
+func (q *SyncQueue) initializeSchema(ctx context.Context) error {
+	db := q.db
+	if err := ensureReadyTasksSchema(ctx, db); err != nil {
+		return err
 	}
 
 	// Tables for persistent event waiting (used by persistentWaitStore +
@@ -90,21 +99,17 @@ func NewSyncQueue(ctx context.Context, db *sql.DB, opts ...SyncQueueOption) (*Sy
 			PRIMARY KEY (instance_id, event_name)
 		)
 	`); err != nil {
-		return nil, fmt.Errorf("create waiting_events table: %w", err)
+		return fmt.Errorf("create waiting_events table: %w", err)
 	}
 
 	if _, err := db.ExecContext(ctx, `
 		CREATE INDEX IF NOT EXISTS idx_workflow_waiting_events_name
 		ON workflow_waiting_events (event_name)
 	`); err != nil {
-		return nil, fmt.Errorf("create waiting_events index: %w", err)
+		return fmt.Errorf("create waiting_events index: %w", err)
 	}
 
-	if err := ensurePublishedEventsSchema(ctx, db); err != nil {
-		return nil, err
-	}
-
-	return q, nil
+	return ensurePublishedEventsSchema(ctx, db)
 }
 
 // --- TaskQueue implementation ---
@@ -534,10 +539,14 @@ func pollSQLiteClaim(
 	var task *ClaimedTask
 	err := withSQLiteWriteTx(ctx, db, func(tx *sql.Tx) error {
 		now := nowFunc()
+		expiryNS, err := sqliteLeaseExpiryNS(now, lease)
+		if err != nil {
+			return err
+		}
 		receipt := newClaimReceipt()
 		var instanceID, workflowName string
 		var runAfterNS int64
-		err := tx.QueryRowContext(ctx, `
+		err = tx.QueryRowContext(ctx, `
 			UPDATE workflow_ready_tasks SET
 				run_after_ns=COALESCE(next_run_after_ns,run_after_ns),next_run_after_ns=NULL,
 				claimed_by=?,claimed_until_ns=?,claim_receipt=?
@@ -548,7 +557,7 @@ func pollSQLiteClaim(
 				ORDER BY COALESCE(next_run_after_ns,run_after_ns),instance_id LIMIT 1
 			)
 			RETURNING instance_id,workflow_name,run_after_ns
-		`, workerID, now.Add(lease).UnixNano(), string(receipt), now.UnixNano(), now.UnixNano()).Scan(&instanceID, &workflowName, &runAfterNS)
+		`, workerID, expiryNS, string(receipt), now.UnixNano(), now.UnixNano()).Scan(&instanceID, &workflowName, &runAfterNS)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}
@@ -568,6 +577,19 @@ func pollSQLiteClaim(
 		return nil, err
 	}
 	return task, nil
+}
+
+// SQLite persists lease instants as signed nanoseconds, unlike Go time.Time.
+// Reject an unrepresentable deadline before creating or renewing ownership.
+func sqliteLeaseExpiryNS(now time.Time, lease time.Duration) (int64, error) {
+	if err := validateLease(lease); err != nil {
+		return 0, err
+	}
+	nowNS := now.UnixNano()
+	if !time.Unix(0, nowNS).Equal(now) || nowNS > math.MaxInt64-int64(lease) {
+		return 0, errors.New("queue lease deadline is outside the nanosecond storage range")
+	}
+	return nowNS + int64(lease), nil
 }
 
 func acknowledgeSQLiteClaim(
@@ -626,11 +648,15 @@ func extendSQLiteClaim(
 	}
 	return withSQLiteWriteTx(ctx, db, func(tx *sql.Tx) error {
 		now := nowFunc()
+		expiryNS, err := sqliteLeaseExpiryNS(now, lease)
+		if err != nil {
+			return err
+		}
 		result, err := tx.ExecContext(ctx, `
 			UPDATE workflow_ready_tasks
 			SET claimed_until_ns=MAX(claimed_until_ns,?)
 			WHERE instance_id=? AND claim_receipt=? AND claimed_until_ns>?
-		`, now.Add(lease).UnixNano(), string(task.InstanceID), string(task.Receipt), now.UnixNano())
+		`, expiryNS, string(task.InstanceID), string(task.Receipt), now.UnixNano())
 		if err != nil {
 			return fmt.Errorf("extend task claim: %w", err)
 		}

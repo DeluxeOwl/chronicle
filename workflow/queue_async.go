@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -71,8 +72,19 @@ func NewAsyncQueue(ctx context.Context, db *sql.DB, opts ...AsyncQueueOption) (*
 	if err := validateLease(q.leaseDuration); err != nil {
 		return nil, err
 	}
-	if err := ensureReadyTasksSchema(ctx, db); err != nil {
+	if err := retrySQLiteInitialization(ctx, q.initializeSchema); err != nil {
 		return nil, err
+	}
+	return q, nil
+}
+
+func (q *AsyncQueue) initializeSchema(ctx context.Context) error {
+	db := q.db
+	if err := ensureReadyTasksSchema(ctx, db); err != nil {
+		return err
+	}
+	if err := q.ensureWorkflowNames(ctx); err != nil {
+		return err
 	}
 
 	// Tables for persistent event waiting.
@@ -86,21 +98,17 @@ func NewAsyncQueue(ctx context.Context, db *sql.DB, opts ...AsyncQueueOption) (*
 			PRIMARY KEY (instance_id, event_name)
 		)
 	`); err != nil {
-		return nil, fmt.Errorf("create waiting_events table: %w", err)
+		return fmt.Errorf("create waiting_events table: %w", err)
 	}
 
 	if _, err := db.ExecContext(ctx, `
 		CREATE INDEX IF NOT EXISTS idx_workflow_waiting_events_name
 		ON workflow_waiting_events (event_name)
 	`); err != nil {
-		return nil, fmt.Errorf("create waiting_events index: %w", err)
+		return fmt.Errorf("create waiting_events index: %w", err)
 	}
 
-	if err := ensurePublishedEventsSchema(ctx, db); err != nil {
-		return nil, err
-	}
-
-	return q, nil
+	return ensurePublishedEventsSchema(ctx, db)
 }
 
 // --- AsyncProjection implementation ---
@@ -136,18 +144,30 @@ func (q *AsyncQueue) Handle(ctx context.Context, rec *event.GlobalRecord) error 
 		if err := json.Unmarshal(rec.Data(), &e); err != nil {
 			return fmt.Errorf("unmarshal workflowStarted: %w", err)
 		}
-		return q.upsertTask(ctx, InstanceID(e.InstanceID), e.WorkflowName, time.Time{})
+		id := InstanceID(e.InstanceID)
+		if err := q.rememberWorkflowName(ctx, id, e.WorkflowName); err != nil {
+			return err
+		}
+		return q.upsertTask(ctx, id, e.WorkflowName, time.Time{})
 
 	case eventNameStepCompleted:
 		var e stepCompleted
 		if err := json.Unmarshal(rec.Data(), &e); err != nil {
 			return fmt.Errorf("unmarshal stepCompleted: %w", err)
 		}
+		if e.WorkflowName != "" {
+			if err := q.rememberWorkflowName(ctx, instanceID, e.WorkflowName); err != nil {
+				return err
+			}
+		}
 		// Check if this is a sleep step.
 		var sr sleepResult
 		if (e.Kind == "sleep" || e.Kind == "") && json.Unmarshal(e.Result, &sr) == nil &&
 			!sr.WakeAt.IsZero() {
-			workflowName := q.resolveWorkflowName(ctx, e.WorkflowName, instanceID)
+			workflowName, err := q.resolveWorkflowName(ctx, e.WorkflowName, instanceID)
+			if err != nil {
+				return err
+			}
 			return q.upsertTask(ctx, instanceID, workflowName, sr.WakeAt)
 		}
 		return nil
@@ -157,7 +177,10 @@ func (q *AsyncQueue) Handle(ctx context.Context, rec *event.GlobalRecord) error 
 		if err := json.Unmarshal(rec.Data(), &e); err != nil {
 			return fmt.Errorf("unmarshal workflowRetried: %w", err)
 		}
-		workflowName := q.resolveWorkflowName(ctx, e.WorkflowName, instanceID)
+		workflowName, err := q.resolveWorkflowName(ctx, e.WorkflowName, instanceID)
+		if err != nil {
+			return err
+		}
 		return q.upsertTask(ctx, instanceID, workflowName, e.NextRunAfter)
 
 	case eventNameWorkflowWaiting:
@@ -165,7 +188,10 @@ func (q *AsyncQueue) Handle(ctx context.Context, rec *event.GlobalRecord) error 
 		if err := json.Unmarshal(rec.Data(), &e); err != nil {
 			return fmt.Errorf("unmarshal workflowWaiting: %w", err)
 		}
-		workflowName := q.resolveWorkflowName(ctx, q.getWorkflowName(ctx, instanceID), instanceID)
+		workflowName, err := q.resolveWorkflowName(ctx, e.WorkflowName, instanceID)
+		if err != nil {
+			return err
+		}
 		// Record the waiter.
 		if err := q.insertWaitingEvent(ctx, instanceID, workflowName, e.AwaitingEvent, e.StepIndex, e.Deadline); err != nil {
 			return err
@@ -191,7 +217,10 @@ func (q *AsyncQueue) Handle(ctx context.Context, rec *event.GlobalRecord) error 
 		if err := q.deleteWaitingEvent(ctx, instanceID, e.ReceivedEvent); err != nil {
 			return err
 		}
-		workflowName := q.resolveWorkflowName(ctx, e.WorkflowName, instanceID)
+		workflowName, err := q.resolveWorkflowName(ctx, e.WorkflowName, instanceID)
+		if err != nil {
+			return err
+		}
 		return q.upsertTask(ctx, instanceID, workflowName, time.Time{})
 
 	case eventNameWorkflowCompleted, eventNameWorkflowFailed, eventNameWorkflowCancelled:
@@ -324,32 +353,78 @@ func (q *AsyncQueue) deleteTask(ctx context.Context, instanceID InstanceID) erro
 	return nil
 }
 
-// resolveWorkflowName returns the best available workflow name. It prefers the
-// name embedded in the event payload (available since v2), falls back to the
-// DB lookup, and only uses the instance ID as a last resort.
+// Definition names outlive disposable tasks so lagging legacy events remain
+// routable after acknowledgment or terminal cleanup. Existing tasks seed upgrades.
+func (q *AsyncQueue) ensureWorkflowNames(ctx context.Context) error {
+	if _, err := q.db.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS workflow_async_names (
+			instance_id TEXT PRIMARY KEY,
+			workflow_name TEXT NOT NULL
+		)
+	`); err != nil {
+		return fmt.Errorf("create async workflow names: %w", err)
+	}
+	if _, err := q.db.ExecContext(ctx, `
+		INSERT OR IGNORE INTO workflow_async_names (instance_id, workflow_name)
+		SELECT instance_id, workflow_name FROM workflow_ready_tasks WHERE workflow_name <> ''
+	`); err != nil {
+		return fmt.Errorf("seed async workflow names: %w", err)
+	}
+	return nil
+}
+
+func (q *AsyncQueue) rememberWorkflowName(ctx context.Context, id InstanceID, name string) error {
+	if name == "" {
+		return fmt.Errorf("async workflow %s has no definition name", id)
+	}
+	if _, err := q.db.ExecContext(ctx, `
+		INSERT INTO workflow_async_names (instance_id, workflow_name) VALUES (?, ?)
+		ON CONFLICT(instance_id) DO UPDATE SET workflow_name = excluded.workflow_name
+	`, string(id), name); err != nil {
+		return fmt.Errorf("retain async workflow name: %w", err)
+	}
+	return nil
+}
+
+// New events carry their definition name. Legacy events use retained identity
+// or an existing task, but storage errors must stop projection checkpointing.
 func (q *AsyncQueue) resolveWorkflowName(
 	ctx context.Context,
 	fromEvent string,
 	instanceID InstanceID,
-) string {
+) (string, error) {
 	if fromEvent != "" {
-		return fromEvent
+		if err := q.rememberWorkflowName(ctx, instanceID, fromEvent); err != nil {
+			return "", err
+		}
+		return fromEvent, nil
 	}
-	if name := q.getWorkflowName(ctx, instanceID); name != "" {
-		return name
-	}
-	// Last resort — should not happen for events produced by v2+ code.
-	return string(instanceID)
+	return q.getWorkflowName(ctx, instanceID)
 }
 
-// getWorkflowName retrieves the workflow_name from the ready_tasks table for
-// an existing task. Returns empty string if not found.
-func (q *AsyncQueue) getWorkflowName(ctx context.Context, instanceID InstanceID) string {
+func (q *AsyncQueue) getWorkflowName(ctx context.Context, instanceID InstanceID) (string, error) {
 	var name string
-	_ = q.db.QueryRowContext(ctx, `
+	err := q.db.QueryRowContext(ctx, `
+		SELECT workflow_name FROM workflow_async_names WHERE instance_id = ?
+	`, string(instanceID)).Scan(&name)
+	if err == nil && name != "" {
+		return name, nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("read retained async workflow name: %w", err)
+	}
+	// Compatibility with queues initialized before identity retention, including
+	// tasks written by another process that still uses the older implementation.
+	err = q.db.QueryRowContext(ctx, `
 		SELECT workflow_name FROM workflow_ready_tasks WHERE instance_id = ?
 	`, string(instanceID)).Scan(&name)
-	return name
+	if err != nil {
+		return "", fmt.Errorf("read async task workflow name for %s: %w", instanceID, err)
+	}
+	if err := q.rememberWorkflowName(ctx, instanceID, name); err != nil {
+		return "", err
+	}
+	return name, nil
 }
 
 // insertWaitingEvent records a workflow waiting for an event.

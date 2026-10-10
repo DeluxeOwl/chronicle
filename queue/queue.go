@@ -133,6 +133,9 @@ func (q *Persistent[T]) Enqueue(ctx context.Context, msg Message[T]) error {
 	if msg.ID == "" || !utf8.ValidString(msg.ID) {
 		return errors.New("queue message ID must be nonempty valid UTF-8")
 	}
+	// JSON time offsets have minute precision; UTC preserves the exact instant
+	// in both the applied state and persisted events, including snapshots.
+	msg.AvailableAt = msg.AvailableAt.UTC()
 	payload, err := q.codec.Encode(msg.Payload)
 	if err != nil {
 		return fmt.Errorf("queue encode payload: %w", err)
@@ -161,7 +164,7 @@ func (q *Persistent[T]) Claim(ctx context.Context, lease time.Duration) (*Delive
 	var delivery *Delivery[T]
 	err := q.update(ctx, func(root *state) error {
 		delivery = nil
-		now := q.nowFunc()
+		now := q.nowFunc().UTC()
 		msg := root.next(now)
 		if msg == nil {
 			return nil
@@ -192,7 +195,7 @@ func (q *Persistent[T]) Claim(ctx context.Context, lease time.Duration) (*Delive
 // Ack removes a message only if the receipt still owns its unexpired lease.
 func (q *Persistent[T]) Ack(ctx context.Context, receipt Receipt) error {
 	return q.update(ctx, func(root *state) error {
-		msg, err := root.leasedMessage(receipt, q.nowFunc())
+		msg, err := root.leasedMessage(receipt, q.nowFunc().UTC())
 		if err != nil {
 			return err
 		}
@@ -203,8 +206,9 @@ func (q *Persistent[T]) Ack(ctx context.Context, receipt Receipt) error {
 // Nack releases the current lease and schedules another attempt. A zero or past
 // retryAt makes the message immediately eligible. The old receipt is invalidated.
 func (q *Persistent[T]) Nack(ctx context.Context, receipt Receipt, retryAt time.Time) error {
+	retryAt = retryAt.UTC()
 	return q.update(ctx, func(root *state) error {
-		msg, err := root.leasedMessage(receipt, q.nowFunc())
+		msg, err := root.leasedMessage(receipt, q.nowFunc().UTC())
 		if err != nil {
 			return err
 		}
@@ -222,7 +226,7 @@ func (q *Persistent[T]) Extend(ctx context.Context, receipt Receipt, lease time.
 		return errors.New("queue lease must be positive")
 	}
 	return q.update(ctx, func(root *state) error {
-		now := q.nowFunc()
+		now := q.nowFunc().UTC()
 		msg, err := root.leasedMessage(receipt, now)
 		if err != nil {
 			return err

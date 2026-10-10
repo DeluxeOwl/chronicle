@@ -30,6 +30,7 @@ type WorkflowInstance struct {
 	params             []byte
 	output             []byte
 	stepResults        map[int][]byte // step_index -> serialized result
+	stepFailures       map[int]string // handled outcomes replay until an explicit retry
 	stepNames          map[int]string
 	stepKinds          map[int]string
 	currentStep        int
@@ -95,9 +96,10 @@ func (*stepCompleted) EventName() string { return eventNameStepCompleted }
 func (*stepCompleted) isWorkflowEvent()  {}
 
 type stepFailed struct {
-	StepIndex int       `json:"stepIndex"`
-	Error     string    `json:"error"`
-	FailedAt  time.Time `json:"failedAt,omitempty" exhaustruct:"optional"`
+	StepIndex  int       `json:"stepIndex"`
+	Error      string    `json:"error"`
+	FailedAt   time.Time `json:"failedAt,omitempty" exhaustruct:"optional"`
+	Replayable bool      `json:"replayable,omitempty" exhaustruct:"optional"`
 }
 
 func (*stepFailed) EventName() string { return "workflow/step_failed" }
@@ -148,6 +150,9 @@ func (w *WorkflowInstance) Apply(evt WorkflowEvent) error {
 		if w.stepResults == nil {
 			w.stepResults = make(map[int][]byte)
 		}
+		if w.stepFailures == nil {
+			w.stepFailures = make(map[int]string)
+		}
 		if w.stepNames == nil {
 			w.stepNames = make(map[int]string)
 		}
@@ -178,6 +183,10 @@ func (w *WorkflowInstance) Apply(evt WorkflowEvent) error {
 		// leave this instance resumable from the failed step.
 		w.status = StatusRunning
 		w.failureError = e.Error
+		if e.Replayable {
+			w.stepFailures[e.StepIndex] = e.Error
+			w.stepKinds[e.StepIndex] = stepKindStep
+		}
 	case *workflowCompleted:
 		w.nextRunAfter = time.Time{}
 		w.deferredKind = ""
@@ -203,6 +212,7 @@ func (w *WorkflowInstance) Apply(evt WorkflowEvent) error {
 		// result would be replayed on retry, causing an immediate re-timeout.
 		if e.FailedStepIndex != nil {
 			delete(w.stepResults, *e.FailedStepIndex)
+			delete(w.stepFailures, *e.FailedStepIndex)
 		}
 		// Restore the retry strategy from the event so it survives replays
 		if e.RetryStrategy != nil {
@@ -232,6 +242,7 @@ func (w *WorkflowInstance) Apply(evt WorkflowEvent) error {
 }
 
 func (w *WorkflowInstance) applyStepCompleted(e *stepCompleted) {
+	delete(w.stepFailures, e.StepIndex)
 	if e.Name != "" {
 		w.stepNames[e.StepIndex] = e.Name
 	}
@@ -270,10 +281,11 @@ func (w *WorkflowInstance) recordThat(event WorkflowEvent) error {
 func NewEmpty() *WorkflowInstance {
 	//nolint:exhaustruct // not needed.
 	return &WorkflowInstance{
-		stepResults: make(map[int][]byte),
-		stepNames:   make(map[int]string),
-		stepKinds:   make(map[int]string),
-		attempt:     0, // set to 1 by workflowStarted
+		stepResults:  make(map[int][]byte),
+		stepFailures: make(map[int]string),
+		stepNames:    make(map[int]string),
+		stepKinds:    make(map[int]string),
+		attempt:      0, // set to 1 by workflowStarted
 	}
 }
 
@@ -515,12 +527,43 @@ func (r *Runner) lookupWorkflow(name string) (executableWorkflow, bool) {
 // Context is the workflow execution context passed to workflow functions.
 // It implements the context.Context interface.
 type Context struct {
-	ctx            context.Context
-	instanceID     InstanceID
-	runner         *Runner
-	stepCount      int               // local counter, incremented by each Step/Step2/Sleep call within a Run
-	lastFailedStep *int              // set by Step/Step2/WaitForEvent when they return an error; used by scheduleRetry
-	instance       *WorkflowInstance // loaded once in Run(), reused across all Step/Sleep/WaitForEvent calls
+	ctx        context.Context
+	instanceID InstanceID
+	runner     *Runner
+	stepCount  int               // local counter, incremented by each Step/Step2/Sleep call within a Run
+	stepErrors map[int]error     // live error identity links a returned error to its checkpoint
+	instance   *WorkflowInstance // loaded once in Run(), reused across all Step/Sleep/WaitForEvent calls
+}
+
+type stepExecutionError struct {
+	cause error
+}
+
+func (e *stepExecutionError) Error() string { return e.cause.Error() }
+func (e *stepExecutionError) Unwrap() error { return e.cause }
+
+// A distinct pointer identifies each invocation, even when callbacks return
+// the same sentinel or an error value that cannot be compared in Go.
+func (c *Context) rememberStepError(index int, err error) error {
+	if c.stepErrors == nil {
+		c.stepErrors = make(map[int]error)
+	}
+	returned := &stepExecutionError{cause: err}
+	c.stepErrors[index] = returned
+	return returned
+}
+
+// Match the propagated error, not only the latest checkpoint. Cleanup success
+// does not consume an earlier error when the workflow returns it afterwards.
+func (c *Context) failedStepFor(err error) *int {
+	for index := c.stepCount - 1; index >= 0; index-- {
+		failure, ok := c.stepErrors[index]
+		if ok && errors.Is(err, failure) {
+			failed := index
+			return &failed
+		}
+	}
+	return nil
 }
 
 func (c *Context) Value(key any) any {
@@ -619,12 +662,14 @@ func (w *Workflow[Params, Output]) Start(
 		return "", errors.New("cancellation durations must be nonnegative")
 	}
 
+	// Starting another stream is a command, not this worker's checkpoint.
+	ctx = workflowCommandContext(ctx, "")
 	instanceID := InstanceID(generateInstanceID())
 	w.logger.InfoContext(ctx, "starting workflow", "instanceID", instanceID)
 
 	paramsJSON, err := json.Marshal(params)
 	if err != nil {
-		return "", fmt.Errorf("marshal params: %w", err)
+		return "", infrastructureError(fmt.Errorf("marshal params: %w", err))
 	}
 
 	instance := NewEmpty()
@@ -639,26 +684,26 @@ func (w *Workflow[Params, Output]) Start(
 	if cfg.retryStrategy != nil {
 		rsJSON, err := json.Marshal(cfg.retryStrategy)
 		if err != nil {
-			return "", fmt.Errorf("marshal retry strategy: %w", err)
+			return "", infrastructureError(fmt.Errorf("marshal retry strategy: %w", err))
 		}
 		startedEvent.RetryStrategy = rsJSON
 	}
 	if cfg.cancellationPolicy != nil {
 		cpJSON, err := json.Marshal(cfg.cancellationPolicy)
 		if err != nil {
-			return "", fmt.Errorf("marshal cancellation policy: %w", err)
+			return "", infrastructureError(fmt.Errorf("marshal cancellation policy: %w", err))
 		}
 		startedEvent.CancellationPolicy = cpJSON
 	}
 
 	// Record the started event
 	if err := instance.recordThat(startedEvent); err != nil {
-		return "", fmt.Errorf("record workflow started: %w", err)
+		return "", infrastructureError(fmt.Errorf("record workflow started: %w", err))
 	}
 
 	// Save to repository
 	if _, _, err := w.runner.repo.Save(ctx, instance); err != nil {
-		return "", fmt.Errorf("save workflow instance: %w", err)
+		return "", infrastructureError(fmt.Errorf("save workflow instance: %w", err))
 	}
 
 	// Enqueue for worker processing
@@ -757,12 +802,12 @@ func (w *Workflow[Params, Output]) Run(
 	// Create workflow context with step counter starting at 0.
 	// The loaded instance is shared across all Step/Sleep/WaitForEvent calls
 	// within this Run, avoiding O(N²) event replays.
-	//nolint:exhaustruct // lastFailedStep is intentionally nil and set by Step/Step2/WaitForEvent on failure.
 	wctx := &Context{
 		ctx:        ctx,
 		instanceID: instanceID,
 		runner:     w.runner,
 		stepCount:  0,
+		stepErrors: make(map[int]error),
 		instance:   instance,
 	}
 
@@ -890,7 +935,7 @@ func (w *Workflow[Params, Output]) GetResult(
 ) (*Output, error) {
 	instance, err := w.runner.repo.Get(ctx, instanceID)
 	if err != nil {
-		return nil, fmt.Errorf("load workflow instance: %w", err)
+		return nil, infrastructureError(fmt.Errorf("load workflow instance: %w", err))
 	}
 
 	if instance.status != StatusCompleted {
@@ -899,7 +944,7 @@ func (w *Workflow[Params, Output]) GetResult(
 
 	var output Output
 	if err := json.Unmarshal(instance.output, &output); err != nil {
-		return nil, fmt.Errorf("unmarshal output: %w", err)
+		return nil, infrastructureError(fmt.Errorf("unmarshal output: %w", err))
 	}
 
 	return &output, nil
@@ -918,7 +963,7 @@ func (w *Workflow[Params, Output]) GetStatus(
 ) (InstanceInfo, error) {
 	instance, err := w.runner.repo.Get(ctx, instanceID)
 	if err != nil {
-		return InstanceInfo{}, fmt.Errorf("load workflow instance: %w", err)
+		return InstanceInfo{}, infrastructureError(fmt.Errorf("load workflow instance: %w", err))
 	}
 
 	return InstanceInfo{
@@ -927,8 +972,18 @@ func (w *Workflow[Params, Output]) GetStatus(
 	}, nil
 }
 
-// Step executes a checkpointed step. Only completed results are replayed.
-// Named steps additionally persist start metadata for live inspection.
+// RecordedStepError is a replayed domain failure. History preserves its message,
+// not its original Go type, sentinel identity, or wrapped error chain. Workflows
+// that branch on error codes must encode those codes in a successful step result.
+type RecordedStepError struct {
+	Message string
+}
+
+func (e *RecordedStepError) Error() string { return e.Message }
+
+// Step executes a checkpointed step. Committed results and handled failures replay.
+// An explicit workflow retry invalidates its failed step. Named steps additionally
+// persist start metadata for live inspection.
 func Step[Result any](
 	wctx *Context,
 	fn func(context.Context) (Result, error),
@@ -945,7 +1000,7 @@ func Step[Result any](
 	stepIndex := wctx.stepCount
 	wctx.stepCount++
 	instance := wctx.instance
-	if err := validateStep(wctx, stepIndex, "step", config); err != nil {
+	if err := validateStep(wctx, stepIndex, stepKindStep, config); err != nil {
 		return zero, err
 	}
 	if cached, ok := instance.stepResults[stepIndex]; ok {
@@ -955,7 +1010,12 @@ func Step[Result any](
 		}
 		return result, nil
 	}
-	if err := beginStep(wctx, stepIndex, "step", config); err != nil {
+	if failure, ok := instance.stepFailures[stepIndex]; ok {
+		failed := stepIndex
+		replayed := &RecordedStepError{Message: failure}
+		return zero, wctx.rememberStepError(failed, replayed)
+	}
+	if err := beginStep(wctx, stepIndex, stepKindStep, config); err != nil {
 		return zero, err
 	}
 	result, err := fn(wctx.ctx)
@@ -966,13 +1026,11 @@ func Step[Result any](
 		if errors.Is(err, ErrWorkflowInfrastructure) || isConflictAbortError(err) {
 			return zero, err
 		}
-		if recordErr := instance.recordThat(&stepFailed{StepIndex: stepIndex, Error: err.Error(), FailedAt: wctx.runner.now()}); recordErr != nil {
+		if recordErr := instance.recordThat(&stepFailed{StepIndex: stepIndex, Error: err.Error(), FailedAt: wctx.runner.now(), Replayable: true}); recordErr != nil {
 			return zero, infrastructureError(recordErr)
 		}
 		// Commit the step failure with its retry or terminal failure decision.
-		failed := stepIndex
-		wctx.lastFailedStep = &failed
-		return zero, err
+		return zero, wctx.rememberStepError(stepIndex, err)
 	}
 	encoded, err := json.Marshal(result)
 	if err != nil {
@@ -980,7 +1038,7 @@ func Step[Result any](
 	}
 	if err := instance.recordThat(&stepCompleted{
 		StepIndex: stepIndex, Result: encoded, CompletedAt: wctx.runner.now(), WorkflowName: instance.workflowName,
-		Name: config.name, Kind: "step",
+		Name: config.name, Kind: stepKindStep,
 	}); err != nil {
 		return zero, infrastructureError(err)
 	}

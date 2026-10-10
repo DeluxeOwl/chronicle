@@ -121,5 +121,5 @@ func WithSyncQueueOpts(opts ...SyncQueueOption) RunnerOption {
 
 // now returns the current time using the configured clock.
 func (r *Runner) now() time.Time {
-	return r.nowFunc()
+	return r.nowFunc().UTC()
 }

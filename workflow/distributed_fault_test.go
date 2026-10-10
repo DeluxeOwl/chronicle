@@ -54,7 +54,8 @@ func distributedCancellationFencesAnActiveWorker(t *testing.T, backend, database
 	db, wf, inspector := newDistributedFixture(t, backend, database)
 	id, err := wf.Start(t.Context(), &distributedParams{Mode: distributedWork, Sleep: 0})
 	require.NoError(t, err)
-	worker := startDistributedProcess(t, childWorker(backend, database, "active", true, false))
+	// Keep the claim alive so lease expiry cannot masquerade as cancellation fencing.
+	worker := startDistributedProcess(t, childWorker(backend, database, "active", true, true))
 	worker.waitMessage(t, "ready")
 	worker.waitMessage(t, "entered")
 	canceller := startDistributedProcess(

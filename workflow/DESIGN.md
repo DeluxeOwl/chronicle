@@ -9,6 +9,12 @@ Add the missing worker capabilities and an embedded HTML view of workflows.
 The intended direction is a Temporal replacement. That goal requires failure-mode tests, not only successful in-process execution.
 This implementation must document which guarantees it provides and which Temporal capabilities remain absent.
 
+## Fresh second review
+
+The later review found recovery failures that the initial distributed suite did not cover.
+[REVIEW.md](REVIEW.md) records the reproductions, corrections, additional tests, and remaining boundaries.
+A passing failure suite establishes its specific contracts, not completeness.
+
 ## First-principles model
 
 A durable workflow needs three separate responsibilities:
@@ -104,6 +110,8 @@ Legacy ID-only operations remain unsuitable for overlapping claims.
 Named starts are optional. Existing unnamed workflows keep completion-only tracing.
 Additive event fields keep older JSON readable. Legacy timestamps are not invented.
 Older step-failure events are nonterminal unless a terminal workflow event follows.
+New failures replay handled outcomes. A propagated step error identifies which outcome an explicit retry clears.
+Replayed failures preserve the message, not arbitrary Go error types or sentinel identity.
 
 The inspector derives deferred display statuses from deadlines.
 The aggregate status API retains its existing `running` value for sleeps and scheduled retries.

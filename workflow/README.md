@@ -120,7 +120,22 @@ Changing a recorded step name or kind returns `ErrWorkflowInfrastructure` instea
 Names improve inspection. They do not replace positional step identity.
 
 `Step2` is the error-only form of `Step`. Both accept `WithStepName`.
-Unnamed steps retain completion-only tracing for compatibility.
+Unnamed successful steps retain completion-only tracing for compatibility.
+
+### Handled step failures
+
+A workflow can handle a domain step error and continue to a fallback checkpoint.
+New failure events preserve that outcome, so recovery does not repeat the failed callback and change the recorded path.
+An explicit workflow retry clears the failure of the propagated step. Earlier handled outcomes remain in history.
+
+Live step errors wrap the original cause. Use `errors.Is` or `errors.As`, not direct equality.
+On replay, the error wraps `*RecordedStepError` with the stored message.
+History cannot restore the original Go type, wrapped chain, or sentinel identity.
+For branches that depend on `errors.Is`, `errors.As`, or error codes, classify the error inside the step.
+Return the classification as a successful, structured JSON result.
+
+Legacy failure events lack the replay flag and retain their previous retry behavior.
+Do not mix older and newer worker binaries for workflows that checkpoint after handled failures.
 
 ### Durable pauses
 
@@ -168,13 +183,16 @@ id, err := wf.Start(ctx, params,
 )
 ```
 
-Retries resume from completed checkpoints. Failed steps execute again.
+Retries resume from completed checkpoints. The step whose error propagates from the workflow executes again.
+A cleanup checkpoint does not hide that propagated failure. An unrelated later error does not erase an earlier handled outcome.
 The default strategy allows five total attempts, with exponential backoff from one second to five minutes.
 `MaxAttempts: 0` also means five total attempts. No retry strategy means no automatic domain retry.
 
-A step failure and its retry or terminal failure decision commit together.
+An unhandled step failure and its retry or terminal failure decision commit together.
+A handled failure commits with the next checkpoint that depends on it.
 Storage, encoding, and scheduling errors do not consume domain retry attempts or mark the instance failed.
 They return `ErrWorkflowInfrastructure`, preserving the original error in its chain.
+`CancelWorkflow`, `GetStatus`, and `GetResult` retain this classification when a step calls them.
 Worker shutdown does not create a domain failure.
 
 ### Cancellation
@@ -206,6 +224,8 @@ The policy is checked when an instance runs. It is not an independent timer for 
 Use `GetResult` for completed output and `GetStatus` for persisted status and attempt number.
 For backward compatibility, `GetStatus` reports sleeps and scheduled retries as `running`.
 The inspector distinguishes `sleeping` and `retrying` while their deadlines are in the future.
+A later failure or retry marks an elapsed sleep as completed, but leaves its exact resumption time unknown.
+Cancellation does not invent sleep completion.
 
 ## Embedded monitor
 
@@ -265,19 +285,25 @@ That combination is useful for tests and direct execution, not crash-safe orches
 The async queue requires a running `AsyncProjectionRunner` and a durable checkpointer.
 `WithTaskQueue` alone does not persist event publications or make event writes atomic with task changes.
 Start that projection from a valid checkpoint before running workers.
-Async notifications coalesce toward the earliest wake. Persisted sleep and retry guards prevent an early notification from executing callbacks before their deadline.
+Async notifications coalesce toward the earliest wake. Persisted sleep and retry guards prevent callbacks before their deadline.
+New wait events include the workflow name. Older events use a retained identity table, not a disposable task row.
+An identity-read error stops projection progress instead of creating an unrunnable task.
+For older histories without a retained name, replay from the start event to rebuild identity.
 
 Workers prefer `ClaimedTaskQueue`, which identifies each execution with a unique receipt.
 A stale receipt cannot acknowledge, fail, release, or renew a newer claim.
 Transactional runners also validate worker receipts during checkpoint commits. Nontransactional queues cannot provide that atomic checkpoint fence.
 The original `TaskQueue` interface remains supported, but ID-only methods cannot fence overlapping claims.
 The legacy memory `Poll` method remains destructive and lease-free.
+Workers retry a failed legacy requeue for five seconds, including during shutdown.
+If requeue fails beyond that bound, `RunWorkers` returns the retention error and instance ID.
+A prolonged outage still requires a recoverable claim queue.
 
 ## Distributed failure tests
 
-The tests in `distributed*_test.go` run independent operating-system processes and independent storage connections.
-They do not share Go memory, registries, connection pools, or queue objects.
-The same scenarios run against file-backed SQLite and a Postgres container:
+The distributed suite runs independent operating-system processes against SQLite and Postgres.
+Those workers do not share Go memory, registries, connection pools, or queue objects.
+The shared cases cover these contracts:
 
 - Competing workers and unique receipts, including identical worker labels.
 - An expired worker cannot commit while a replacement holds the unchanged event version.
@@ -286,10 +312,17 @@ The same scenarios run against file-backed SQLite and a Postgres container:
 - Another process publishes events or cancels an active workflow.
 - Concurrent publication and wait registration do not strand indefinite waits.
 - Worker replacement preserves sleep and retry deadlines.
+
+Postgres-only storage fault tests add these cases:
+
 - A TCP storage partition isolates one Postgres worker while a healthy worker recovers the task.
 - Blackholed transaction responses do not retain task or publication locks indefinitely.
+- A committed checkpoint with a lost COMMIT response replays without repeating its callback.
+- A committed publication with a lost response retains its original payload and wake-up.
+- A Postgres server restart preserves committed checkpoints and unfinished-task recovery.
 
-Separate regressions cover expiry during connection and row-lock waits, publication rollback, and timeout races.
+Separate regressions cover expiry during storage waits, publication rollback, timeout races, startup concurrency, and handled-error replay.
+Worker-side start and cancellation commands target other streams without inheriting the invoking checkpoint receipt.
 Postgres lock tests observe real waiting connections before allowing their lease to expire.
 The activity sink records visible effects. Crash tests deliberately demonstrate duplicate uncommitted effects.
 
@@ -320,4 +353,4 @@ Important missing capabilities include:
 Use the documented guarantees to decide whether a particular workflow can replace its current orchestration.
 Keep external effects idempotent. Lease fencing protects committed state, not an effect in another system.
 
-See [design analysis](DESIGN.md) for the recovery model, changes, and remaining limits.
+See [design analysis](DESIGN.md) for the recovery model and [fresh review](REVIEW.md) for additional failure paths and limits.

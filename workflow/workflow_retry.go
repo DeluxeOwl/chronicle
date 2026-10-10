@@ -129,7 +129,7 @@ func (r *Runner) scheduleRetry(
 		BackoffDelay:    delay,
 		PreviousError:   workflowErr.Error(),
 		RetryStrategy:   retryStrategyJSON,
-		FailedStepIndex: ctx.lastFailedStep,
+		FailedStepIndex: ctx.failedStepFor(workflowErr),
 		WorkflowName:    instance.workflowName,
 		ScheduledAt:     now,
 	}); err != nil {

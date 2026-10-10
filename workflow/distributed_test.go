@@ -29,7 +29,7 @@ func TestDistributedWorkflow_SQLite(t *testing.T) {
 }
 
 func TestDistributedWorkflow_Postgres(t *testing.T) {
-	dsn := startDistributedPostgres(t)
+	dsn, _ := startDistributedPostgres(t)
 	admin := openDistributedDB(t, distributedPostgres, dsn)
 	counter := 0
 	runDistributedCases(t, distributedPostgres, func(t *testing.T) string {
@@ -50,7 +50,7 @@ func TestDistributedWorkflow_Postgres(t *testing.T) {
 	})
 }
 
-func startDistributedPostgres(t *testing.T) string {
+func startDistributedPostgres(t *testing.T) (string, testcontainers.Container) {
 	t.Helper()
 	const port nat.Port = "5432/tcp"
 	connectionURL := func(host string, port nat.Port) string {
@@ -83,7 +83,7 @@ func startDistributedPostgres(t *testing.T) string {
 	require.NoError(t, err)
 	mapped, err := container.MappedPort(t.Context(), port)
 	require.NoError(t, err)
-	return connectionURL(host, mapped)
+	return connectionURL(host, mapped), container
 }
 
 func runDistributedCases(t *testing.T, backend string, database func(*testing.T) string) {
@@ -188,6 +188,9 @@ func distributedIndependentWorkersCompete(t *testing.T, backend, path string) {
 	for i := range processes {
 		config := childWorker(backend, path, fmt.Sprintf("process-%d", i), false, true)
 		config.Delay = 40 * time.Millisecond
+		// This checks contention, not expiry. Allow container/CI scheduling pauses;
+		// dedicated stale-worker and heartbeat tests retain the short lease.
+		config.LeaseDuration = 5 * time.Second
 		processes[i] = startDistributedProcess(t, config)
 		processes[i].waitMessage(t, "ready")
 	}

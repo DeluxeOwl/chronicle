@@ -72,7 +72,7 @@ func (v *instanceView) step(index int) *StepInfo {
 	step := &StepInfo{
 		Index:  index,
 		Name:   fmt.Sprintf("Step %d", index+1),
-		Kind:   "step",
+		Kind:   stepKindStep,
 		Status: string(StatusRunning),
 	}
 	v.steps[index] = step
@@ -112,7 +112,7 @@ func (v *instanceView) applyMetadata(evt WorkflowEvent) time.Time {
 	case *workflowStarted:
 		return e.StartedAt
 	case *stepStarted:
-		v.resumeSleeps(e.StepIndex, e.StartedAt)
+		v.resumeSleeps(e.StepIndex, e.StartedAt, timePointer(e.StartedAt))
 		step := v.step(e.StepIndex)
 		step.Name = e.Name
 		step.Kind = e.Kind
@@ -122,21 +122,22 @@ func (v *instanceView) applyMetadata(evt WorkflowEvent) time.Time {
 		step.Error = ""
 		return e.StartedAt
 	case *stepCompleted:
-		v.resumeSleeps(e.StepIndex, e.CompletedAt)
+		v.resumeSleeps(e.StepIndex, e.CompletedAt, timePointer(e.CompletedAt))
 		v.completeStep(e)
 		return e.CompletedAt
 	case *stepFailed:
-		v.resumeSleeps(e.StepIndex, e.FailedAt)
+		v.resumeSleeps(e.StepIndex, e.FailedAt, nil)
 		step := v.step(e.StepIndex)
 		step.Status = string(StatusFailed)
 		step.Error = e.Error
 		step.CompletedAt = timePointer(e.FailedAt)
 		return e.FailedAt
 	case *workflowCompleted:
-		v.resumeSleeps(int(^uint(0)>>1), e.CompletedAt)
+		v.resumeSleeps(int(^uint(0)>>1), e.CompletedAt, timePointer(e.CompletedAt))
 		v.finish(e.CompletedAt)
 		return e.CompletedAt
 	case *workflowFailed:
+		v.resumeSleeps(v.root.currentStep, e.FailedAt, nil)
 		v.finish(e.FailedAt)
 		return e.FailedAt
 	case *workflowCancelled:
@@ -148,6 +149,11 @@ func (v *instanceView) applyMetadata(evt WorkflowEvent) time.Time {
 		}
 		return e.CancelledAt
 	case *workflowRetried:
+		before := v.root.currentStep
+		if e.FailedStepIndex != nil {
+			before = *e.FailedStepIndex
+		}
+		v.resumeSleeps(before, e.ScheduledAt, nil)
 		v.nextRunAt = timePointer(e.NextRunAfter)
 		v.waitingFor = ""
 		if e.FailedStepIndex != nil {
@@ -157,7 +163,7 @@ func (v *instanceView) applyMetadata(evt WorkflowEvent) time.Time {
 		}
 		return e.ScheduledAt
 	case *workflowWaiting:
-		v.resumeSleeps(e.StepIndex, e.StartedAt)
+		v.resumeSleeps(e.StepIndex, e.StartedAt, timePointer(e.StartedAt))
 		step := v.step(e.StepIndex)
 		step.Kind = stepKindWait
 		step.Name = "Wait for event"
@@ -229,11 +235,17 @@ func (v *instanceView) completeStep(e *stepCompleted) {
 	v.nextRunAt = nil
 }
 
-func (v *instanceView) resumeSleeps(before int, at time.Time) {
+func (v *instanceView) resumeSleeps(before int, at time.Time, completedAt *time.Time) {
+	if at.IsZero() {
+		return
+	}
 	for index, step := range v.steps {
-		if index < before && step.Kind == stepKindSleep && step.Status == string(StatusSleeping) {
+		if index < before && step.Kind == stepKindSleep && step.Status == string(StatusSleeping) &&
+			step.WakeAt != nil && !at.Before(*step.WakeAt) {
 			step.Status = string(StatusCompleted)
-			step.CompletedAt = timePointer(at)
+			// Failure and retry decisions prove progress, but record no exact
+			// sleep resumption time. Their callers leave completedAt unknown.
+			step.CompletedAt = completedAt
 		}
 	}
 }

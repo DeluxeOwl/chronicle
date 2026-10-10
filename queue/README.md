@@ -124,6 +124,7 @@ For that requirement, use a transactional processor or outbox.
 The clock, codec, and payload factory must support concurrent calls.
 Workers must use synchronized clocks.
 Event replay uses recorded state and never reads the clock.
+Schedules and lease deadlines persist in UTC. Their instants remain unchanged, including clocks with second-offset time zones.
 
 ### Protobuf payloads
 

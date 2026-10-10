@@ -9,6 +9,7 @@ import (
 )
 
 const (
+	stepKindStep  = "step"
 	stepKindWait  = "wait"
 	stepKindSleep = "sleep"
 	deferredRetry = "retry"

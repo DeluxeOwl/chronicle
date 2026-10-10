@@ -48,9 +48,10 @@ func CancelWorkflow(
 	instanceID InstanceID,
 	reason string,
 ) error {
+	ctx = workflowCommandContext(ctx, instanceID)
 	instance, err := runner.repo.Get(ctx, instanceID)
 	if err != nil {
-		return fmt.Errorf("load workflow instance for cancel: %w", err)
+		return infrastructureError(fmt.Errorf("load workflow instance for cancel: %w", err))
 	}
 
 	// Only cancel workflows that are still active.
@@ -66,7 +67,7 @@ func CancelWorkflow(
 		Reason:      reason,
 		CancelledAt: now,
 	}); err != nil {
-		return fmt.Errorf("record workflow cancelled: %w", err)
+		return infrastructureError(fmt.Errorf("record workflow cancelled: %w", err))
 	}
 
 	if err := saveOrConflictAbort(ctx, runner.repo, instance); err != nil {

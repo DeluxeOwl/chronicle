@@ -57,6 +57,9 @@ func (r *Runner) RunWorker(ctx context.Context, opts WorkerOptions) error {
 //
 // Built-in queues use distinct claim receipts. Legacy TaskQueue implementations
 // remain supported, but their ID-only operations cannot fence overlapping claims.
+// Workers retry legacy requeues for up to five seconds, including during shutdown.
+// If requeueing still fails, RunWorkers returns an error with the instance ID.
+// A destructive legacy queue cannot recover that task after a process exit.
 // Queue ownership does not make external workflow effects exactly once.
 func (r *Runner) RunWorkers(ctx context.Context, concurrency int, opts WorkerOptions) error {
 	if concurrency <= 0 {
@@ -69,11 +72,29 @@ func (r *Runner) RunWorkers(ctx context.Context, concurrency int, opts WorkerOpt
 	r.logger.InfoContext(ctx, "workers starting", "concurrency", concurrency,
 		"pollInterval", opts.pollInterval(), "leaseExtend", opts.leaseExtendInterval())
 	group, workerCtx := errgroup.WithContext(ctx)
+	retentionErrors := make(chan error, concurrency)
 	for range concurrency {
-		group.Go(func() error { return r.runWorker(workerCtx, opts) })
+		group.Go(func() error {
+			err := r.runWorker(workerCtx, opts)
+			if errors.Is(err, errLegacyTaskRetention) {
+				retentionErrors <- err
+			}
+			return err
+		})
 	}
-	return group.Wait()
+	err := group.Wait()
+	close(retentionErrors)
+	// An idle worker can return cancellation before another worker's cleanup
+	// fails. The first errgroup error must not hide an unretained task.
+	for retentionErr := range retentionErrors {
+		if !errors.Is(err, retentionErr) {
+			err = errors.Join(err, retentionErr)
+		}
+	}
+	return err
 }
+
+var errLegacyTaskRetention = errors.New("legacy queue could not retain unfinished task")
 
 type workerTask struct {
 	QueuedTask
@@ -114,6 +135,9 @@ func (r *Runner) runWorker(ctx context.Context, opts WorkerOptions) error {
 			continue
 		}
 		if err := r.executeWorkerTask(ctx, task, opts); err != nil {
+			if errors.Is(err, errLegacyTaskRetention) {
+				return err
+			}
 			if ctx.Err() == nil {
 				r.logger.WarnContext(ctx, "task unfinished; retained for retry",
 					"instanceID", task.InstanceID, "workflowName", task.WorkflowName, "error", err)
@@ -279,7 +303,7 @@ func (r *Runner) releaseWorkerTaskAt(
 	} else {
 		retry := task.QueuedTask
 		retry.RunAfter = runAfter
-		err = r.queue.Enqueue(cleanupCtx, retry)
+		return r.requeueLegacyWorkerTask(cleanupCtx, retry)
 	}
 	if errors.Is(err, ErrStaleClaim) {
 		return nil
@@ -288,6 +312,23 @@ func (r *Runner) releaseWorkerTaskAt(
 		return fmt.Errorf("release unfinished task: %w", err)
 	}
 	return nil
+}
+
+func (r *Runner) requeueLegacyWorkerTask(ctx context.Context, task QueuedTask) error {
+	for {
+		err := r.queue.Enqueue(ctx, task)
+		if err == nil {
+			return nil
+		}
+		if waitErr := waitForWorker(ctx, DefaultPollInterval); waitErr != nil {
+			return fmt.Errorf(
+				"%w %s: %w",
+				errLegacyTaskRetention,
+				task.InstanceID,
+				errors.Join(err, waitErr),
+			)
+		}
+	}
 }
 
 type workerLeaseContextKey struct{}
