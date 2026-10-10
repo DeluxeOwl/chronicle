@@ -380,6 +380,14 @@ Both satisfy `aggregate.SnapshotStore[TID, TS]`.
 
 ---
 
+## `queue/`
+
+`queue.New[T](log, name, ...opts)` opens a lease-based queue backed by one aggregate stream per name.
+The `Queue[T]` interface exposes `Enqueue`, `Claim`, `Ack`, `Nack`, and `Extend`.
+For queue semantics, receipt ownership, snapshot configuration, and retention limits, read [queue/README.md](queue/README.md).
+
+---
+
 ## Sentinel errors
 
 | Error | Where | Meaning |

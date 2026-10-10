@@ -36,6 +36,7 @@
 	- [Synchronous Projections (`event.SyncProjection`)](docs/projections/synchronous-projections.md)
 	- [Asynchronous Projections (`event.AsyncProjection`)](docs/projections/asynchronous-projections.md)
 	- [Types of projections](docs/projections/types-of-projections.md)
+- [Persistent queue](queue/README.md)
 - [Event deletion](docs/event-deletion/README.md)
 	- [Event archival](docs/event-deletion/event-archival.md)
 - [Implementing a custom `event.Log`](docs/custom-event-log/README.md)
