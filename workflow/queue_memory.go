@@ -7,12 +7,20 @@ import (
 	"time"
 )
 
-// MemoryQueue is a simple in-memory TaskQueue backed by a mutex-protected
-// slice.  Suitable for single-process use and testing.
+// MemoryQueue is an in-process task queue. RunWorkers uses recoverable claims;
+// the legacy Poll method retains its destructive, lease-free behavior.
+// Tasks do not survive a process restart.
 type MemoryQueue struct {
 	mu      sync.Mutex
 	tasks   []QueuedTask
+	claims  map[InstanceID]memoryClaim
 	nowFunc func() time.Time
+}
+
+type memoryClaim struct {
+	task      ClaimedTask
+	expiresAt time.Time
+	next      *QueuedTask
 }
 
 // MemoryQueueOption configures a MemoryQueue.
@@ -32,6 +40,7 @@ func NewMemoryQueue(opts ...MemoryQueueOption) *MemoryQueue {
 		nowFunc: time.Now,
 		mu:      sync.Mutex{},
 		tasks:   []QueuedTask{},
+		claims:  make(map[InstanceID]memoryClaim),
 	}
 	for _, opt := range opts {
 		opt(q)
@@ -39,56 +48,186 @@ func NewMemoryQueue(opts ...MemoryQueueOption) *MemoryQueue {
 	return q
 }
 
-func (q *MemoryQueue) Enqueue(_ context.Context, task QueuedTask) error {
+func (q *MemoryQueue) Enqueue(ctx context.Context, task QueuedTask) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
+	if claim, ok := q.claims[task.InstanceID]; ok {
+		if claim.next == nil || task.RunAfter.Before(claim.next.RunAfter) ||
+			task.RunAfter.IsZero() {
+			claim.next = &task
+			q.claims[task.InstanceID] = claim
+		}
+		return nil
+	}
 	q.tasks = append(q.tasks, task)
 	return nil
 }
 
-func (q *MemoryQueue) Poll(_ context.Context) (*QueuedTask, error) {
+func (q *MemoryQueue) Poll(ctx context.Context) (*QueuedTask, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	q.recoverExpired(q.nowFunc())
+	return q.takeReady(), nil
+}
 
+func (q *MemoryQueue) takeReady() *QueuedTask {
 	now := q.nowFunc()
-
 	for i, task := range q.tasks {
-		if !task.RunAfter.IsZero() && now.Before(task.RunAfter) {
-			continue // not ready yet
+		if _, claimed := q.claims[task.InstanceID]; claimed {
+			continue
 		}
-		// Remove from slice (order-preserving)
+		if !task.RunAfter.IsZero() && now.Before(task.RunAfter) {
+			continue
+		}
 		q.tasks = slices.Delete(q.tasks, i, i+1)
-		return &task, nil
+		return &task
+	}
+	return nil
+}
+
+func (q *MemoryQueue) PollClaim(ctx context.Context) (*ClaimedTask, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
-	//nolint:nilnil // not needed.
-	return nil, nil
+	now := q.nowFunc()
+	q.recoverExpired(now)
+	task := q.takeReady()
+	if task == nil {
+		//nolint:nilnil // An empty queue is not an error.
+		return nil, nil
+	}
+	claimed := ClaimedTask{QueuedTask: *task, Receipt: newClaimReceipt()}
+	q.claims[task.InstanceID] = memoryClaim{
+		task:      claimed,
+		expiresAt: now.Add(defaultQueueLeaseDuration),
+		next:      nil,
+	}
+	return &claimed, nil
 }
 
-func (q *MemoryQueue) Complete(_ context.Context, _ InstanceID) error {
-	// In the memory queue, Poll already removed the task. Nothing to do.
+func (q *MemoryQueue) recoverExpired(now time.Time) {
+	for id, claim := range q.claims {
+		if now.Before(claim.expiresAt) {
+			continue
+		}
+		if claim.next != nil {
+			q.tasks = append(q.tasks, *claim.next)
+		} else {
+			q.tasks = append(q.tasks, claim.task.QueuedTask)
+		}
+		delete(q.claims, id)
+	}
+}
+
+func (q *MemoryQueue) ownedClaim(task ClaimedTask) (memoryClaim, error) {
+	claim, ok := q.claims[task.InstanceID]
+	if !ok || task.Receipt == "" || claim.task.Receipt != task.Receipt ||
+		!q.nowFunc().Before(claim.expiresAt) {
+		return memoryClaim{}, ErrStaleClaim
+	}
+	return claim, nil
+}
+
+func (q *MemoryQueue) CompleteClaim(ctx context.Context, task ClaimedTask) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	claim, err := q.ownedClaim(task)
+	if err != nil {
+		return err
+	}
+	if claim.next != nil {
+		q.tasks = append(q.tasks, *claim.next)
+	}
+	delete(q.claims, task.InstanceID)
 	return nil
 }
 
-func (q *MemoryQueue) Fail(_ context.Context, _ InstanceID) error {
-	// In the memory queue, Poll already removed the task.
-	// A real implementation would move to a dead-letter or re-enqueue with backoff.
+func (q *MemoryQueue) FailClaim(ctx context.Context, task ClaimedTask) error {
+	return q.CompleteClaim(ctx, task)
+}
+
+func (q *MemoryQueue) ExtendClaim(
+	ctx context.Context,
+	task ClaimedTask,
+	lease time.Duration,
+) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := validateLease(lease); err != nil {
+		return err
+	}
+	claim, err := q.ownedClaim(task)
+	if err != nil {
+		return err
+	}
+	claim.expiresAt = laterDeadline(claim.expiresAt, q.nowFunc().Add(lease))
+	q.claims[task.InstanceID] = claim
 	return nil
 }
 
-func (q *MemoryQueue) ExtendLease(_ context.Context, _ InstanceID, _ time.Duration) error {
-	// In the memory queue, there are no leases to extend.
-	// A real implementation would update the claimed_until timestamp.
+func (q *MemoryQueue) ReleaseClaim(
+	ctx context.Context,
+	task ClaimedTask,
+	runAfter time.Time,
+) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	claim, err := q.ownedClaim(task)
+	if err != nil {
+		return err
+	}
+	if claim.next != nil {
+		q.tasks = append(q.tasks, *claim.next)
+	} else {
+		retry := claim.task.QueuedTask
+		retry.RunAfter = runAfter
+		q.tasks = append(q.tasks, retry)
+	}
+	delete(q.claims, task.InstanceID)
 	return nil
 }
 
-// Len returns the number of tasks in the queue (useful for testing).
+func (q *MemoryQueue) claimLeaseDuration() time.Duration { return defaultQueueLeaseDuration }
+
+func (q *MemoryQueue) Complete(_ context.Context, _ InstanceID) error { return nil }
+
+func (q *MemoryQueue) Fail(_ context.Context, _ InstanceID) error { return nil }
+
+func (q *MemoryQueue) ExtendLease(
+	_ context.Context,
+	_ InstanceID,
+	_ time.Duration,
+) error {
+	return nil
+}
+
+// Len returns the number of queued tasks, excluding active claims.
 func (q *MemoryQueue) Len() int {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	return len(q.tasks)
 }
 
-// Compile-time interface check.
-var _ TaskQueue = (*MemoryQueue)(nil)
+var (
+	_ ClaimedTaskQueue    = (*MemoryQueue)(nil)
+	_ ClaimedTaskReleaser = (*MemoryQueue)(nil)
+)

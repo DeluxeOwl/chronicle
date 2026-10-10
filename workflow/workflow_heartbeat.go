@@ -14,7 +14,9 @@ import (
 // prevents the task from being picked up by another worker if the step
 // takes longer than the original claim timeout.
 //
-// For the in-memory queue, this is a no-op.
+// Workers attach the exact claim receipt to the execution context. A failed
+// renewal interrupts that execution; a stale receipt cannot renew a new claim.
+// Direct execution without a worker retains the legacy queue behavior.
 //
 // Example:
 //
@@ -30,7 +32,13 @@ import (
 //	    return "done", nil
 //	})
 func Heartbeat(wctx *Context, d time.Duration) error {
-	if err := wctx.runner.queue.ExtendLease(wctx.ctx, wctx.instanceID, d); err != nil {
+	var err error
+	if lease, ok := wctx.ctx.Value(workerLeaseContextKey{}).(*workerLease); ok {
+		err = lease.extend(wctx.ctx, d)
+	} else {
+		err = wctx.runner.queue.ExtendLease(wctx.ctx, wctx.instanceID, d)
+	}
+	if err != nil {
 		return fmt.Errorf("heartbeat: %w", err)
 	}
 	return nil

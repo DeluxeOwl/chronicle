@@ -2,29 +2,29 @@ package workflow
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 )
 
 const (
 	DefaultPollInterval        = 200 * time.Millisecond
 	DefaultLeaseExtendInterval = 10 * time.Second
+	workerCleanupTimeout       = 5 * time.Second
 )
 
-// WorkerOptions configures a worker started via RunWorker.
+// WorkerOptions configures RunWorker and RunWorkers.
 type WorkerOptions struct {
-	// PollInterval is how long the worker waits between queue polls
-	// when no tasks are ready. Defaults to 200ms.
+	// PollInterval is the delay after an empty poll or infrastructure error.
+	// Defaults to 200ms. All waits are interrupted by context cancellation.
 	PollInterval time.Duration
 
-	// LeaseExtendInterval is how often the worker automatically extends
-	// the task lease while a workflow execution is in progress. This
-	// prevents other workers from reclaiming the task if a step takes
-	// longer than the queue's lease duration.
-	//
-	// Defaults to 10s. Set to a negative value to disable automatic
-	// lease extension (you must then call Heartbeat manually from
-	// long-running steps).
+	// LeaseExtendInterval controls automatic heartbeats. Defaults to 10s.
+	// Built-in queues cap this at one third of their initial lease duration.
+	// A negative value disables automatic extension; long-running steps must
+	// then call Heartbeat themselves.
 	LeaseExtendInterval time.Duration
 }
 
@@ -37,7 +37,7 @@ func (o WorkerOptions) pollInterval() time.Duration {
 
 func (o WorkerOptions) leaseExtendInterval() time.Duration {
 	if o.LeaseExtendInterval < 0 {
-		return 0 // disabled
+		return 0
 	}
 	if o.LeaseExtendInterval == 0 {
 		return DefaultLeaseExtendInterval
@@ -45,175 +45,316 @@ func (o WorkerOptions) leaseExtendInterval() time.Duration {
 	return o.LeaseExtendInterval
 }
 
-// RunWorker starts a blocking loop that polls the task queue and executes
-// workflows. It returns when the context is cancelled or a fatal error occurs.
-//
-// Each iteration:
-//  1. Poll the queue for a ready task.
-//  2. Look up the workflow by name in the runner's registry.
-//  3. Call the workflow's Run method (replay + execute).
-//  4. Mark the task as complete or failed.
-//
-// When a workflow returns ErrWorkflowSleeping, the task is marked complete
-// because Sleep already enqueued a delayed follow-up task.
-//
-//nolint:gocognit
+// RunWorker is the single-worker form of RunWorkers.
 func (r *Runner) RunWorker(ctx context.Context, opts WorkerOptions) error {
-	interval := opts.pollInterval()
-	leaseExtend := opts.leaseExtendInterval()
-	r.logger.InfoContext(
-		ctx,
-		"worker starting",
-		"pollInterval",
-		interval,
-		"leaseExtend",
-		leaseExtend,
-	)
+	return r.RunWorkers(ctx, 1, opts)
+}
 
-	for {
-		task, err := r.queue.Poll(ctx)
-		if err != nil {
-			return fmt.Errorf("poll queue: %w", err)
+// RunWorkers runs at most concurrency workflow executions at once. It blocks
+// until cancellation, joining all executions and their automatic heartbeats.
+// Workflow functions and custom queue implementations must honor their context
+// for shutdown to finish. Transient queue errors are logged and retried.
+//
+// Built-in queues use distinct claim receipts. Legacy TaskQueue implementations
+// remain supported, but their ID-only operations cannot fence overlapping claims.
+// Queue ownership does not make external workflow effects exactly once.
+func (r *Runner) RunWorkers(ctx context.Context, concurrency int, opts WorkerOptions) error {
+	if concurrency <= 0 {
+		return fmt.Errorf("worker concurrency must be positive: %d", concurrency)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	r.logger.InfoContext(ctx, "workers starting", "concurrency", concurrency,
+		"pollInterval", opts.pollInterval(), "leaseExtend", opts.leaseExtendInterval())
+	group, workerCtx := errgroup.WithContext(ctx)
+	for range concurrency {
+		group.Go(func() error { return r.runWorker(workerCtx, opts) })
+	}
+	return group.Wait()
+}
+
+type workerTask struct {
+	QueuedTask
+	claim *ClaimedTask
+}
+
+func (r *Runner) pollWorkerTask(ctx context.Context) (*workerTask, error) {
+	if queue, ok := r.queue.(ClaimedTaskQueue); ok {
+		claim, err := queue.PollClaim(ctx)
+		if err != nil || claim == nil {
+			return nil, err
 		}
+		return &workerTask{QueuedTask: claim.QueuedTask, claim: claim}, nil
+	}
+	task, err := r.queue.Poll(ctx)
+	if err != nil || task == nil {
+		return nil, err
+	}
+	return &workerTask{QueuedTask: *task, claim: nil}, nil
+}
 
+func (r *Runner) runWorker(ctx context.Context, opts WorkerOptions) error {
+	for ctx.Err() == nil {
+		task, err := r.pollWorkerTask(ctx)
+		if err != nil {
+			if ctx.Err() == nil {
+				r.logger.WarnContext(ctx, "queue poll failed; retrying", "error", err)
+			}
+			if err := waitForWorker(ctx, opts.pollInterval()); err != nil {
+				return err
+			}
+			continue
+		}
 		if task == nil {
-			// Nothing ready — wait before polling again.
-			select {
-			case <-time.After(interval):
-				continue
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-
-		wf, ok := r.workflows[task.WorkflowName]
-		if !ok {
-			r.logger.ErrorContext(ctx,
-				"unknown workflow, failing task",
-				"instanceID", task.InstanceID,
-				"workflowName", task.WorkflowName,
-			)
-			_ = r.queue.Fail(ctx, task.InstanceID)
-			continue
-		}
-
-		r.logger.DebugContext(ctx,
-			"worker executing task",
-			"instanceID", task.InstanceID,
-			"workflowName", task.WorkflowName,
-		)
-
-		// Spawn a background goroutine that periodically extends the lease
-		// so long-running steps don't cause lease expiry and task re-claiming.
-		var leaseCancel context.CancelFunc
-		if leaseExtend > 0 {
-			var leaseCtx context.Context
-			leaseCtx, leaseCancel = context.WithCancel(ctx)
-			go r.autoExtendLease(leaseCtx, task.InstanceID, leaseExtend)
-		} else {
-			leaseCancel = func() {} // no-op when auto-extension is disabled
-		}
-
-		err = wf.execute(ctx, task.InstanceID)
-		leaseCancel() // stop the lease extender
-		//nolint:nestif // It's readable.
-		if err != nil {
-			if isConflictAbortError(err) {
-				// Another worker already advanced this instance. Our execution
-				// is stale — complete the task and move on.
-				r.logger.InfoContext(ctx,
-					"conflict abort — task completed by another worker",
-					"instanceID", task.InstanceID,
-				)
-				r.completeTask(ctx, task.InstanceID)
-				continue
-			}
-			if isSleepError(err) {
-				// Sleep already enqueued a delayed task — this execution is done.
-				r.completeTask(ctx, task.InstanceID)
-				continue
-			}
-			if isRetryError(err) {
-				// Retry already enqueued a delayed task — this execution is done.
-				r.completeTask(ctx, task.InstanceID)
-				continue
-			}
-			if isWaitingError(err) {
-				// WaitForEvent parked the workflow — it will be woken by PublishEvent.
-				r.completeTask(ctx, task.InstanceID)
-				continue
-			}
-			if isCancelledError(err) {
-				// Workflow was cancelled — clean up the task.
-				r.completeTask(ctx, task.InstanceID)
-				continue
-			}
-			r.logger.ErrorContext(ctx,
-				"workflow execution failed",
-				"instanceID", task.InstanceID,
-				"error", err,
-			)
-			if qErr := r.queue.Fail(ctx, task.InstanceID); qErr != nil {
-				r.logger.ErrorContext(
-					ctx,
-					"failed to mark task as failed",
-					"instanceID",
-					task.InstanceID,
-					"error",
-					qErr,
-				)
+			if err := waitForWorker(ctx, opts.pollInterval()); err != nil {
+				return err
 			}
 			continue
 		}
+		if err := r.executeWorkerTask(ctx, task, opts); err != nil {
+			if ctx.Err() == nil {
+				r.logger.WarnContext(ctx, "task unfinished; retained for retry",
+					"instanceID", task.InstanceID, "workflowName", task.WorkflowName, "error", err)
+			}
+			if err := waitForWorker(ctx, opts.pollInterval()); err != nil {
+				return err
+			}
+		}
+	}
+	return ctx.Err()
+}
 
-		r.completeTask(ctx, task.InstanceID)
+func waitForWorker(ctx context.Context, interval time.Duration) error {
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }
 
-// autoExtendLease periodically extends the task's lease until the context is cancelled.
-// This runs as a background goroutine during workflow execution to prevent other workers
-// from reclaiming the task during long-running steps.
-func (r *Runner) autoExtendLease(
+func (r *Runner) executeWorkerTask(
 	ctx context.Context,
-	instanceID InstanceID,
+	task *workerTask,
+	opts WorkerOptions,
+) error {
+	if err := ctx.Err(); err != nil {
+		return errors.Join(err, r.releaseWorkerTask(ctx, task, opts.pollInterval()))
+	}
+	wf, ok := r.lookupWorkflow(task.WorkflowName)
+	if !ok {
+		err := fmt.Errorf("unknown workflow %q", task.WorkflowName)
+		return errors.Join(err, r.releaseWorkerTask(ctx, task, opts.pollInterval()))
+	}
+
+	executionCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	lease := &workerLease{queue: r.queue, task: task, cancel: cancel}
+	executionCtx = context.WithValue(executionCtx, workerLeaseContextKey{}, lease)
+	stopHeartbeat := r.startWorkerHeartbeat(executionCtx, lease, opts.leaseExtendInterval())
+	r.logger.DebugContext(executionCtx, "worker executing task",
+		"instanceID", task.InstanceID, "workflowName", task.WorkflowName)
+	err := func() error {
+		defer stopHeartbeat() // Join before acknowledgment or release, including on panic.
+		return wf.execute(executionCtx, task.InstanceID)
+	}()
+
+	if executionCtx.Err() != nil {
+		return errors.Join(
+			context.Cause(executionCtx),
+			r.releaseWorkerTask(ctx, task, opts.pollInterval()),
+		)
+	}
+	if isSleepError(err) || isRetryError(err) {
+		return r.deferWorkerTask(ctx, task, opts.pollInterval())
+	}
+	if err == nil || isWaitingError(err) || isCancelledError(err) {
+		return r.finishWorkerTask(ctx, task, false, opts.pollInterval())
+	}
+	if errors.Is(err, ErrWorkflowInfrastructure) {
+		return errors.Join(err, r.releaseWorkerTask(ctx, task, opts.pollInterval()))
+	}
+
+	// An execution error (including a concurrency conflict) is not evidence
+	// of a durable terminal state. Never discard an intermediate checkpoint.
+	instance, loadErr := r.repo.Get(executionCtx, task.InstanceID)
+	if loadErr != nil {
+		return errors.Join(err, loadErr, r.releaseWorkerTask(ctx, task, opts.pollInterval()))
+	}
+	if isTerminalWorkerStatus(instance.status) {
+		return r.finishWorkerTask(ctx, task, instance.status == StatusFailed, opts.pollInterval())
+	}
+	return errors.Join(err, r.releaseWorkerTask(ctx, task, opts.pollInterval()))
+}
+
+// A readiness guard can return a delay sentinel without scheduling a task
+// in this execution. Release at the durable deadline instead of deleting it.
+func (r *Runner) deferWorkerTask(
+	ctx context.Context,
+	task *workerTask,
+	retryDelay time.Duration,
+) error {
+	instance, err := r.repo.Get(ctx, task.InstanceID)
+	if err != nil {
+		return errors.Join(err, r.releaseWorkerTask(ctx, task, retryDelay))
+	}
+	if isTerminalWorkerStatus(instance.status) {
+		return r.finishWorkerTask(ctx, task, instance.status == StatusFailed, retryDelay)
+	}
+	if instance.nextRunAfter.IsZero() {
+		return r.releaseWorkerTask(ctx, task, retryDelay)
+	}
+	return r.releaseWorkerTaskAt(ctx, task, instance.nextRunAfter)
+}
+
+func isTerminalWorkerStatus(status Status) bool {
+	return status == StatusCompleted || status == StatusFailed || status == StatusCancelled
+}
+
+func (r *Runner) finishWorkerTask(
+	ctx context.Context,
+	task *workerTask,
+	failed bool,
+	retryDelay time.Duration,
+) error {
+	var err error
+	if queue, ok := r.queue.(ClaimedTaskQueue); ok && task.claim != nil {
+		if failed {
+			err = queue.FailClaim(ctx, *task.claim)
+		} else {
+			err = queue.CompleteClaim(ctx, *task.claim)
+		}
+	} else if failed {
+		err = r.queue.Fail(ctx, task.InstanceID)
+	} else {
+		err = r.queue.Complete(ctx, task.InstanceID)
+	}
+	if errors.Is(err, ErrStaleClaim) {
+		// A transactional terminal event may already have removed the row.
+		// An expired or replaced receipt must never acknowledge a newer claim.
+		r.logger.DebugContext(
+			ctx,
+			"task claim already retired or expired",
+			"instanceID",
+			task.InstanceID,
+		)
+		return nil
+	}
+	if err != nil {
+		return errors.Join(
+			fmt.Errorf("acknowledge task: %w", err),
+			r.releaseWorkerTask(ctx, task, retryDelay),
+		)
+	}
+	return nil
+}
+
+func (r *Runner) releaseWorkerTask(
+	ctx context.Context,
+	task *workerTask,
+	retryDelay time.Duration,
+) error {
+	return r.releaseWorkerTaskAt(ctx, task, laterDeadline(task.RunAfter, r.now().Add(retryDelay)))
+}
+
+func (r *Runner) releaseWorkerTaskAt(
+	ctx context.Context,
+	task *workerTask,
+	runAfter time.Time,
+) error {
+	// Cancellation must not make destructive memory polls lose unfinished work.
+	// Detached cleanup is bounded, and only ever releases this exact receipt.
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), workerCleanupTimeout)
+	defer cancel()
+	var err error
+	if task.claim != nil {
+		if queue, ok := r.queue.(ClaimedTaskReleaser); ok {
+			err = queue.ReleaseClaim(cleanupCtx, *task.claim, runAfter)
+		}
+		// Otherwise leave the recoverable claim to expire.
+	} else {
+		retry := task.QueuedTask
+		retry.RunAfter = runAfter
+		err = r.queue.Enqueue(cleanupCtx, retry)
+	}
+	if errors.Is(err, ErrStaleClaim) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("release unfinished task: %w", err)
+	}
+	return nil
+}
+
+type workerLeaseContextKey struct{}
+
+type workerLease struct {
+	queue  TaskQueue
+	task   *workerTask
+	cancel context.CancelCauseFunc
+}
+
+func (l *workerLease) extend(ctx context.Context, duration time.Duration) error {
+	var err error
+	if queue, ok := l.queue.(ClaimedTaskQueue); ok && l.task.claim != nil {
+		err = queue.ExtendClaim(ctx, *l.task.claim, duration)
+	} else {
+		err = l.queue.ExtendLease(ctx, l.task.InstanceID, duration)
+	}
+	if err != nil && ctx.Err() == nil {
+		// Losing ownership or being unable to renew it interrupts execution.
+		// The execution layer must not turn context shutdown into domain failure.
+		l.cancel(err)
+	}
+	return err
+}
+
+func (r *Runner) startWorkerHeartbeat(
+	ctx context.Context,
+	lease *workerLease,
+	interval time.Duration,
+) func() {
+	if interval <= 0 {
+		return func() {}
+	}
+	if queue, ok := r.queue.(interface{ claimLeaseDuration() time.Duration }); ok {
+		interval = min(interval, queue.claimLeaseDuration()/3)
+	}
+	heartbeatCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.autoExtendWorkerLease(heartbeatCtx, lease, interval)
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
+}
+
+func (r *Runner) autoExtendWorkerLease(
+	ctx context.Context,
+	lease *workerLease,
 	interval time.Duration,
 ) {
-	// Extend lease by 3x the interval to provide safety margin.
-	leaseExtension := interval * 3 //nolint:mnd // Extension is 3x the check interval.
-
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := r.queue.ExtendLease(ctx, instanceID, leaseExtension); err != nil {
-				// Context cancelled is expected when the execution finishes.
-				if ctx.Err() != nil {
-					return
+			if err := lease.extend(ctx, interval*3); err != nil {
+				if ctx.Err() == nil {
+					r.logger.WarnContext(ctx, "task heartbeat failed; interrupting execution",
+						"instanceID", lease.task.InstanceID, "error", err)
 				}
-				r.logger.WarnContext(ctx,
-					"failed to extend lease",
-					"instanceID", instanceID,
-					"error", err,
-				)
+				return
 			}
 		}
-	}
-}
-
-// completeTask marks a task as done, logging on failure.
-func (r *Runner) completeTask(ctx context.Context, instanceID InstanceID) {
-	if err := r.queue.Complete(ctx, instanceID); err != nil {
-		r.logger.ErrorContext(
-			ctx,
-			"failed to complete task",
-			"instanceID",
-			instanceID,
-			"error",
-			err,
-		)
 	}
 }

@@ -31,94 +31,58 @@ type sleepResult struct {
 // ErrWorkflowSleeping. A delayed task is enqueued on the Runner's TaskQueue
 // so that a worker will automatically re-run the workflow once the sleep
 // duration has passed.
-func Sleep(wctx *Context, d time.Duration) error {
-	runner := wctx.runner
-
-	// Claim the step index from the local counter
-	stepIndex := wctx.stepCount
+func Sleep(wctx *Context, d time.Duration, opts ...StepOption) error {
+	config, err := configureStep(opts)
+	if err != nil {
+		return infrastructureError(err)
+	}
+	if d < 0 {
+		return infrastructureError(errors.New("sleep duration must be nonnegative"))
+	}
+	index := wctx.stepCount
 	wctx.stepCount++
-
-	// Use the shared instance from Context (loaded once in Run)
-	instance := wctx.instance
-
-	now := runner.now()
-
-	// Check if this sleep step was already recorded (replay)
-	if cachedResult, ok := instance.stepResults[stepIndex]; ok {
-		var sr sleepResult
-		if err := json.Unmarshal(cachedResult, &sr); err != nil {
-			return fmt.Errorf("unmarshal cached sleep result: %w", err)
+	if err := validateStep(wctx, index, stepKindSleep, config); err != nil {
+		return err
+	}
+	var sleep sleepResult
+	//nolint:nestif // The first sleep saves a deadline while replay reads it.
+	if cached, ok := wctx.instance.stepResults[index]; ok {
+		if err := json.Unmarshal(cached, &sleep); err != nil {
+			return infrastructureError(fmt.Errorf("decode sleep checkpoint: %w", err))
 		}
-
-		if now.Before(sr.WakeAt) {
-			// Still sleeping — enqueue a delayed wake-up task
-			if err := runner.queue.Enqueue(wctx.ctx, QueuedTask{
-				InstanceID:   wctx.instanceID,
-				WorkflowName: instance.workflowName,
-				RunAfter:     sr.WakeAt,
-			}); err != nil {
-				return fmt.Errorf("enqueue sleep wake task: %w", err)
-			}
-
-			runner.logger.DebugContext(wctx.ctx,
-				"sleep replay, still sleeping",
-				"instanceID", wctx.instanceID,
-				"stepIndex", stepIndex,
-				"remaining", sr.WakeAt.Sub(now),
-			)
-			return ErrWorkflowSleeping
+		if sleep.WakeAt.IsZero() {
+			return infrastructureError(errors.New("sleep checkpoint has no deadline"))
 		}
-
-		// Sleep has elapsed, continue execution
-		runner.logger.DebugContext(wctx.ctx,
-			"sleep replay, elapsed",
-			"instanceID", wctx.instanceID,
-			"stepIndex", stepIndex,
-		)
+	} else {
+		now := wctx.runner.now()
+		sleep = sleepResult{WakeAt: now.Add(d), Duration: d}
+		encoded, err := json.Marshal(sleep)
+		if err != nil {
+			return infrastructureError(err)
+		}
+		if err := wctx.instance.recordThat(&stepCompleted{StepIndex: index, Result: encoded, CompletedAt: now, WorkflowName: wctx.instance.workflowName, Name: config.name, Kind: stepKindSleep}); err != nil {
+			return infrastructureError(err)
+		}
+		if err := saveOrConflictAbort(wctx.ctx, wctx.runner.repo, wctx.instance); err != nil {
+			return err
+		}
+	}
+	if !wctx.runner.now().Before(sleep.WakeAt) {
 		return nil
 	}
-
-	// First execution: record the sleep
-	wakeAt := now.Add(d)
-	sr := sleepResult{
-		WakeAt:   wakeAt,
-		Duration: d,
+	if err := wctx.runner.enqueueTask(wctx.ctx, QueuedTask{InstanceID: wctx.instanceID, WorkflowName: wctx.instance.workflowName, RunAfter: sleep.WakeAt}); err != nil {
+		return err
 	}
-	resultJSON, err := json.Marshal(sr)
-	if err != nil {
-		return fmt.Errorf("marshal sleep result: %w", err)
-	}
-
-	if err := instance.recordThat(&stepCompleted{
-		StepIndex:    stepIndex,
-		Result:       resultJSON,
-		CompletedAt:  now,
-		WorkflowName: instance.workflowName,
-	}); err != nil {
-		return fmt.Errorf("record sleep step: %w", err)
-	}
-
-	if err := saveOrConflictAbort(wctx.ctx, runner.repo, instance); err != nil {
-		return fmt.Errorf("save sleep step: %w", err)
-	}
-
-	// Enqueue a delayed task for the wake-up
-	if err := runner.queue.Enqueue(wctx.ctx, QueuedTask{
-		InstanceID:   wctx.instanceID,
-		WorkflowName: instance.workflowName,
-		RunAfter:     wakeAt,
-	}); err != nil {
-		return fmt.Errorf("enqueue sleep wake task: %w", err)
-	}
-
-	runner.logger.InfoContext(wctx.ctx,
+	wctx.runner.logger.DebugContext(
+		wctx.ctx,
 		"workflow sleeping",
-		"instanceID", wctx.instanceID,
-		"stepIndex", stepIndex,
-		"duration", d,
-		"wakeAt", wakeAt,
+		"instanceID",
+		wctx.instanceID,
+		"step",
+		index,
+		"wakeAt",
+		sleep.WakeAt,
 	)
-
 	return ErrWorkflowSleeping
 }
 

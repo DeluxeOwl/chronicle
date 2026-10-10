@@ -1,707 +1,323 @@
-# Workflow package — architecture map
+# Durable workflows
 
-The workflow package is a **durable, replay-based workflow engine** built on top
-of Chronicle's event sourcing primitives. Think Temporal/DBOS, but as a library
-backed by your existing event log.
+A workflow is a Go function with persisted checkpoints. Each instance has its own event stream.
+On recovery, Chronicle replays completed steps and runs the remaining work.
 
-A workflow is just an aggregate (`WorkflowInstance`). Each step a user writes
-becomes an event in that aggregate's stream. Restarting a workflow means
-**loading the aggregate and replaying events** — completed steps return cached
-results instead of running again.
+## Run workers with SQLite
 
----
+Use the transactional runner for durable task scheduling:
 
-## 1. The 30,000-foot view
+```go
+runner, err := workflow.NewSqliteRunnerWithSyncQueue(ctx, db)
+if err != nil {
+    return err
+}
 
-```
-   ┌─────────────────────────────────────────────────────────────────┐
-   │                          YOUR CODE                              │
-   │                                                                 │
-   │   wf := workflow.New(runner, "send-email", func(wctx, p) {      │
-   │       a, _ := workflow.Step(wctx, fetchUser)        ← step 0    │
-   │       b, _ := workflow.Step(wctx, renderTemplate)   ← step 1    │
-   │       workflow.Sleep(wctx, 5*time.Minute)           ← step 2    │
-   │       evt := workflow.WaitForEvent[Ack](wctx, "ack:42")  ←  3   │
-   │       return result, nil                                        │
-   │   })                                                            │
-   │   id, _ := wf.Start(ctx, params)   ← enqueues a task            │
-   └─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-   ┌─────────────────────────────────────────────────────────────────┐
-   │                          Runner                                 │
-   │                                                                 │
-   │   ┌────────────┐   ┌────────────────┐   ┌──────────────────┐    │
-   │   │ workflows  │   │  Aggregate     │   │   TaskQueue      │    │
-   │   │ registry   │   │  Repository    │   │ (Memory / Sync / │    │
-   │   │ name → fn  │   │  (event log)   │   │  Async)          │    │
-   │   └────────────┘   └────────────────┘   └──────────────────┘    │
-   │                          │                       │              │
-   │                          ▼                       ▼              │
-   │                    event log              ready_tasks table     │
-   │                    (the truth)            (work to do now)      │
-   │                                                                 │
-   │   ┌──────────────────┐                                          │
-   │   │ eventWaitStore   │  ← parks WaitForEvent waiters,           │
-   │   │ (Memory / Persist)│   resolved by PublishEvent              │
-   │   └──────────────────┘                                          │
-   └─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-   ┌─────────────────────────────────────────────────────────────────┐
-   │                       RunWorker loop                            │
-   │                                                                 │
-   │   for { task = queue.Poll(); wf.execute(task.InstanceID) }      │
-   │                                                                 │
-   │   execute() = Run() = load instance → replay → run user fn      │
-   └─────────────────────────────────────────────────────────────────┘
+wf := workflow.New(runner, "send-welcome-email",
+    func(wctx *workflow.Context, params *User) (*Receipt, error) {
+        receipt, err := workflow.Step(wctx,
+            func(ctx context.Context) (Receipt, error) {
+                key := string(wctx.InstanceID()) + ":send-welcome-email"
+                return emailClient.Send(ctx, params.Email, key)
+            },
+            workflow.WithStepName("Send welcome email"),
+        )
+        if err != nil {
+            return nil, err
+        }
+        return &receipt, nil
+    },
+)
+
+id, err := wf.Start(ctx, &User{Email: "alice@example.com"})
+if err != nil {
+    return err
+}
+_ = id // Keep this ID to read the result or cancel the instance.
+
+// Blocks until cancellation. Register all workflows before starting workers.
+return runner.RunWorkers(ctx, 4, workflow.WorkerOptions{
+    PollInterval:        200 * time.Millisecond,
+    LeaseExtendInterval: 10 * time.Second,
+})
 ```
 
-The two storage planes:
+`RunWorker` runs one worker. `RunWorkers` bounds concurrent executions without prefetching tasks beyond available execution slots.
+Neither method starts an HTTP server.
 
-- **Event log** (Chronicle aggregate repo) = source of truth.
-  Every step result, sleep deadline, retry decision, etc. is persisted as a
-  `WorkflowEvent`.
-- **Ready-tasks table** (or in-memory slice) = "what should a worker pick up
-  next, and when?" Derived from events.
+Workers automatically renew leases. Transient queue and storage errors retain work for another attempt.
+An unknown workflow definition does not delete its task.
 
----
+On cancellation, workers interrupt their callbacks, stop their heartbeats, release unfinished claims, and join all goroutines.
+Callbacks and custom queues must honor their context. A callback that ignores cancellation can prevent shutdown.
 
-## 2. `WorkflowInstance` — the aggregate
+### SQLite configuration
 
-It's just a Chronicle aggregate. Embeds `aggregate.Base`. The events that mutate
-it are the workflow's lifecycle events, **not** the user's domain events.
+Use a file-backed database for persistence. Configure a busy timeout and WAL mode for competing connections or processes:
 
-```
-                       WorkflowInstance
-   ┌─────────────────────────────────────────────────────┐
-   │ id            : InstanceID  ("wf-<uuid>")           │
-   │ workflowName  : string      ("send-email")          │
-   │ status        : running|waiting|completed|          │
-   │                 failed|cancelled                    │
-   │ params        : []byte      (input JSON)            │
-   │ output        : []byte      (return value JSON)     │
-   │ stepResults   : map[int][]byte   ← REPLAY CACHE     │
-   │ currentStep   : int                                 │
-   │ attempt       : int         (1-indexed)             │
-   │ retryStrategy : *RetryStrategy                      │
-   │ cancellationPolicy : *CancellationPolicy            │
-   │ startedAt, lastCheckpointAt : time.Time             │
-   └─────────────────────────────────────────────────────┘
-
-   Events that drive Apply():
-
-   workflowStarted         ─→ status=running, attempt=1, save params
-   stepCompleted{idx,res}  ─→ stepResults[idx]=res, currentStep++
-   stepFailed              ─→ status=failed (later overwritten by
-                              workflowFailed or workflowRetried)
-   workflowCompleted       ─→ status=completed, save output
-   workflowFailed          ─→ status=failed, store error
-   workflowRetried{n,...}  ─→ status=running, attempt=n,
-                              DELETE stepResults[failedIdx]
-                              (so failed step re-runs on replay)
-   workflowWaiting         ─→ status=waiting
-   workflowEventReceived   ─→ status=running
-   workflowCancelled       ─→ status=cancelled
+```go
+db, err := sql.Open("sqlite3", "workflows.db?_journal_mode=WAL&_busy_timeout=10000")
 ```
 
-The `stepResults` map is the **memoization table** that makes replays cheap and
-deterministic. Every `Step` / `Sleep` / `WaitForEvent` is keyed by a
-**positional step index**.
+`NewSqliteRunnerWithSyncQueue` writes events and task changes in the same transaction.
+Published events and their wake-up tasks also commit together.
+Queue constructors add required columns to older tables without deleting existing tasks.
+All processes sharing the database must use synchronized clocks.
 
----
+## Run workers on separate hosts
 
-## 3. Replay: how `Step` works
+Use PostgreSQL when workers run on different machines. Each process opens its own connection pool and registers compatible workflow definitions.
 
-This is the core trick. `wctx.stepCount` is a local counter that gets bumped
-on every step-like call inside the user function.
+Authoritative event history and task scheduling share the same database transaction:
 
-```
-   user function body                  wctx.stepCount   stepResults map
-   ─────────────────────────────────   ─────────────    ──────────────────
-   Run() loads instance, sets ct=0     ct=0             {0:"alice",1:"hi"}
-                                                        (loaded from log)
+```go
+import _ "github.com/jackc/pgx/v5/stdlib"
 
-   Step(wctx, fetchUser)               ct=0→1           HIT  → return "alice"
-                                                              from cache
-
-   Step(wctx, renderTemplate)          ct=1→2           HIT  → return "hi"
-
-   Sleep(wctx, 5*time.Minute)          ct=2→3           HIT? wakeAt in past?
-                                                          yes → continue
-                                                          no  → re-enqueue
-                                                                wake task,
-                                                                return
-                                                                ErrSleeping
-
-   WaitForEvent[Ack](wctx, "ack:42")   ct=3→4           HIT? resolved?
-                                                          yes → return ack
-                                                          no  → ErrWaiting
-                                                          timeout? → record
-                                                                step_completed
-                                                                + return
-                                                                ErrEventTimeout
-
-   return result                       (no event log writes for steps
-                                        that hit the cache)
+db, err := sql.Open("pgx", dsn)
+if err != nil {
+    return err
+}
+runner, err := workflow.NewPostgresRunnerWithSyncQueue(ctx, db,
+    workflow.WithPostgresQueueOpts(
+        workflow.WithPostgresQueueLeaseDuration(30*time.Second),
+        workflow.WithPostgresQueueWorkerID("worker-east-1"),
+        workflow.WithPostgresQueueTransactionTimeout(5*time.Second),
+    ),
+)
+if err != nil {
+    return err
+}
+// Register workflows with workflow.New before this call.
+return runner.RunWorkers(ctx, 8, workflow.WorkerOptions{})
 ```
 
-When a step **doesn't** hit the cache it does the work, then:
+The worker ID is a diagnostic label. A unique receipt identifies each claim, even when processes use the same label.
+Postgres claims use `FOR UPDATE SKIP LOCKED`. Lease checks use the database clock after task-lock acquisition.
+Workflow checkpoints validate the claim inside the event-save transaction. An expired worker cannot save a result against an unchanged event version.
 
-```
-   ┌─────────────────────────┐         success           ┌──────────────────┐
-   │  fn(wctx.ctx)           │ ──────────────────────→   │ recordThat(      │
-   │  user step function     │                           │   stepCompleted) │
-   └─────────────────────────┘                           │ + Save           │
-            │                                            └──────────────────┘
-            │ error
-            ▼
-   ┌─────────────────────────┐
-   │ recordThat(stepFailed)  │
-   │ + Save                  │
-   │ wctx.lastFailedStep=idx │  ← scheduleRetry reads this
-   │ return err              │     so it can clear it on retry
-   └─────────────────────────┘
-```
+Workflow deadlines still use the runner clock. Keep workflow clocks synchronized, even though Postgres leases use database time.
+Wait transactions require the default `READ COMMITTED` isolation level.
+A shared advisory lock orders wait registration, event publication, and timeout decisions. Publication and waiter wake-up commit together.
 
-> ⚠ Determinism rule: **always call Steps in the same order**.
-> The step index is positional, not name-based. The codebase even has a
-> separate test file `queue_async_name_test.go` discussing the name embedding
-> in events — but the index is still the cache key.
+Short storage transactions have a five-second default limit, configured with `WithPostgresQueueTransactionTimeout`.
+The limit does not apply to activity callbacks. Client deadlines and transaction-local Postgres timeouts prevent half-open connections from retaining workflow locks indefinitely.
+Server limits apply before event appends, publication, or explicit queue transactions acquire their locks.
+`PollClaim` uses a single autocommit statement with a client deadline, not the transaction-local server limits.
+Custom repositories must provide equivalent limits if they use `PostgresQueue` without the supplied runner.
 
----
+## Execution contract
 
-## 4. `Run()` — the execution loop on a single task pickup
+**Steps are at least once, not exactly once.** A process can stop after an external effect but before its checkpoint commits.
+The next worker repeats that step. Use a stable idempotency key for external effects.
+`wctx.InstanceID()` remains stable across retries and restarts.
 
-```
-   Run(ctx, instanceID):
-   ─────────────────────────────────────────────────────────────────────
-   instance ← repo.Get(instanceID)            ← load from event log
-                                                 (replays Apply for every
-                                                  event since v0)
-        │
-        ▼
-   status terminal?  completed → return cached output
-                     failed    → return error
-                     cancelled → return ErrWorkflowCancelled
-        │
-        ▼
-   cancellation policy elapsed? → CancelWorkflow(); ErrWorkflowCancelled
-        │
-        ▼
-   wctx ← Context{instance, stepCount: 0, lastFailedStep: nil}
-        │
-        ▼
-   output, err ← userFn(wctx, params)
-        │
-        ├── err == nil ────→ recordThat(workflowCompleted) + Save → return output
-        │
-        ├── ErrSleeping ───→ return ErrSleeping       (worker treats as success;
-        │                                              wake task already enqueued)
-        │
-        ├── ErrWaiting ────→ return ErrWaiting        (parked until publish)
-        │
-        ├── ErrConflictAbort → return — another worker advanced us
-        │
-        └── other error ──→ scheduleRetry(instance, err):
-                              retryStrategy?  no  → recordThat(workflowFailed)
-                                                    + Save → return err
-                                              yes → recordThat(workflowRetried)
-                                                    + Save
-                                                    + enqueue delayed task
-                                                    → return ErrWorkflowRetrying
+Keep workflow code deterministic between checkpoints. Put network calls, clock reads, random choices, and external effects inside steps.
+Step results persist as JSON. Step order is positional and must remain compatible across deployments.
+
+A completed step returns its stored result without calling its function again.
+Named steps also record their start time before the callback runs.
+Changing a recorded step name or kind returns `ErrWorkflowInfrastructure` instead of executing incompatible work.
+Names improve inspection. They do not replace positional step identity.
+
+`Step2` is the error-only form of `Step`. Both accept `WithStepName`.
+Unnamed steps retain completion-only tracing for compatibility.
+
+### Durable pauses
+
+```go
+if err := workflow.Sleep(wctx, 5*time.Minute,
+    workflow.WithStepName("Cooling period")); err != nil {
+    return nil, err
+}
+
+shipment, err := workflow.WaitForEvent[Shipment](wctx, "shipment:order-42",
+    workflow.WaitForEventOptions{
+        Timeout: time.Hour,
+        Name:    "Await carrier",
+    },
+)
 ```
 
-The instance is **loaded once per Run**, then shared via `wctx.instance` across
-all Step/Sleep/WaitForEvent calls. That avoids O(N²) replays inside a single
-execution. Each step still hits Save independently — durability after every
-checkpoint.
+Sleep, event waits, and retry delays persist their scheduling intent and release the worker slot.
+They do not block a goroutine until their deadline.
+A zero-duration sleep completes in the same execution.
+Direct `Run` calls also honor persisted sleep and retry deadlines.
 
----
+`PublishEvent` delivers a named event to workflows waiting for that name:
 
-## 5. Optimistic concurrency: `ErrConflictAbort`
-
-The event log uses optimistic concurrency (`version.ConflictError`). Two workers
-may pick up the same `instanceID` (rare but possible: lease just expired, etc).
-
-```
-   Worker A             Worker B
-   ────────             ────────
-   Poll → task42       Poll → task42  (lease of A expired)
-   Run(42)             Run(42)
-   Step 5 …            Step 5 …
-   Save (v=5)          Save (v=5) ← VersionConflict!
-                       saveOrConflictAbort wraps → ErrConflictAbort
-                       worker treats it as success → Complete(task)
+```go
+err := workflow.PublishEvent(ctx, runner, "shipment:order-42", Shipment{
+    TrackingNumber: "TRACK-42",
+})
 ```
 
-Everywhere a save happens, `saveOrConflictAbort` translates the conflict into
-`ErrConflictAbort`. The Run loop and worker loop both special-case this:
-**silently abandon** the current execution.
+The first publication wins. Use an occurrence-specific event name, not a recurring topic name.
+A pre-published event resolves during the first wait call.
+An event published before the deadline remains valid even if a worker resumes after the deadline.
+An event published at or after the deadline does not resolve that wait.
+Durable stores record publication time after they acquire the publication lock. This is accepted-storage time, not physical transaction commit time.
+SQLite uses the runner clock. Postgres uses the database clock. Workflow deadlines must agree with that clock.
+Timeout checkpoints recheck publication in their event-save transaction. A conflicting on-time publication causes recoverable rollback, not a domain failure.
+Legacy publications without timestamps remain deliverable because their original timing is unknown.
 
----
+### Retries
 
-## 6. The TaskQueue abstraction
-
-```
-   type TaskQueue interface {
-       Enqueue(task)                    ← add (with optional RunAfter)
-       Poll() → *task                   ← claim next ready task
-       Complete(id)                     ← release on success / sleep / wait
-       Fail(id)                         ← release after permanent failure
-       ExtendLease(id, d)               ← keep claim alive in long steps
-   }
-```
-
-Three implementations, each with different durability guarantees:
-
-```
-   ┌────────────────┬─────────────────────┬─────────────────────────────┐
-   │  Implementation│  Backed by          │  Durability of "task ready" │
-   ├────────────────┼─────────────────────┼─────────────────────────────┤
-   │ MemoryQueue    │ in-memory slice     │ none — lost on restart      │
-   │                │                     │ (event log can repopulate   │
-   │                │                     │  if you re-trigger)         │
-   ├────────────────┼─────────────────────┼─────────────────────────────┤
-   │ SyncQueue      │ SQLite table        │ STRONG — task row written   │
-   │                │ workflow_ready_     │ in the SAME tx as the event │
-   │                │ tasks               │ log append, via Process()   │
-   ├────────────────┼─────────────────────┼─────────────────────────────┤
-   │ AsyncQueue     │ SQLite table,       │ EVENTUAL — projection lags  │
-   │                │ populated by an     │ behind the event log by     │
-   │                │ AsyncProjection on  │ pollInterval; but eventually│
-   │                │ the global stream   │ converges                   │
-   └────────────────┴─────────────────────┴─────────────────────────────┘
+```go
+id, err := wf.Start(ctx, params,
+    workflow.WithRetryStrategy(workflow.DefaultRetryStrategy()),
+)
 ```
 
-### SyncQueue: events → tasks in the SAME transaction
+Retries resume from completed checkpoints. Failed steps execute again.
+The default strategy allows five total attempts, with exponential backoff from one second to five minutes.
+`MaxAttempts: 0` also means five total attempts. No retry strategy means no automatic domain retry.
 
-This is the "production" path. `SyncQueue` doubles as a
-`TransactionalAggregateProcessor`, which Chronicle calls **inside the same
-SQL transaction** that appends events.
+A step failure and its retry or terminal failure decision commit together.
+Storage, encoding, and scheduling errors do not consume domain retry attempts or mark the instance failed.
+They return `ErrWorkflowInfrastructure`, preserving the original error in its chain.
+Worker shutdown does not create a domain failure.
 
-```
-   Step calls repo.Save(instance)
-        │
-        ▼
-   ┌─────────────────────────────────────────────────────────────┐
-   │ BEGIN TX                                                    │
-   │   1. eventlog.AppendInTx(...)        — write events         │
-   │   2. SyncQueue.Process(tx, root, events):                   │
-   │        for each event: insert/delete rows in                │
-   │          workflow_ready_tasks                               │
-   │          workflow_waiting_events                            │
-   │ COMMIT                                                      │
-   └─────────────────────────────────────────────────────────────┘
-        │
-        ▼
-   No way for events to exist without their tasks, or vice versa.
+### Cancellation
+
+```go
+err := workflow.CancelWorkflow(ctx, runner, id, "order cancelled")
 ```
 
-Event → task mapping (in `SyncQueue.processEvent`):
+Cancellation is idempotent for terminal instances. It prevents later checkpoints from committing against stale state.
+It cannot undo an external effect or force arbitrary user code to stop.
 
-```
-   workflowStarted          → UPSERT immediate task
-   stepCompleted (sleep)    → UPSERT delayed task at sleepResult.WakeAt
-   stepCompleted (normal)   → no task change
-   workflowRetried          → UPSERT delayed task at NextRunAfter
-   workflowWaiting          → INSERT waiter row in workflow_waiting_events
-                              IF pre-published event exists → UPSERT immediate task
-                              ELSE IF deadline set         → UPSERT delayed task
-                              ELSE                          → no task (parked)
-   workflowEventReceived    → DELETE waiter, UPSERT immediate task
-   workflowCompleted/Failed/
-   Cancelled                → DELETE task + DELETE all waiters for instance
-   stepFailed               → no action (user fn decides retry vs fail)
-```
+`WithCancellationPolicy` can enforce a maximum instance duration or delay since the last checkpoint.
+The policy is checked when an instance runs. It is not an independent timer for indefinitely parked instances.
 
-### AsyncQueue: events → tasks via projection (eventually)
+### Execution results
 
-For backends that **can't** do TX (NATS, in-memory). `AsyncQueue` implements
-`event.AsyncProjection`. An `AsyncProjectionRunner` tails the global event log
-and calls `Handle(rec)` for each workflow event, which performs the same
-event→task mapping as SyncQueue's `Process`, but **outside** the event-write TX.
+| Result | Meaning |
+| --- | --- |
+| `nil` | Completed successfully |
+| `ErrWorkflowSleeping` | Paused until a persisted wake time |
+| `ErrWorkflowWaiting` | Awaiting an event or timeout |
+| `ErrWorkflowRetrying` | Another domain attempt is scheduled |
+| `ErrWorkflowCancelled` | Persisted cancellation |
+| `ErrConflictAbort` | Another execution advanced the stream |
+| `ErrWorkflowInfrastructure` | Storage, encoding, configuration, or scheduling failure |
+| Execution context error | Interrupted execution, without recording a domain failure |
+| Other error | Domain failure, after the retry or terminal decision commits |
 
-```
-   event log ──(GlobalReader)──→ AsyncProjectionRunner
-                                       │ poll every X ms
-                                       ▼
-                                  AsyncQueue.Handle(rec)
-                                       │
-                                       ▼
-                                  workflow_ready_tasks (lagged)
-```
+Use `GetResult` for completed output and `GetStatus` for persisted status and attempt number.
+For backward compatibility, `GetStatus` reports sleeps and scheduled retries as `running`.
+The inspector distinguishes `sleeping` and `retrying` while their deadlines are in the future.
 
-Trade-off: task discovery is delayed. Correctness is preserved because the event
-log's optimistic concurrency still prevents duplicate step execution.
+## Embedded monitor
 
----
+`workflow/monitor` provides a read-only HTML UI and JSON API. Assets are embedded with `go:embed`.
+There is no frontend build or CDN dependency.
 
-## 7. Two ways to wire a Runner
-
-```
-   ┌──────────────────────────────────────────────────────────────────────┐
-   │  NewRunner(eventLog, logger, opts...)                                │
-   │                                                                      │
-   │  ┌───────────┐                                                       │
-   │  │ event log │ ──┐                                                   │
-   │  └───────────┘   │                                                   │
-   │                  ▼                                                   │
-   │            ES Repository (default)                                   │
-   │                  │                                                   │
-   │                  ▼                                                   │
-   │             MemoryQueue (default; can swap via WithTaskQueue)        │
-   │                  │                                                   │
-   │                  ▼                                                   │
-   │             waitStore (in-memory)                                    │
-   │                                                                      │
-   │  → Fine for tests / single-process; NOT durable for queue state.     │
-   └──────────────────────────────────────────────────────────────────────┘
-
-   ┌──────────────────────────────────────────────────────────────────────┐
-   │  NewSqliteRunnerWithSyncQueue(db, opts...)                           │
-   │                                                                      │
-   │  ┌───────────┐                                                       │
-   │  │ sqlite db │ ─┬─→ eventlog.NewSqlite()                             │
-   │  └───────────┘ │                                                     │
-   │                ├─→ NewSyncQueue() — creates                          │
-   │                │     workflow_ready_tasks,                           │
-   │                │     workflow_waiting_events,                        │
-   │                │     workflow_published_events                       │
-   │                │                                                     │
-   │                └─→ newPersistentWaitStore()                          │
-   │                                                                      │
-   │                  ▼                                                   │
-   │        chronicle.NewTransactionalRepository(                         │
-   │            eventLog, NewEmpty, nil,                                  │
-   │            syncQueue ← as TransactionalAggregateProcessor            │
-   │        )                                                             │
-   │                                                                      │
-   │  → Durable, distributed-safe. Atomic events + task creation.         │
-   └──────────────────────────────────────────────────────────────────────┘
+```go
+log, err := eventlog.NewSqlite(db)
+if err != nil {
+    return err
+}
+inspector, err := workflow.NewInspector(log)
+if err != nil {
+    return err
+}
+handler, err := monitor.NewHandler(inspector)
+if err != nil {
+    return err
+}
+mux.Handle("/workflows/", http.StripPrefix("/workflows", handler))
 ```
 
-`NewRunner` with `WithTaskQueue(asyncQueue)` is the third combination —
-in-memory or NATS event log + AsyncQueue projection for distributed
-eventually-consistent task discovery.
+Open `/workflows/`. The page shows instances, filters, named steps, pauses, errors, parameters, output, and event history.
+The recorded path shows executed steps, not a static graph of arbitrary Go code.
+Missing legacy timestamps remain unknown. Running state does not prove a worker is alive.
 
----
+**Protect the whole handler with host authentication and authorization.** Workflow data can contain secrets and personal data.
+The monitor provides no mutation routes or built-in authentication.
 
-## 8. Worker loop (`RunWorker`)
+See [monitor documentation](monitor/README.md) for API limits and security details.
+`Inspector.List` requires a finite, non-tailing `event.GlobalLog` and scans history on every call.
+Use an indexed read-model projection for large installations. NATS does not provide global discovery.
 
-```
-   RunWorker(ctx, opts):
-       loop:
-           task ← queue.Poll(ctx)
-           if task == nil: sleep pollInterval; continue
-           wf   ← workflows[task.WorkflowName]
-           if !wf: queue.Fail(); continue
+### Runnable example
 
-           spawn auto-lease-extender goroutine ──── every leaseExtendInterval
-                                                    │       call
-                                                    ▼
-                                                 queue.ExtendLease(id, 3×interval)
-
-           err ← wf.execute(ctx, task.InstanceID)   ← calls Run()
-           cancel lease-extender
-
-           switch err:
-              nil                  → queue.Complete()
-              ErrConflictAbort     → queue.Complete()   (silent)
-              ErrWorkflowSleeping  → queue.Complete()   (new task already enqueued)
-              ErrWorkflowRetrying  → queue.Complete()   (retry task enqueued)
-              ErrWorkflowWaiting   → queue.Complete()   (will be woken by publish)
-              ErrWorkflowCancelled → queue.Complete()
-              other                → queue.Fail()       (worker logs, moves on)
+```sh
+go run ./examples/10_workflow_monitor -db /tmp/workflows.db
+# Open http://127.0.0.1:8080/workflows/
 ```
 
-The auto-lease extender solves the "long step + lease expiry" problem without
-the user having to call `Heartbeat` manually (though they still can).
+The example starts four workers and creates completed, sleeping, waiting, failed, retrying, and cancelled instances.
+On restart, use `-seed=false` to inspect and recover existing work without adding samples.
 
----
+## Queue choices
 
-## 9. Sleep — durable timer
+| Queue | Scheduling | Recovery |
+| --- | --- | --- |
+| `MemoryQueue` | In-process notifications | Receipts and lease recovery within the process only |
+| `SyncQueue` | SQLite task changes inside event-save transactions | Durable claims, pauses, retries, and event waits |
+| `PostgresQueue` | PostgreSQL task changes inside event-save transactions | Networked workers, database-clock leases, and transactional checkpoints |
+| `AsyncQueue` | Global event projection into SQLite | Durable task claims, eventually consistent discovery |
 
-```
-   Sleep(wctx, 5*time.Minute):
-       idx = wctx.stepCount++
-       if stepResults[idx] exists:                    ← REPLAY
-           sr = parse(stepResults[idx])
-           if now < sr.WakeAt:
-               queue.Enqueue(RunAfter=sr.WakeAt)      ← re-arm wake task
-               return ErrWorkflowSleeping
-           else:
-               return nil                              ← sleep elapsed, continue
-       else:                                          ← FIRST RUN
-           wakeAt = now + d
-           recordThat(stepCompleted{
-               StepIndex: idx,
-               Result: marshal({WakeAt: wakeAt})
-           })
-           Save                                       ← durable: wake time in event log
-           queue.Enqueue(RunAfter=wakeAt)             ← schedule wake-up
-           return ErrWorkflowSleeping
-```
+`NewRunner` defaults to memory scheduling and memory event publications, even with a persistent event log.
+That combination is useful for tests and direct execution, not crash-safe orchestration.
+`NewSqliteRunner` also uses this nontransactional scheduling default.
 
-Sleep is stored as a regular `stepCompleted` event with a `sleepResult` payload.
-That's how `SyncQueue.processEvent` detects "this stepCompleted is a sleep" and
-upserts a delayed task. Same trick for AsyncQueue.
+The async queue requires a running `AsyncProjectionRunner` and a durable checkpointer.
+`WithTaskQueue` alone does not persist event publications or make event writes atomic with task changes.
+Start that projection from a valid checkpoint before running workers.
+Async notifications coalesce toward the earliest wake. Persisted sleep and retry guards prevent an early notification from executing callbacks before their deadline.
 
----
+Workers prefer `ClaimedTaskQueue`, which identifies each execution with a unique receipt.
+A stale receipt cannot acknowledge, fail, release, or renew a newer claim.
+Transactional runners also validate worker receipts during checkpoint commits. Nontransactional queues cannot provide that atomic checkpoint fence.
+The original `TaskQueue` interface remains supported, but ID-only methods cannot fence overlapping claims.
+The legacy memory `Poll` method remains destructive and lease-free.
 
-## 10. WaitForEvent / PublishEvent — durable signals
+## Distributed failure tests
 
-A workflow can park itself indefinitely on a named event.
+The tests in `distributed*_test.go` run independent operating-system processes and independent storage connections.
+They do not share Go memory, registries, connection pools, or queue objects.
+The same scenarios run against file-backed SQLite and a Postgres container:
 
-```
-   WaitForEvent[T](wctx, "order.shipped:42", timeout):
+- Competing workers and unique receipts, including identical worker labels.
+- An expired worker cannot commit while a replacement holds the unchanged event version.
+- Forced process termination resumes from committed checkpoints without repeating earlier steps.
+- Heartbeats keep long activities exclusive beyond the original lease.
+- Another process publishes events or cancels an active workflow.
+- Concurrent publication and wait registration do not strand indefinite waits.
+- Worker replacement preserves sleep and retry deadlines.
+- A TCP storage partition isolates one Postgres worker while a healthy worker recovers the task.
+- Blackholed transaction responses do not retain task or publication locks indefinitely.
 
-       if stepResults[idx] exists (REPLAY):
-           if resolved:        return decoded payload
-           if timedOut:        return ErrEventTimeout
-           if deadline passed: record timeout step; return ErrEventTimeout
-           payload, found = waitStore.GetEvent(instanceID, eventName)
-           if found:
-               recordThat(workflowEventReceived{...})
-               recordThat(stepCompleted{Result: resolvedResult})
-               Save
-               return decoded payload
-           return ErrWorkflowWaiting
+Separate regressions cover expiry during connection and row-lock waits, publication rollback, and timeout races.
+Postgres lock tests observe real waiting connections before allowing their lease to expire.
+The activity sink records visible effects. Crash tests deliberately demonstrate duplicate uncommitted effects.
 
-       FIRST RUN:
-           deadline = now + timeout  (or zero)
-           recordThat(workflowWaiting{event, deadline})    ← status=waiting
-           recordThat(stepCompleted{idx, unresolved result})
-           Save                                            ← TX writes:
-                                                            workflow_ready_tasks
-                                                            row updated by
-                                                            SyncQueue.Process:
-                                                              • pre-published? immediate
-                                                              • deadline? delayed
-                                                              • else: parked (no task)
-           waitStore.Register(instanceID, eventName)
-           return ErrWorkflowWaiting
+With Docker available, run:
 
-
-   PublishEvent(ctx, runner, "order.shipped:42", payload):
-
-       waiters = waitStore.Publish(eventName, payload)
-                  ┌──────────────────────────────────────────────┐
-                  │  in-memory waitStore: first-write-wins,      │
-                  │   returns slice of registered waiters        │
-                  │                                              │
-                  │  persistentWaitStore: INSERT OR IGNORE into  │
-                  │   workflow_published_events; SELECT all rows │
-                  │   from workflow_waiting_events; DELETE them  │
-                  └──────────────────────────────────────────────┘
-       for w in waiters:
-           queue.Enqueue({InstanceID, WorkflowName})  ← immediate wake task
+```sh
+devbox run -- go test -race ./workflow -run '^TestDistributedWorkflow_' -count=3
 ```
 
-### The two `eventWaitStore` implementations
+These tests exercise independent processes and real TCP failures on one test machine.
+They do not prove multi-region availability, Postgres failover, or every network-partition pattern.
+POSIX signal tests do not run on Windows.
 
-```
-            waitStore (in-memory)             persistentWaitStore (SQLite)
-            ─────────────────────             ─────────────────────────────
-   Register: append to waiters map            no-op
-             (or copy to received if          (SyncQueue.Process inserted
-              event already published)         the row in the SAME tx as
-                                               the workflowWaiting event)
+## Temporal replacement scope
 
-   Publish:  store payload + return           transactional INSERT OR IGNORE
-             waiters slice                     into published_events,
-                                               SELECT + DELETE from
-                                               waiting_events
+This package supports checkpoint-based Go workflows, durable pauses, retries, recoverable workers, and a read-only monitor.
+It is **not a drop-in Temporal replacement** or a Temporal protocol implementation.
 
-   GetEvent: lookup instanceID:eventName      lookup eventName globally in
-             in `received` map                 workflow_published_events
-                                               (first-write-wins is global)
-```
+Important missing capabilities include:
 
-The persistent store makes WaitForEvent work **across processes** — Worker A
-parks the workflow; Worker B publishes the event; Worker C wakes and resumes.
+- Workflow-definition versioning and deterministic replay checks across incompatible deployments.
+- Durable recurring signal queues and workflow queries or updates. Named publications currently use first-write-wins semantics.
+- Separate activity workers, activity-specific retries and timeouts, and child-workflow lifecycle management.
+- Durable heartbeat progress and automatic cancellation timers for indefinitely parked instances.
+- History compaction, archival, and an indexed visibility service.
+- Namespace isolation, distributed rate limits, and operator mutation controls.
 
----
+Use the documented guarantees to decide whether a particular workflow can replace its current orchestration.
+Keep external effects idempotent. Lease fencing protects committed state, not an effect in another system.
 
-## 11. Retries
-
-```
-   user fn returns err   →   Run catches it   →   scheduleRetry(instance, err)
-
-   scheduleRetry:
-       strategy ← instance.retryStrategy        (nil → no retry, fall through to failed)
-       if attempt >= MaxAttempts: return (false, nil)  → permanent fail
-       delay   = strategy.nextDelay(attempt - 1)       (exponential backoff)
-       runAfter = now + delay
-       recordThat(workflowRetried{
-           Attempt: next,
-           NextRunAfter: runAfter,
-           FailedStepIndex: wctx.lastFailedStep,  ← so Apply can DELETE
-                                                    stepResults[idx]
-                                                    to allow re-execution
-           RetryStrategy: marshal(strategy),       ← carried in the event
-                                                    so it survives replays
-       })
-       Save
-       queue.Enqueue(RunAfter=runAfter)
-       return (true, nil)
-```
-
-`SyncQueue.Process` sees `workflowRetried` and upserts a delayed task at
-`NextRunAfter`. `AsyncQueue.Handle` does the same.
-
-> Why is the failed step index cleared from `stepResults`?
-> Because on replay, a cached "failure" would otherwise be replayed as success
-> (e.g. a `WaitForEvent` cached its timed-out state, which on retry should be
-> a fresh wait, not an immediate timeout).
-
----
-
-## 12. Cancellation
-
-Two flavors:
-
-```
-   ┌─────────────────────────────────────────────────────────────────────┐
-   │ Manual:   workflow.CancelWorkflow(ctx, runner, instanceID, reason)  │
-   │                                                                     │
-   │     Get instance → if terminal: no-op                               │
-   │                  → record(workflowCancelled) + Save                 │
-   │                                                                     │
-   │     SyncQueue.Process sees it → DELETE ready_task                   │
-   │                              → DELETE all waiting_events for id     │
-   └─────────────────────────────────────────────────────────────────────┘
-
-   ┌─────────────────────────────────────────────────────────────────────┐
-   │ Automatic: CancellationPolicy {MaxDuration, MaxDelay}               │
-   │                                                                     │
-   │     Stored in the workflowStarted event (and re-applied on Apply).  │
-   │     At the START of every Run(), checkCancellationPolicy(instance): │
-   │        • elapsed since startedAt        > MaxDuration → cancel      │
-   │        • elapsed since lastCheckpointAt > MaxDelay    → cancel      │
-   │     If either fires: CancelWorkflow(...), return ErrWorkflowCancelled│
-   └─────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 13. Full lifecycle of one instance — end-to-end timeline
-
-```
-   t=0   Start(params)
-         ┌─────────────────────────────────────────────────────────────┐
-         │ recordThat(workflowStarted)                                 │
-         │ repo.Save(instance)        ─→  event log: [started]         │
-         │                            ─→  SyncQueue.Process inserts    │
-         │                                immediate task               │
-         └─────────────────────────────────────────────────────────────┘
-         queue.Enqueue({immediate})  (also called explicitly in Start)
-
-   t=1   Worker A: queue.Poll → task
-         wf.execute → Run:
-           load instance (status=running, stepResults={})
-           userFn:
-             Step(0, fetchUser)   → run fn   → record(stepCompleted{0})
-                                              → Save → tx: event log + task
-                                                       row unchanged
-             Step(1, render)      → run fn   → record(stepCompleted{1})
-                                              → Save
-             Sleep(2, 5m)         → record(stepCompleted{2, sleepResult{wakeAt=t+5m}})
-                                  → Save → tx: SyncQueue.Process upserts
-                                           delayed task RunAfter=t+5m
-                                  → queue.Enqueue redundantly (same)
-                                  → return ErrSleeping
-         worker: ErrSleeping → queue.Complete (no-op for the delayed row,
-                               because its claimed_by ≠ worker A's id)
-
-   t=5m  Worker B: queue.Poll → task (RunAfter elapsed)
-         wf.execute → Run:
-           load instance (replays started, stepCompleted×3)
-                       (stepResults={0:user, 1:rendered, 2:sleepResult})
-           userFn:
-             Step(0) → cache HIT
-             Step(1) → cache HIT
-             Sleep(2) → cache HIT, wakeAt < now → continue
-             WaitForEvent[Ack](3, "ack:42", 1h)
-                          → MISS → record(workflowWaiting{deadline=t+1h})
-                                   record(stepCompleted{3, unresolved})
-                                   Save → tx: insert waiting_event row,
-                                              upsert delayed task
-                                              (deadline=t+1h)
-                                   waitStore.Register
-                                   return ErrWaiting
-         worker: ErrWaiting → queue.Complete
-
-   t=10m Outside world: PublishEvent(runner, "ack:42", {...})
-         waitStore.Publish:
-           persistent path:
-             INSERT OR IGNORE published_events
-             SELECT waiting_events WHERE event_name="ack:42"
-             DELETE matched rows
-             returns waiters
-         queue.Enqueue({immediate}) for each waiter
-
-   t=10m+ε  Worker C: queue.Poll → task
-         wf.execute → Run:
-           load instance (status=waiting, stepResults still has unresolved
-                          waitForEventResult at idx 3)
-           userFn:
-             Step(0..2)            → cache HIT
-             WaitForEvent[Ack](3)  → cache present but Resolved=false
-                                     waitStore.GetEvent → found
-                                     record(workflowEventReceived)
-                                     record(stepCompleted{3, resolved=true})
-                                     Save → tx: delete waiting_event row,
-                                                upsert immediate task,
-                                                (status=running)
-                                     return ack payload
-             rest of fn …          → eventually produce output
-           record(workflowCompleted)
-           Save → tx: DELETE ready_task row, DELETE any leftover waiters
-         worker: nil → queue.Complete (no-op, already deleted)
-```
-
----
-
-## 14. File map
-
-```
-   workflow.go              WorkflowInstance aggregate, events, Apply,
-                            Runner, NewRunner / NewSqliteRunner /
-                            NewSqliteRunnerWithSyncQueue, Workflow[P,O],
-                            Start, Run, Step, Step2, Context
-   workflow_sleep.go        Sleep, sleepResult, RunnerOption helpers
-   workflow_retry.go        RetryStrategy, scheduleRetry, workflowRetried
-   workflow_events.go       WaitForEvent, PublishEvent, in-memory waitStore,
-                            workflowWaiting, workflowEventReceived
-   workflow_cancel.go       CancelWorkflow, CancellationPolicy, automatic
-                            cancellation check
-   workflow_heartbeat.go    Heartbeat → queue.ExtendLease
-
-   queue.go                 TaskQueue interface + QueuedTask
-   queue_memory.go          MemoryQueue (slice + mutex)
-   queue_sync.go            SyncQueue (SQL) + Process (TransactionalAggregateProcessor)
-   queue_async.go           AsyncQueue (SQL) + Handle (AsyncProjection)
-
-   wait_store_persistent.go persistentWaitStore (SQL-backed eventWaitStore)
-   worker.go                RunWorker loop + auto-lease extension
-```
-
----
-
-## 15. Mental model cheat sheet
-
-- **An instance = an aggregate.** Its event stream IS its execution trace.
-- **A step = an event (stepCompleted) keyed by positional index.** Cache for replay.
-- **Run() = load aggregate + replay user function.** Cached steps return
-  instantly; uncached steps execute and persist.
-- **Sleep / WaitForEvent / Retry don't block goroutines.** They persist intent,
-  enqueue a future task, return a sentinel error, and the worker frees the slot.
-- **The TaskQueue is just "what needs attention right now."** The event log is
-  always the source of truth; the queue is reconstructible from it (that's
-  exactly what AsyncQueue does).
-- **SyncQueue's superpower** is being a `TransactionalAggregateProcessor` —
-  it sits inside Chronicle's save TX and writes the ready-tasks row in the
-  same atomic commit as the event.
-- **Conflict aborts are not failures.** They mean "someone else moved the
-  workflow forward." Silently complete the task.
+See [design analysis](DESIGN.md) for the recovery model, changes, and remaining limits.

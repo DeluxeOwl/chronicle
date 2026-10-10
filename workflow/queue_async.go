@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -17,9 +16,9 @@ import (
 // non-transactional event logs (in-memory, NATS, DynamoDB, etc.) where
 // we can't atomically write events + enqueue tasks.
 //
-// Trade-off: Task discovery is eventually consistent (delayed by the
-// projection's pollInterval). Execution is still correct because the
-// event log's optimistic concurrency prevents duplicate step execution.
+// Task discovery is eventually consistent. Receipts protect queue ownership,
+// but neither receipts nor event-log concurrency make external effects exactly
+// once. Steps that cause external effects must tolerate repeated executions.
 //
 // AsyncQueue implements both TaskQueue (for Poll/Complete/Fail/ExtendLease)
 // and event.AsyncProjection (for the projection runner to drive).
@@ -28,6 +27,7 @@ type AsyncQueue struct {
 	nowFunc       func() time.Time
 	workerID      string
 	leaseDuration time.Duration
+	legacyClaims  legacyQueueClaims
 }
 
 // AsyncQueueOption configures an AsyncQueue.
@@ -61,30 +61,18 @@ func NewAsyncQueue(ctx context.Context, db *sql.DB, opts ...AsyncQueueOption) (*
 		db:            db,
 		nowFunc:       time.Now,
 		workerID:      fmt.Sprintf("worker-%d", time.Now().UnixNano()),
-		leaseDuration: 30 * time.Second,
+		leaseDuration: defaultQueueLeaseDuration,
+		legacyClaims:  newLegacyQueueClaims(),
 	}
 	for _, opt := range opts {
 		opt(q)
 	}
 
-	if _, err := db.ExecContext(ctx, `
-		CREATE TABLE IF NOT EXISTS workflow_ready_tasks (
-			instance_id TEXT PRIMARY KEY,
-			workflow_name TEXT NOT NULL,
-			run_after_ns INTEGER NOT NULL DEFAULT 0,
-			claimed_by TEXT,
-			claimed_until_ns INTEGER
-		)
-	`); err != nil {
-		return nil, fmt.Errorf("create ready_tasks table: %w", err)
+	if err := validateLease(q.leaseDuration); err != nil {
+		return nil, err
 	}
-
-	if _, err := db.ExecContext(ctx, `
-		CREATE INDEX IF NOT EXISTS idx_workflow_ready_tasks_poll
-		ON workflow_ready_tasks (run_after_ns)
-		WHERE claimed_by IS NULL
-	`); err != nil {
-		return nil, fmt.Errorf("create poll index: %w", err)
+	if err := ensureReadyTasksSchema(ctx, db); err != nil {
+		return nil, err
 	}
 
 	// Tables for persistent event waiting.
@@ -108,13 +96,8 @@ func NewAsyncQueue(ctx context.Context, db *sql.DB, opts ...AsyncQueueOption) (*
 		return nil, fmt.Errorf("create waiting_events index: %w", err)
 	}
 
-	if _, err := db.ExecContext(ctx, `
-		CREATE TABLE IF NOT EXISTS workflow_published_events (
-			event_name TEXT PRIMARY KEY,
-			payload TEXT NOT NULL
-		)
-	`); err != nil {
-		return nil, fmt.Errorf("create published_events table: %w", err)
+	if err := ensurePublishedEventsSchema(ctx, db); err != nil {
+		return nil, err
 	}
 
 	return q, nil
@@ -143,7 +126,7 @@ func (q *AsyncQueue) MatchesEvent(eventName string) bool {
 // Handle processes a single global event record and updates the ready_tasks
 // table accordingly. This is called by the AsyncProjectionRunner.
 //
-//nolint:funlen
+//nolint:funlen,gocognit // One projection dispatch keeps event-to-task mappings together.
 func (q *AsyncQueue) Handle(ctx context.Context, rec *event.GlobalRecord) error {
 	instanceID := InstanceID(rec.LogID())
 
@@ -153,7 +136,7 @@ func (q *AsyncQueue) Handle(ctx context.Context, rec *event.GlobalRecord) error 
 		if err := json.Unmarshal(rec.Data(), &e); err != nil {
 			return fmt.Errorf("unmarshal workflowStarted: %w", err)
 		}
-		return q.upsertTask(ctx, InstanceID(e.InstanceID), e.WorkflowName, q.nowFunc())
+		return q.upsertTask(ctx, InstanceID(e.InstanceID), e.WorkflowName, time.Time{})
 
 	case eventNameStepCompleted:
 		var e stepCompleted
@@ -162,7 +145,8 @@ func (q *AsyncQueue) Handle(ctx context.Context, rec *event.GlobalRecord) error 
 		}
 		// Check if this is a sleep step.
 		var sr sleepResult
-		if err := json.Unmarshal(e.Result, &sr); err == nil && !sr.WakeAt.IsZero() {
+		if (e.Kind == "sleep" || e.Kind == "") && json.Unmarshal(e.Result, &sr) == nil &&
+			!sr.WakeAt.IsZero() {
 			workflowName := q.resolveWorkflowName(ctx, e.WorkflowName, instanceID)
 			return q.upsertTask(ctx, instanceID, workflowName, sr.WakeAt)
 		}
@@ -187,8 +171,12 @@ func (q *AsyncQueue) Handle(ctx context.Context, rec *event.GlobalRecord) error 
 			return err
 		}
 		// Check if event was already published (pre-publish case).
-		if q.isEventPublished(ctx, e.AwaitingEvent) {
-			return q.upsertTask(ctx, instanceID, workflowName, q.nowFunc())
+		published, err := q.isEventPublished(ctx, e.AwaitingEvent)
+		if err != nil {
+			return err
+		}
+		if published {
+			return q.upsertTask(ctx, instanceID, workflowName, time.Time{})
 		}
 		if !e.Deadline.IsZero() {
 			return q.upsertTask(ctx, instanceID, workflowName, e.Deadline)
@@ -200,20 +188,16 @@ func (q *AsyncQueue) Handle(ctx context.Context, rec *event.GlobalRecord) error 
 		if err := json.Unmarshal(rec.Data(), &e); err != nil {
 			return fmt.Errorf("unmarshal workflowEventReceived: %w", err)
 		}
-		q.deleteWaitingEvent(ctx, instanceID, e.ReceivedEvent)
+		if err := q.deleteWaitingEvent(ctx, instanceID, e.ReceivedEvent); err != nil {
+			return err
+		}
 		workflowName := q.resolveWorkflowName(ctx, e.WorkflowName, instanceID)
-		return q.upsertTask(ctx, instanceID, workflowName, q.nowFunc())
+		return q.upsertTask(ctx, instanceID, workflowName, time.Time{})
 
-	case eventNameWorkflowCompleted:
-		q.deleteAllWaitingEvents(ctx, instanceID)
-		return q.deleteTask(ctx, instanceID)
-
-	case eventNameWorkflowFailed:
-		q.deleteAllWaitingEvents(ctx, instanceID)
-		return q.deleteTask(ctx, instanceID)
-
-	case eventNameWorkflowCancelled:
-		q.deleteAllWaitingEvents(ctx, instanceID)
+	case eventNameWorkflowCompleted, eventNameWorkflowFailed, eventNameWorkflowCancelled:
+		if err := q.deleteAllWaitingEvents(ctx, instanceID); err != nil {
+			return err
+		}
 		return q.deleteTask(ctx, instanceID)
 
 	default:
@@ -225,133 +209,70 @@ func (q *AsyncQueue) Handle(ctx context.Context, rec *event.GlobalRecord) error 
 
 // Enqueue inserts a task into the ready_tasks table.
 func (q *AsyncQueue) Enqueue(ctx context.Context, task QueuedTask) error {
-	runAfterNs := int64(0)
-	if !task.RunAfter.IsZero() {
-		runAfterNs = task.RunAfter.UnixNano()
-	}
-
-	_, err := q.db.ExecContext(ctx, `
-		INSERT INTO workflow_ready_tasks (instance_id, workflow_name, run_after_ns, claimed_by, claimed_until_ns)
-		VALUES (?, ?, ?, NULL, NULL)
-		ON CONFLICT(instance_id) DO UPDATE SET
-			workflow_name = excluded.workflow_name,
-			run_after_ns = MIN(workflow_ready_tasks.run_after_ns, excluded.run_after_ns),
-			claimed_by = NULL,
-			claimed_until_ns = NULL
-	`, string(task.InstanceID), task.WorkflowName, runAfterNs)
+	_, err := q.db.ExecContext(ctx, enqueueReadyTaskSQL,
+		string(task.InstanceID), task.WorkflowName, queueTimeNS(task.RunAfter))
 	if err != nil {
 		return fmt.Errorf("async queue enqueue: %w", err)
 	}
 	return nil
 }
 
-// Poll finds the next ready task, atomically claims it, and returns it.
+// Poll preserves the ID-only API. Concurrent workers use PollClaim instead.
 func (q *AsyncQueue) Poll(ctx context.Context) (*QueuedTask, error) {
-	now := q.nowFunc()
-	nowNs := now.UnixNano()
-	claimedUntilNs := now.Add(q.leaseDuration).UnixNano()
-
-	tx, err := q.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("async queue poll begin tx: %w", err)
+	task, err := q.PollClaim(ctx)
+	if err != nil || task == nil {
+		return nil, err
 	}
-	defer tx.Rollback() //nolint:errcheck // This is fine.
-
-	var instanceID, workflowName string
-	var runAfterNs int64
-
-	err = tx.QueryRowContext(ctx, `
-		SELECT instance_id, workflow_name, run_after_ns
-		FROM workflow_ready_tasks
-		WHERE run_after_ns <= ?
-		AND (claimed_by IS NULL OR claimed_until_ns <= ?)
-		ORDER BY run_after_ns
-		LIMIT 1
-	`, nowNs, nowNs).Scan(&instanceID, &workflowName, &runAfterNs)
-
-	if errors.Is(err, sql.ErrNoRows) {
-		//nolint:nilnil // This is fine.
-		return nil, nil
-	}
-
-	if err != nil {
-		return nil, fmt.Errorf("async queue poll select: %w", err)
-	}
-
-	result, err := tx.ExecContext(ctx, `
-		UPDATE workflow_ready_tasks
-		SET claimed_by = ?, claimed_until_ns = ?
-		WHERE instance_id = ?
-		AND (claimed_by IS NULL OR claimed_until_ns <= ?)
-	`, q.workerID, claimedUntilNs, instanceID, nowNs)
-	if err != nil {
-		return nil, fmt.Errorf("async queue poll claim: %w", err)
-	}
-
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return nil, fmt.Errorf("async queue poll rows affected: %w", err)
-	}
-
-	if affected == 0 {
-		//nolint:nilnil // This is fine.
-		return nil, nil
-	}
-
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("async queue poll commit: %w", err)
-	}
-
-	task := &QueuedTask{
-		InstanceID:   InstanceID(instanceID),
-		WorkflowName: workflowName,
-	}
-	if runAfterNs > 0 {
-		task.RunAfter = time.Unix(0, runAfterNs)
-	}
-	return task, nil
+	q.legacyClaims.remember(*task)
+	return &task.QueuedTask, nil
 }
 
-// Complete deletes the task claimed by this worker.
+func (q *AsyncQueue) PollClaim(ctx context.Context) (*ClaimedTask, error) {
+	return pollSQLiteClaim(ctx, q.db, q.nowFunc, q.leaseDuration, q.workerID)
+}
+
+func (q *AsyncQueue) claimLeaseDuration() time.Duration { return q.leaseDuration }
+
 func (q *AsyncQueue) Complete(ctx context.Context, instanceID InstanceID) error {
-	_, err := q.db.ExecContext(ctx, `
-		DELETE FROM workflow_ready_tasks
-		WHERE instance_id = ? AND claimed_by = ?
-	`, string(instanceID), q.workerID)
-	if err != nil {
-		return fmt.Errorf("async queue complete: %w", err)
+	task, ok := q.legacyClaims.get(instanceID)
+	if !ok {
+		return nil
 	}
-	return nil
+	err := q.CompleteClaim(ctx, task)
+	q.legacyClaims.forgetAcknowledged(task, err)
+	return err
 }
 
-// Fail deletes the task claimed by this worker.
 func (q *AsyncQueue) Fail(ctx context.Context, instanceID InstanceID) error {
-	_, err := q.db.ExecContext(ctx, `
-		DELETE FROM workflow_ready_tasks
-		WHERE instance_id = ? AND claimed_by = ?
-	`, string(instanceID), q.workerID)
-	if err != nil {
-		return fmt.Errorf("async queue fail: %w", err)
-	}
-	return nil
+	return q.Complete(ctx, instanceID)
 }
 
-// ExtendLease extends the claim timeout for a running task.
 func (q *AsyncQueue) ExtendLease(
 	ctx context.Context,
 	instanceID InstanceID,
 	lease time.Duration,
 ) error {
-	newDeadline := q.nowFunc().Add(lease).UnixNano()
-	_, err := q.db.ExecContext(ctx, `
-		UPDATE workflow_ready_tasks
-		SET claimed_until_ns = ?
-		WHERE instance_id = ? AND claimed_by = ?
-	`, newDeadline, string(instanceID), q.workerID)
-	if err != nil {
-		return fmt.Errorf("async queue extend lease: %w", err)
+	task, ok := q.legacyClaims.get(instanceID)
+	if !ok {
+		return nil
 	}
-	return nil
+	return q.ExtendClaim(ctx, task, lease)
+}
+
+func (q *AsyncQueue) CompleteClaim(ctx context.Context, task ClaimedTask) error {
+	return acknowledgeSQLiteClaim(ctx, q.db, task, q.nowFunc)
+}
+
+func (q *AsyncQueue) FailClaim(ctx context.Context, task ClaimedTask) error {
+	return q.CompleteClaim(ctx, task)
+}
+
+func (q *AsyncQueue) ExtendClaim(ctx context.Context, task ClaimedTask, lease time.Duration) error {
+	return extendSQLiteClaim(ctx, q.db, task, q.nowFunc, lease)
+}
+
+func (q *AsyncQueue) ReleaseClaim(ctx context.Context, task ClaimedTask, runAfter time.Time) error {
+	return releaseSQLiteClaim(ctx, q.db, task, q.nowFunc, runAfter)
 }
 
 // Len returns the total number of tasks in the queue (for testing).
@@ -364,7 +285,10 @@ func (q *AsyncQueue) Len() int {
 
 // --- Internal helpers ---
 
-// upsertTask inserts or replaces a task in the ready_tasks table.
+// upsertTask coalesces conservative wake notifications toward the earliest time.
+// A lagging projection must not postpone a newer Enqueue wake. Run checks durable
+// sleep/retry deadlines, so an early notification cannot execute delayed work.
+// Active receipts and their pending successors use the same rules as Enqueue.
 func (q *AsyncQueue) upsertTask(
 	ctx context.Context,
 	instanceID InstanceID,
@@ -376,10 +300,13 @@ func (q *AsyncQueue) upsertTask(
 		runAfterNs = runAfter.UnixNano()
 	}
 
-	_, err := q.db.ExecContext(ctx, `
-		INSERT OR REPLACE INTO workflow_ready_tasks (instance_id, workflow_name, run_after_ns, claimed_by, claimed_until_ns)
-		VALUES (?, ?, ?, NULL, NULL)
-	`, string(instanceID), workflowName, runAfterNs)
+	_, err := q.db.ExecContext(
+		ctx,
+		enqueueReadyTaskSQL,
+		string(instanceID),
+		workflowName,
+		runAfterNs,
+	)
 	if err != nil {
 		return fmt.Errorf("async queue upsert task: %w", err)
 	}
@@ -452,12 +379,14 @@ func (q *AsyncQueue) insertWaitingEvent(
 }
 
 // isEventPublished checks if an event has already been published.
-func (q *AsyncQueue) isEventPublished(ctx context.Context, eventName string) bool {
+func (q *AsyncQueue) isEventPublished(ctx context.Context, eventName string) (bool, error) {
 	var count int
-	err := q.db.QueryRowContext(ctx, `
+	if err := q.db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM workflow_published_events WHERE event_name = ?
-	`, eventName).Scan(&count)
-	return err == nil && count > 0
+	`, eventName).Scan(&count); err != nil {
+		return false, fmt.Errorf("async queue check published event: %w", err)
+	}
+	return count > 0, nil
 }
 
 // deleteWaitingEvent removes a specific waiter.
@@ -465,22 +394,31 @@ func (q *AsyncQueue) deleteWaitingEvent(
 	ctx context.Context,
 	instanceID InstanceID,
 	eventName string,
-) {
-	_, _ = q.db.ExecContext(ctx, `
+) error {
+	_, err := q.db.ExecContext(ctx, `
 		DELETE FROM workflow_waiting_events
 		WHERE instance_id = ? AND event_name = ?
 	`, string(instanceID), eventName)
+	if err != nil {
+		return fmt.Errorf("async queue delete waiting event: %w", err)
+	}
+	return nil
 }
 
 // deleteAllWaitingEvents removes all waiters for an instance.
-func (q *AsyncQueue) deleteAllWaitingEvents(ctx context.Context, instanceID InstanceID) {
-	_, _ = q.db.ExecContext(ctx, `
+func (q *AsyncQueue) deleteAllWaitingEvents(ctx context.Context, instanceID InstanceID) error {
+	_, err := q.db.ExecContext(ctx, `
 		DELETE FROM workflow_waiting_events WHERE instance_id = ?
 	`, string(instanceID))
+	if err != nil {
+		return fmt.Errorf("async queue delete all waiting events: %w", err)
+	}
+	return nil
 }
 
 // Compile-time interface checks.
 var (
-	_ TaskQueue             = (*AsyncQueue)(nil)
+	_ ClaimedTaskQueue      = (*AsyncQueue)(nil)
+	_ ClaimedTaskReleaser   = (*AsyncQueue)(nil)
 	_ event.AsyncProjection = (*AsyncQueue)(nil)
 )

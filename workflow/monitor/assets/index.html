@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>Workflows · Chronicle</title>
+  <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./assets/style.css">
+  <script src="./assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to workflows</a>
+  <div class="shell">
+    <header class="page-header">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">C</span>
+        <div>
+          <p class="eyebrow">Chronicle <span class="read-only">Read only</span></p>
+          <h1>Workflows</h1>
+          <p class="subtitle">A view of durable workflow history.</p>
+        </div>
+      </div>
+      <div class="refresh-controls">
+        <p id="refresh-status" class="refresh-status">Connecting to the event log…</p>
+        <div class="button-group">
+          <button id="refresh" type="button">Refresh now</button>
+          <button id="pause" type="button" aria-pressed="false">Pause auto-refresh</button>
+        </div>
+      </div>
+    </header>
+
+    <main id="main" tabindex="-1">
+      <noscript><p class="notice">JavaScript is required to view workflows. The read-only JSON API is available at <code>api/workflows</code>.</p></noscript>
+      <form id="filters" class="filters" role="search" aria-label="Filter workflows">
+        <div class="field search-field">
+          <label for="search">Search</label>
+          <input id="search" name="search" type="search" placeholder="Workflow name or instance ID" maxlength="256" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="field">
+          <label for="workflow-name">Workflow name</label>
+          <input id="workflow-name" name="workflowName" type="text" placeholder="Exact name" maxlength="256" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="field">
+          <label for="status">Status</label>
+          <select id="status" name="status">
+            <option value="">All statuses</option>
+            <option value="running">Running</option>
+            <option value="sleeping">Sleeping</option>
+            <option value="waiting">Waiting for event</option>
+            <option value="retrying">Retry scheduled</option>
+            <option value="completed">Completed</option>
+            <option value="failed">Failed</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
+        </div>
+        <div class="field page-size-field">
+          <label for="limit">Per page</label>
+          <select id="limit" name="limit">
+            <option value="25">25</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+          </select>
+        </div>
+        <div class="filter-actions">
+          <button id="apply" class="primary" type="submit">Apply filters</button>
+          <button id="clear" type="button">Clear</button>
+        </div>
+        <p id="filter-error" class="inline-error" role="alert" hidden></p>
+      </form>
+
+      <div id="workspace" class="workspace">
+        <section class="list-panel panel" aria-labelledby="list-title">
+          <div class="panel-heading">
+            <div>
+              <h2 id="list-title">Instances <span id="instance-count" class="count">—</span></h2>
+              <p class="helper">Newest first · persisted state, not live worker telemetry</p>
+            </div>
+          </div>
+          <p id="list-error" class="notice error" role="alert" hidden></p>
+          <div id="list-region" aria-busy="true">
+            <div class="table-scroll" role="region" aria-label="Workflow instances" tabindex="0">
+              <table>
+                <caption class="sr-only">Workflow instances, newest first. Select a workflow name to view its details.</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Workflow / instance ID</th>
+                    <th scope="col">Status</th>
+                    <th scope="col" class="number">Attempt</th>
+                    <th scope="col">Recorded timing</th>
+                  </tr>
+                </thead>
+                <tbody id="workflow-rows"></tbody>
+              </table>
+            </div>
+            <div id="list-state" class="empty-state" role="status" aria-live="polite">
+              <strong id="list-state-title">Loading workflows…</strong>
+              <p id="list-state-text">Reading the persisted event log.</p>
+            </div>
+          </div>
+          <div class="pagination">
+            <p id="page-summary" class="helper">Up to 50 instances per page</p>
+            <div class="button-group">
+              <button id="previous" type="button" disabled>Previous</button>
+              <button id="next" type="button" disabled>Next</button>
+            </div>
+          </div>
+        </section>
+
+        <section id="detail" class="detail-panel panel" aria-labelledby="detail-title" hidden>
+          <div class="panel-heading detail-heading">
+            <div class="detail-heading-text">
+              <p class="eyebrow">Instance details</p>
+              <h2 id="detail-title" tabindex="-1">Workflow</h2>
+              <p id="detail-id" class="mono helper"></p>
+            </div>
+            <button id="close-detail" type="button">Close details</button>
+          </div>
+          <p id="detail-error" class="notice error" role="alert" hidden></p>
+          <p id="detail-loading" class="notice" role="status">Loading workflow details…</p>
+          <div id="detail-content" class="detail-content" hidden>
+            <div class="status-line">
+              <span id="detail-status" class="badge"></span>
+              <p id="detail-status-description" class="helper"></p>
+            </div>
+            <dl class="metadata">
+              <div><dt>Attempt</dt><dd id="detail-attempt"></dd></div>
+              <div><dt>Completed steps</dt><dd id="detail-completed"></dd></div>
+              <div><dt>Started</dt><dd id="detail-started"></dd></div>
+              <div><dt>Last recorded update</dt><dd id="detail-updated"></dd></div>
+              <div id="finished-field" hidden><dt>Finished</dt><dd id="detail-finished"></dd></div>
+              <div id="next-run-field" hidden><dt id="next-run-label">Next run</dt><dd id="detail-next-run"></dd></div>
+              <div id="waiting-field" class="metadata-wide" hidden><dt>Waiting for event</dt><dd id="detail-waiting" class="mono"></dd></div>
+              <div><dt>Stream version</dt><dd id="detail-version" class="mono"></dd></div>
+            </dl>
+            <div id="workflow-error" class="recorded-error" hidden>
+              <h3>Recorded error</h3>
+              <p id="workflow-error-text"></p>
+            </div>
+
+            <section class="detail-section" aria-labelledby="steps-title">
+              <div class="section-heading"><h3 id="steps-title">Recorded path</h3><span id="step-count" class="count"></span></div>
+              <p class="helper">Steps in execution order. Only recorded steps are shown, not a static workflow graph.</p>
+              <p id="steps-empty" class="quiet-state" hidden>No steps have been recorded yet.</p>
+              <ol id="steps" class="step-list"></ol>
+            </section>
+
+            <section class="detail-section" aria-labelledby="payload-title">
+              <h3 id="payload-title">Data</h3>
+              <details id="params-panel" class="payload" open>
+                <summary>Parameters</summary>
+                <pre id="params" tabindex="0" aria-label="Workflow parameters"></pre>
+                <p id="params-truncated" class="preview-note" hidden>Preview limited to 32,000 characters. The API response contains the full value.</p>
+              </details>
+              <details id="output-panel" class="payload">
+                <summary>Output</summary>
+                <pre id="output" tabindex="0" aria-label="Workflow output"></pre>
+                <p id="output-truncated" class="preview-note" hidden>Preview limited to 32,000 characters. The API response contains the full value.</p>
+              </details>
+              <p id="output-empty" class="quiet-state">No output has been recorded.</p>
+            </section>
+
+            <section class="detail-section" aria-labelledby="history-title">
+              <div class="section-heading"><h3 id="history-title">Event history</h3><span id="history-count" class="count"></span></div>
+              <p class="helper">Oldest first · stream order. Legacy events can have no recorded timestamp.</p>
+              <p id="history-empty" class="quiet-state" hidden>No events have been recorded.</p>
+              <div id="history" class="history"></div>
+            </section>
+          </div>
+        </section>
+      </div>
+      <p class="footer-note">Read only. No workflow code runs here. Sleep, event waits, and retry delays are not active execution.</p>
+    </main>
+  </div>
+</body>
+</html>

@@ -5,6 +5,7 @@ package workflow
 // projection filters and switch statements.
 const (
 	eventNameWorkflowStarted       = "workflow/started"
+	eventNameStepStarted           = "workflow/step_started"
 	eventNameStepCompleted         = "workflow/step_completed"
 	eventNameWorkflowCompleted     = "workflow/completed"
 	eventNameWorkflowFailed        = "workflow/failed"

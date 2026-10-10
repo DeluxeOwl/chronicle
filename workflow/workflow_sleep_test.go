@@ -423,7 +423,7 @@ func TestSleep_ZeroDuration(t *testing.T) {
 		runner,
 		"zero-sleep",
 		func(wctx *workflow.Context, params *SleepTestParams) (*SleepTestOutput, error) {
-			// Sleep for 0 — should effectively be a no-op on replay
+			// Zero duration records its checkpoint and continues immediately.
 			if err := workflow.Sleep(wctx, 0); err != nil {
 				return nil, err
 			}
@@ -435,13 +435,7 @@ func TestSleep_ZeroDuration(t *testing.T) {
 	instanceID, err := wf.Start(ctx, &SleepTestParams{})
 	require.NoError(t, err)
 
-	// Even with zero duration, the first run records the sleep step
-	// and returns ErrWorkflowSleeping.
-	_, err = wf.Run(ctx, instanceID)
-	require.ErrorIs(t, err, workflow.ErrWorkflowSleeping)
-
-	// Re-run immediately — wake time is now, clock hasn't advanced but
-	// wakeAt == startTime so now.Before(wakeAt) is false
+	// An elapsed sleep does not require a second worker claim.
 	output, err := wf.Run(ctx, instanceID)
 	require.NoError(t, err)
 	require.Equal(t, "instant", output.Result)

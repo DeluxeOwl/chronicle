@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -349,57 +350,97 @@ func TestWorker_MultipleInstances(t *testing.T) {
 }
 
 func TestWorker_NegativeLeaseExtendInterval_DisablesAutoExtension(t *testing.T) {
-	db := setupWorkerDB(t)
-	runner, err := workflow.NewSqliteRunnerWithSyncQueue(t.Context(), db,
-		workflow.WithSyncQueueOpts(
-			workflow.WithSyncQueueLeaseDuration(100*time.Millisecond),
-		),
+	db, err := sql.Open(
+		"sqlite3",
+		filepath.Join(t.TempDir(), "expired-worker.db")+"?_journal_mode=WAL&_busy_timeout=5000",
 	)
 	require.NoError(t, err)
-
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+	runner, err := workflow.NewSqliteRunnerWithSyncQueue(
+		t.Context(),
+		db,
+		workflow.WithSyncQueueOpts(workflow.WithSyncQueueLeaseDuration(100*time.Millisecond)),
+	)
+	require.NoError(t, err)
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var calls atomic.Int32
 	wf := workflow.New(
 		runner,
 		"no-lease-extend",
-		func(wctx *workflow.Context, params *WorkerTestParams) (*WorkerTestOutput, error) {
-			val, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
-				// Step takes longer than the lease duration.
-				// Without auto-extension the lease expires and a second worker
-				// could reclaim the task. With a negative LeaseExtendInterval
-				// auto-extension is disabled, so the lease is NOT extended.
-				time.Sleep(250 * time.Millisecond)
-				return "done", nil
+		func(wctx *workflow.Context, _ *WorkerTestParams) (*WorkerTestOutput, error) {
+			value, err := workflow.Step(wctx, func(ctx context.Context) (string, error) {
+				calls.Add(1)
+				select {
+				case entered <- struct{}{}:
+				default:
+				}
+				select {
+				case <-release:
+					return "done", nil
+				case <-ctx.Done():
+					return "", ctx.Err()
+				}
 			})
 			if err != nil {
 				return nil, err
 			}
-			return &WorkerTestOutput{Result: val}, nil
+			return &WorkerTestOutput{Result: value}, nil
 		},
 	)
-
-	ctx := t.Context()
-	id, err := wf.Start(ctx, &WorkerTestParams{Value: "test"})
+	id, err := wf.Start(t.Context(), &WorkerTestParams{Value: "test"})
 	require.NoError(t, err)
-
-	workerCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
+	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
+	var workerErr error
 	go func() {
 		defer close(done)
-		_ = runner.RunWorker(workerCtx, workflow.WorkerOptions{
-			PollInterval:        10 * time.Millisecond,
-			LeaseExtendInterval: -1, // disable auto-extension
-		})
+		workerErr = runner.RunWorker(
+			ctx,
+			workflow.WorkerOptions{PollInterval: 10 * time.Millisecond, LeaseExtendInterval: -1},
+		)
 	}()
-
-	// The workflow should still complete (single worker, no contention).
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Error("worker did not stop")
+		}
+	})
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("callback did not run")
+	}
+	competitor, err := workflow.NewSyncQueue(t.Context(), db)
+	require.NoError(t, err)
+	var reclaimed *workflow.ClaimedTask
 	require.Eventually(t, func() bool {
-		result, err := wf.GetResult(ctx, id)
-		return err == nil && result.Result == "done"
-	}, 3*time.Second, 20*time.Millisecond)
-
+		var err error
+		reclaimed, err = competitor.PollClaim(t.Context())
+		return err == nil && reclaimed != nil
+	}, time.Second, 5*time.Millisecond, "disabled heartbeats must leave an active callback reclaimable")
+	close(release)
+	// Without ownership the first worker cannot save a checkpoint, even if
+	// no replacement has appended any workflow event.
+	require.NoError(t, competitor.ReleaseClaim(t.Context(), *reclaimed, time.Now().Add(time.Hour)))
 	cancel()
-	<-done
+	select {
+	case <-done:
+		require.ErrorIs(t, workerErr, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("worker did not join")
+	}
+	info, err := wf.GetStatus(t.Context(), id)
+	require.NoError(t, err)
+	require.Equal(t, workflow.StatusRunning, info.Status)
+	require.Equal(t, int32(1), calls.Load())
+	out, err := wf.Run(t.Context(), id)
+	require.NoError(t, err)
+	require.Equal(t, "done", out.Result)
+	require.Equal(t, int32(2), calls.Load(), "the expired, uncommitted step must run again")
 }
 
 func TestWorker_ZeroLeaseExtendInterval_UsesDefault(t *testing.T) {

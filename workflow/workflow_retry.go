@@ -40,15 +40,33 @@ func DefaultRetryStrategy() RetryStrategy {
 	}
 }
 
+func (rs RetryStrategy) normalized() (RetryStrategy, error) {
+	if rs.MaxAttempts < 0 || rs.BaseDelay < 0 || rs.MaxDelay < 0 || rs.Factor < 0 ||
+		math.IsNaN(rs.Factor) ||
+		math.IsInf(rs.Factor, 0) {
+		return rs, errors.New("retry attempts, delays, and factor must be nonnegative and finite")
+	}
+	if rs.MaxAttempts == 0 {
+		rs.MaxAttempts = 5
+	}
+	return rs, nil
+}
+
 // nextDelay computes the delay for the given attempt (0-indexed).
 // attempt=0 is after the first failure, attempt=1 is after the second, etc.
 func (rs RetryStrategy) nextDelay(attempt int) time.Duration {
-	if rs.Factor <= 0 {
-		return rs.BaseDelay
+	if rs.BaseDelay <= 0 {
+		return 0
 	}
-	delay := float64(rs.BaseDelay) * math.Pow(rs.Factor, float64(attempt))
-	if rs.MaxDelay > 0 && time.Duration(delay) > rs.MaxDelay {
+	delay := float64(rs.BaseDelay)
+	if rs.Factor > 0 {
+		delay *= math.Pow(rs.Factor, float64(attempt))
+	}
+	if rs.MaxDelay > 0 && delay >= float64(rs.MaxDelay) {
 		return rs.MaxDelay
+	}
+	if delay >= float64(math.MaxInt64) {
+		return time.Duration(math.MaxInt64)
 	}
 	return time.Duration(delay)
 }
@@ -62,6 +80,7 @@ type workflowRetried struct {
 	RetryStrategy   json.RawMessage `json:"retryStrategy"`
 	FailedStepIndex *int            `json:"failedStepIndex,omitempty"` // nil for backward compat with old events
 	WorkflowName    string          `json:"workflowName,omitempty"`    // populated since v2; empty in old events
+	ScheduledAt     time.Time       `json:"scheduledAt,omitempty" exhaustruct:"optional"`
 }
 
 func (*workflowRetried) EventName() string { return eventNameWorkflowRetried }
@@ -84,7 +103,11 @@ func (r *Runner) scheduleRetry(
 		return false, nil // no retry configured
 	}
 
-	if strategy.MaxAttempts > 0 && instance.attempt >= strategy.MaxAttempts {
+	maxAttempts := strategy.MaxAttempts
+	if maxAttempts == 0 {
+		maxAttempts = 5
+	}
+	if instance.attempt >= maxAttempts {
 		return false, nil // exhausted
 	}
 
@@ -97,7 +120,7 @@ func (r *Runner) scheduleRetry(
 
 	retryStrategyJSON, err := json.Marshal(strategy)
 	if err != nil {
-		return false, fmt.Errorf("marshal retry strategy: %w", err)
+		return false, infrastructureError(fmt.Errorf("marshal retry strategy: %w", err))
 	}
 
 	if err := instance.recordThat(&workflowRetried{
@@ -108,8 +131,9 @@ func (r *Runner) scheduleRetry(
 		RetryStrategy:   retryStrategyJSON,
 		FailedStepIndex: ctx.lastFailedStep,
 		WorkflowName:    instance.workflowName,
+		ScheduledAt:     now,
 	}); err != nil {
-		return false, fmt.Errorf("record workflow retried: %w", err)
+		return false, infrastructureError(fmt.Errorf("record workflow retried: %w", err))
 	}
 
 	if err := saveOrConflictAbort(ctx.ctx, r.repo, instance); err != nil {
@@ -117,7 +141,7 @@ func (r *Runner) scheduleRetry(
 	}
 
 	// Enqueue for delayed re-execution
-	if err := r.queue.Enqueue(ctx.ctx, QueuedTask{
+	if err := r.enqueueTask(ctx.ctx, QueuedTask{
 		InstanceID:   ctx.instanceID,
 		WorkflowName: instance.workflowName,
 		RunAfter:     runAfter,

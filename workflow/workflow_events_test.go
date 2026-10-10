@@ -110,11 +110,7 @@ func TestWaitForEvent_EventPublishedBeforeAwait(t *testing.T) {
 	instanceID, err := wf.Start(ctx, &EventTestParams{})
 	require.NoError(t, err)
 
-	// First run hits WaitForEvent → parked (event not yet linked to this instance's step)
-	_, err = wf.Run(ctx, instanceID)
-	require.ErrorIs(t, err, workflow.ErrWorkflowWaiting)
-
-	// Second run: the Register call saw the published event, so GetEvent returns it
+	// A pre-published event resolves in the first run. No wake-up is needed.
 	output, err := wf.Run(ctx, instanceID)
 	require.NoError(t, err)
 	require.Equal(t, "EARLY-456", output.Result)

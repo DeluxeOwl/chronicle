@@ -4,134 +4,105 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"time"
 )
 
-// persistentWaitStore is a SQL-backed implementation of eventWaitStore.
-// It uses workflow_waiting_events and workflow_published_events tables to
-// durably track event waiting state across process restarts.
-//
-// The transactional writes (insert/delete waiters during event processing)
-// are handled by SyncQueue.Process() within the same DB transaction as
-// event writes. This store handles the non-transactional operations:
-// publishing events (from PublishEvent) and checking for published events
-// (from WaitForEvent replay).
-//
-// This enables distributed WaitForEvent/PublishEvent: an event published from
-// one process can wake workflows running on another, because both read
-// from the same SQL tables.
+// persistentWaitStore keeps publication and task wake-up in one transaction.
+// Wait registration is part of SyncQueue's event-save transaction.
 type persistentWaitStore struct {
-	db *sql.DB
+	db      *sql.DB
+	nowFunc func() time.Time
 }
 
-// newPersistentWaitStore creates a persistent wait store.
-// The required tables (workflow_waiting_events, workflow_published_events) must
-// already exist — they are created by NewSyncQueue / NewAsyncQueue.
-func newPersistentWaitStore(db *sql.DB) *persistentWaitStore {
-	return &persistentWaitStore{db: db}
+func newPersistentWaitStore(db *sql.DB, nowFunc func() time.Time) *persistentWaitStore {
+	return &persistentWaitStore{db: db, nowFunc: nowFunc}
 }
 
-// Register is a no-op for the persistent store.
-// The SyncQueue.Process() handles inserting waiters into workflow_waiting_events
-// atomically during the event-save transaction. It also detects pre-published
-// events and creates immediate wake-up tasks.
-func (p *persistentWaitStore) Register(_ context.Context, _ InstanceID, _ string, _ string) {
-	// No-op: handled atomically by SyncQueue.Process() for workflowWaiting events.
-}
+func (*persistentWaitStore) Register(context.Context, InstanceID, string, string) {}
 
-// Publish stores an event payload (first-write-wins) and returns any workflows
-// that were waiting for this event. Matched waiters are removed from the
-// waiting table. All operations run in a single transaction to prevent
-// missed wake-ups.
 func (p *persistentWaitStore) Publish(
 	ctx context.Context,
-	eventName string,
+	name string,
 	payload json.RawMessage,
+	_ time.Time,
 ) ([]waitingWorkflow, error) {
-	tx, err := p.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("persistent wait store publish begin tx: %w", err)
-	}
-	defer tx.Rollback() //nolint:errcheck // not needed.
-
-	// First-write-wins: INSERT OR IGNORE
-	result, err := tx.ExecContext(ctx, `
-		INSERT OR IGNORE INTO workflow_published_events (event_name, payload)
-		VALUES (?, ?)
-	`, eventName, string(payload))
-	if err != nil {
-		return nil, fmt.Errorf("persistent wait store publish insert: %w", err)
-	}
-
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return nil, fmt.Errorf("persistent wait store publish rows affected: %w", err)
-	}
-	if affected == 0 {
-		// Event was already published — first-write-wins, no new waiters to wake.
-		return nil, nil
-	}
-
-	// Find all workflows waiting for this event
-	rows, err := tx.QueryContext(ctx, `
-		SELECT instance_id, workflow_name
-		FROM workflow_waiting_events
-		WHERE event_name = ?
-	`, eventName)
-	if err != nil {
-		return nil, fmt.Errorf("persistent wait store publish query waiters: %w", err)
-	}
-	defer rows.Close()
-
-	var waiters []waitingWorkflow
-	for rows.Next() {
-		var instanceID string
-		var workflowName string
-		if err := rows.Scan(&instanceID, &workflowName); err != nil {
-			return nil, fmt.Errorf("persistent wait store publish scan waiter: %w", err)
+	waiters := make([]waitingWorkflow, 0)
+	err := withSQLiteWriteTx(ctx, p.db, func(tx *sql.Tx) error {
+		// Accepted-storage time is sampled after acquiring the write lock, not
+		// before waiting for a connection or a concurrent timeout transaction.
+		// This preserves the runner's custom clock, not physical commit time.
+		publishedAt := p.nowFunc()
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO workflow_published_events(event_name,payload,published_at_ns) VALUES(?,?,?)`, name, string(payload), queueTimeNS(publishedAt)); err != nil {
+			return fmt.Errorf("store event publication: %w", err)
 		}
-		waiters = append(waiters, waitingWorkflow{
-			InstanceID:   InstanceID(instanceID),
-			WorkflowName: workflowName,
-		})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("persistent wait store publish iterate waiters: %w", err)
-	}
-
-	// Remove matched waiters
-	if len(waiters) > 0 {
-		if _, err := tx.ExecContext(ctx, `
-			DELETE FROM workflow_waiting_events WHERE event_name = ?
-		`, eventName); err != nil {
-			return nil, fmt.Errorf("persistent wait store publish delete waiters: %w", err)
+		// Repeated publications repair wake-ups without replacing the original
+		// payload or the timestamp accepted by the first successful write.
+		rows, err := tx.QueryContext(
+			ctx,
+			`SELECT instance_id,workflow_name FROM workflow_waiting_events WHERE event_name=?`,
+			name,
+		)
+		if err != nil {
+			return fmt.Errorf("read event waiters: %w", err)
 		}
+		defer rows.Close()
+		for rows.Next() {
+			var waiter waitingWorkflow
+			if err := rows.Scan(&waiter.InstanceID, &waiter.WorkflowName); err != nil {
+				return fmt.Errorf("read event waiter: %w", err)
+			}
+			waiters = append(waiters, waiter)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("read event waiters: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return fmt.Errorf("close event waiters: %w", err)
+		}
+		for _, waiter := range waiters {
+			if _, err := tx.ExecContext(ctx, enqueueReadyTaskSQL, string(waiter.InstanceID), waiter.WorkflowName, int64(0)); err != nil {
+				return fmt.Errorf("schedule published event: %w", err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM workflow_waiting_events WHERE event_name=?`, name); err != nil {
+			return fmt.Errorf("remove event waiters: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("publish event transaction: %w", err)
 	}
-
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("persistent wait store publish commit: %w", err)
-	}
-
 	return waiters, nil
 }
 
-// GetEvent checks if an event has been published by looking up the
-// workflow_published_events table. The instanceID is not used for the
-// query — published events are global (first-write-wins).
 func (p *persistentWaitStore) GetEvent(
 	ctx context.Context,
 	_ InstanceID,
-	eventName string,
-) (json.RawMessage, bool) {
+	name string,
+) (publishedEvent, bool, error) {
 	var payload string
-	err := p.db.QueryRowContext(ctx, `
-		SELECT payload FROM workflow_published_events WHERE event_name = ?
-	`, eventName).Scan(&payload)
-	if err != nil {
-		return nil, false
+	var ns int64
+	err := p.db.QueryRowContext(ctx, `SELECT payload,published_at_ns FROM workflow_published_events WHERE event_name=?`, name).
+		Scan(&payload, &ns)
+	if errors.Is(err, sql.ErrNoRows) {
+		return publishedEvent{Payload: nil, PublishedAt: time.Time{}}, false, nil
 	}
-	return json.RawMessage(payload), true
+	if err != nil {
+		return publishedEvent{
+				Payload:     nil,
+				PublishedAt: time.Time{},
+			}, false, fmt.Errorf(
+				"read event publication: %w",
+				err,
+			)
+	}
+	var publishedAt time.Time
+	if ns != 0 {
+		publishedAt = time.Unix(0, ns)
+	}
+	return publishedEvent{Payload: json.RawMessage(payload), PublishedAt: publishedAt}, true, nil
 }
 
-// Compile-time interface check.
 var _ eventWaitStore = (*persistentWaitStore)(nil)
